@@ -137,3 +137,16 @@ Storage and monthly covered-change usage each show remaining capacity. Exhaustio
 ![Semantic search consent](walkthrough-assets/semantic-search-consent.png)
 
 These images use bounded API fixtures. Real Workers AI inference and insertion/query/deletion checks ran separately against all four hosted Vectorize shards.
+
+
+## Connected app resources and disconnection
+
+Connected apps now tracks the app connection independently of its individual agent logins. Review the app's identity, presentation source, resource URL and granted collections/actions. Revoking one agent login leaves the connection intact; disconnecting the app stops new calls and invalidates the connection's tokens and grants. Owner data stays in its resources. Reconnecting requires fresh consent and cannot revive old credentials.
+
+![Connected app resource and separate agent login](walkthrough-assets/connected-apps-desktop.png)
+
+![Connected apps on a narrow phone](walkthrough-assets/connected-apps-mobile.png)
+
+These screenshots use explicitly mocked app/manifest/grant records. Separate real Worker tests verify listing, CSRF-protected disconnection, token and refresh denial, and storage preservation. Independent durable tests cover reconnect generations, pending consent, corrupt records and final dispatch checks. A failed grant listing leaves healthy app disconnect controls available.
+
+Names/descriptions may come from Bindle app metadata or linked/discovered web app manifests. The UI keeps the registered identity and source visible, uses initials, and never loads external icons automatically. Optional Node discovery has a verified DNS-pinned adapter and passed a read-only public MDN example check. Cloudflare external discovery and a raster icon cache remain unconfigured release work.

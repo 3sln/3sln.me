@@ -4,9 +4,9 @@ const fail=(code,message,status=403)=>{throw new StorageError(code,message,statu
 export async function mcpCollections(account,owner){
  await account.warm(owner);
  const inbox=(await account.messages.collections(owner)).filter(c=>c.active).map(c=>({id:`inbox:${c.id}`,name:c.name,kind:'inbox',tools:['collections_list','items_list','item_read','item_write','item_delete']}));
- const resources=[...(await account.metadata.list({prefix:'resource/',limit:101})).values()];
- if(resources.length>100)fail('resource_limit','This account has too many sources.',429);
- return [...inbox,...resources.filter(r=>r.owner===owner&&r.status==='connected').map(r=>({id:`resource:${r.id}`,name:r.name,kind:'storage',tools:['collections_list',...r.capabilities?.list?['items_list']:[],...r.capabilities?.read?['item_read']:[],...r.provider==='hosted'?['item_write','item_delete']:[]]}))];
+ const resources=[...(await account.metadata.list({prefix:'resource/',limit:201})).values()];
+ if(resources.length>200||resources.filter(r=>r.kind!=='app-connection').length>100)fail('resource_limit','This account has too many sources.',429);
+ return [...inbox,...resources.filter(r=>r.owner===owner&&r.kind!=='app-connection'&&r.status==='connected').map(r=>({id:`resource:${r.id}`,name:r.name,kind:'storage',tools:['collections_list',...r.capabilities?.list?['items_list']:[],...r.capabilities?.read?['item_read']:[],...r.provider==='hosted'?['item_write','item_delete']:[]]}))];
 }
 export async function mcpOperation(account,owner,clientId,tool,args){
  const collection=(await mcpCollections(account,owner)).find(c=>c.id===args.collectionId);

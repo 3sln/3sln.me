@@ -32,3 +32,10 @@ npm run check:worker
 ```
 
 The Worker test runs real local workerd/SQLite Durable Objects and requires loopback socket permission. Frontend consent changes additionally require DOM/browser checks. Production publication requires the existing security and release gates, independent MCP client interoperability, provider checks and recorded reviewer sign-off in `DEVLOG.md` and [the service specification](../spec/mcp-service.md).
+
+
+## App connections and presentation
+
+Successful reviewed consent creates an owner app-connection resource. GET `/api/apps` lists these records; owner-authenticated, CSRF-protected DELETE `/api/apps/:id` disconnects the app without deleting its data. Generation checks deny old grants, authorization codes and refresh tokens even after a later reconnect. Connected apps also provides narrower individual agent-login revocation. Inspection is required before approval; reviewed pending requests become stale after disconnect.
+
+`MCP_CLIENTS` may add `application` and `metadataSources` as described in [app metadata](../spec/app-metadata.md). Node self-hosting can enable `APP_METADATA_DISCOVERY_ENABLED=true` for the bounded DNS-pinned public HTTPS adapter. The default is off; IPv6-only metadata hosts fall back to registered presentation. Cloudflare has no verified discovery egress port configured and uses registered metadata. Icon references are not automatically rendered from external servers.

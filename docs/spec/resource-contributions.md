@@ -132,3 +132,6 @@ The minimal next implementation is a trusted capability-dispatch port that resol
 | Optional finite callback read/write slots | Preserves selected resource contracts and their own preconditions with bounded authority; reuses opaque token custody. | Forwarding full consumer credentials, recursive delegation, automatic renewal or claiming external code is sandboxed. |
 
 Before implementation claims, test cross-owner/producer registration, ID collision/alias overwrite, proposal invisibility, exact descriptor hashing, changed-effects reconsent, invalid/nested schema bounds, collection growth without grant expansion, producer/consumer revocation, suspended/withdrawn revival, stale list/invoke races, same-transaction collisions, external timeout/crash recovery, result reauthorization, hostile descriptions/outputs, SSRF and egress limits, and per-owner work/cost quotas. Conformance needs an independent producer and consumer fixture; configured metadata and a JSON artifact are not evidence of execution or provider guarantees. Production remains disabled under the existing security gates.
+
+
+Application presentation and optional web app manifest discovery are described in [app metadata](app-metadata.md). These fields cannot establish producer identity, contract compliance or grants.

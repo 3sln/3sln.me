@@ -285,3 +285,33 @@ The real Worker conversation check exposed a runtime-specific public-JWK export 
 Independent UI review fixed callback query substitution, stale same-owner thread selection, source-qualified permission/draft identities, non-JSON 401 handling, private state clearing, offline mutation busy state and out-of-order reconnect owner replacement. Real Chrome caught an invalid compound class token that Happy DOM accepted. Consent now renders with no checked defaults, separate destructive warnings and clear deny controls. Reviewed fresh screenshots and updated [walkthrough](docs/walkthrough.md); mocked API records are labeled explicitly. Screenshots normalize document scroll so sticky navigation is captured consistently.
 
 Final evidence: **274/274 runtime tests**, **18/18 actual Worker tests**, **33/33 UI state/audit tests**, **27/27 Chrome browser checks**, plus a focused 5/5 screenshot/layout refresh. Production Worker dry run passed; no application deployment occurred. Synthetic provider vectors were removed from all four shards. TURN relay, billing, full notifications, provider OAuth credentials, general federation, large-account lifecycle and the new upstream app/MCP contribution adapter remain release work. No human approval or release readiness is fabricated.
+
+
+## 2026-10-12 — User approval: app connection resources and management
+
+User explicitly approved the app-connection-as-resource direction: “app connections as their own resources makes the most sense for me as well,” and requested a place to track and remove/dissociate connected apps. This records approval of D054's resource model only; it does not imply approval of every importer, generated-contract or callback detail in D054–D056. Those implementation/security details retain their separate review places.
+
+| Decision | Direction and qualifications | Human sign-off |
+| --- | --- | --- |
+| D057 | Track owner-specific app connection resources in Connected apps. Disconnect stops new authorized calls and token refresh for the connection; revoking one agent grant remains a narrower operation. Preserve user-owned data and disconnected history. Fresh explicit consent can reconnect, with a new generation so old credentials cannot regain access. | Resource model approved by user in conversation, 2026-10-12. Lifecycle details: Reviewer ___ / Date ___ / Outcome ___ |
+
+Backend, frontend and independent security agents are implementing/reviewing durable connection ownership, live generation checks and localized management UI. The existing MCP consent is the first implemented connection source; general Bindle login/import adapters remain separate release work.
+
+
+## 2026-10-12 — App manifest presentation and discovery
+
+User requested app names/icons and other presentation from Bindle manifests, linked PWA manifests, or discovered manifest links in provided app index/auth pages. Added optional Bindle `application` metadata using web app presentation fields plus `web_manifest`, operator-reviewed source URLs, inert bounded parsing and once-per-reviewed-request snapshots. Registered app identity stays visible; presentation does not confer trust or authority.
+
+| Decision | Direction and qualifications | Human sign-off |
+| --- | --- | --- |
+| D058 | Prefer explicit registered overrides, then Bindle app presentation, then linked/discovered web app manifests. Discovery is bounded and credential-free; missing/unsupported metadata falls back without blocking consent or owner disconnection. | Reviewer ___ / Date ___ / Outcome ___ |
+| D059 | Node may opt into a DNS-pinned HTTPS/443 discovery adapter with public IPv4 enforcement and process-local budgets. Cloudflare discovery remains disabled without equivalent verified actual-destination enforcement. Store raster icon references but use safe initials until a bounded raster cache is implemented; never auto-fetch external icons in account/consent views. | Reviewer ___ / Date ___ / Outcome ___ |
+
+Independent architecture/runtime/UI reviews cover revocation generations, pending consent, private-data boundaries, metadata SSRF, inert HTML, credential isolation and graceful partial failures. User approval of the resource model is recorded under D057; these new networking/presentation choices retain separate review points.
+
+
+Implementation reconciliation: durable app connections now use the existing owner `resource/*` catalog, canonical resource URLs, authenticated client provenance and generation-bound MCP grants. GET `/api/apps` and CSRF-protected DELETE `/api/apps/:id` provide owner management. Disconnect is local and immediate, with no 64-shard revocation fanout; new access/refresh/code admission and final account dispatch recheck the connection. Fresh inspected consent reconnects at a newer generation. Records are bounded and retained as revocation tombstones; owner data and unrelated storage resources are preserved. Upstream tool import and the Bindle grant bridge remain separate work; empty contracts do not claim conformance.
+
+Presentation is pinned during consent inspection. Bounded single-flight collection runs outside authority transactions, with declared metadata available on both platforms. Optional Node discovery is wired behind `APP_METADATA_DISCOVERY_ENABLED=true`, uses only public IPv4 HTTPS/443 and actual-dial DNS pinning, and passed a real MDN index-to-manifest read-only check. No credentials or icon bytes were fetched. Cloudflare external discovery remains disabled; remote icons remain references until a safe raster cache exists. Node quotas are process-local, not an invoice cap.
+
+Final checks for this change: **308/308 runtime tests**, **18/18 actual Worker tests** (including connected-app listing/disconnect/data preservation), **40/40 UI state/audit checks**, **28/28 full Chrome checks**. A subsequent **12/12 focused Chrome check** verified card readability, the v9 public-shell cache and private-cache/session regressions after final polish. Worker deployment dry run passed. Updated screenshot walkthrough uses labeled fixtures. User resource-model approval is recorded; no production readiness or application deployment is claimed.

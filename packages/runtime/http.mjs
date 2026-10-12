@@ -139,6 +139,8 @@ export default {
     // Owner mutations independently require session CSRF, even when not an identity action.
     if(mutation&&context.csrfToken!==owner.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
     if(mcpOwnerPath(path))return handleMcpOwner({request,env,owner,body});
+    if(path==='/api/apps'&&request.method==='GET')return json({apps:await object.appConnections(id)});
+    const appDisconnect=/^\/api\/apps\/([a-f0-9-]{36})$/.exec(path);if(appDisconnect&&request.method==='DELETE')return json(await object.appDisconnect(id,appDisconnect[1]));
     let protective=false;
     if(mutation&&(['/api/search/preferences','/api/profile','/api/notifications'].includes(path)||request.method==='PUT'&&/^\/api\/contacts\/[^/]+\/beam$/.test(path))){const change=await body(request.clone());protective=path==='/api/search/preferences'&&change.enabled===false||path==='/api/profile'&&change.discloseToContacts===false||path==='/api/notifications'||/^\/api\/contacts\/[^/]+\/beam$/.test(path)&&(change.beamEnabled===false||Array.isArray(change.profileFields)&&change.profileFields.length===0&&change.beamEnabled!==true);}
     const capacityExempt=protective||['/api/billing/checkout','/api/billing/portal','/api/notifications/unsubscribe','/api/notifications/unsubscribe-link'].includes(path)||/^\/api\/contacts\/[^/]+\/quarantine$/.test(path);
