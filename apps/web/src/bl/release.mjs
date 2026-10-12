@@ -7,7 +7,7 @@ function commit(state,feed,recipe){state.transition(recipe);changed(feed);}
 const update=(resources,ctx,patch)=>commit(resources.state,ctx.engineFeed,next=>Object.assign(next,patch));
 const current=r=>r.state.snapshot();
 async function refresh(r,ctx){const data=await r.api.get('/api/account');if(!current(r).offline)update(r,ctx,{data});}
-function clearAccount(r,ctx){r.api.csrf=null;update(r,ctx,{session:null,data:null,messageDetail:null,messageRender:null,selected:null,modal:null});}
+function clearAccount(r,ctx){r.api.csrf=null;update(r,ctx,{session:null,data:null,messageDetail:null,messageRender:null,selected:null,modal:null,billing:null,billingLoading:false,billingError:'',searchDraft:{},spaceSearch:{phase:'idle',items:[]}});}
 const notice=(r,ctx,text)=>update(r,ctx,{notice:text,error:''});
 async function completed(r,ctx,text){update(r,ctx,{modal:null});await refresh(r,ctx);notice(r,ctx,text);r.browser.restoreFocus();}
 function pending(r,ctx,token,stage){r.browser.savePending(token,stage);update(r,ctx,{pending:true,pendingStage:stage});}
@@ -21,6 +21,19 @@ async function recovery(r,ctx){
 async function accept(r,ctx,result){if(!result.account||!result.csrfToken)throw new Error('Sign-in did not create a verified account session.');r.browser.clearPending();r.api.csrf=result.csrfToken;update(r,ctx,{pending:false,recovery:null,session:{account:result.account},auth:'login',notice:'',deviceLogin:null});await refresh(r,ctx);}
 const tags=value=>String(value??'').split(',').map(value=>value.trim()).filter(Boolean);
 async function addRule(r,rule){return r.api.request('/api/rules',{rules:[...(current(r).data?.rules??[]),{...rule,id:r.browser.id()}]},'PUT');}
+async function loadBilling(r,ctx){
+ const owner=current(r).session?.account?.id??current(r).session?.account?.handle;
+ if(!owner||current(r).offline)return;
+ update(r,ctx,{billingLoading:true,billingError:''});
+ try{const billing=await r.api.get('/api/billing');if(!current(r).offline&&(current(r).session?.account?.id??current(r).session?.account?.handle)===owner)update(r,ctx,{billing,billingLoading:false});}
+ catch(error){if(error.status===401){clearAccount(r,ctx);return;}if(!current(r).offline)update(r,ctx,{billing:null,billingLoading:false,billingError:'Plan information could not be loaded. Please try again.'});}
+}
+function trustedBillingURL(value,server){
+ let url;try{url=new URL(value);}catch{throw new Error('The payment page could not be opened. Please try again.');}
+ const hosts=server==='sandbox'?['sandbox.polar.sh','sandbox-api.polar.sh']:['polar.sh','api.polar.sh'];
+ if(url.protocol!=='https:'||url.username||url.password||url.port||!hosts.includes(url.hostname))throw new Error('The payment page could not be opened. Please try again.');
+ return url.href;
+}
 
 /** One projection and one feed vocabulary own account, navigation and async UI.
  * The Query also owns polling/network listener lifetimes; it never mutates state. */
@@ -58,23 +71,24 @@ export class InitializeSpace extends Flow {
   }
 }
 export class NavigateSpace extends Action {
-  static deps={state:{write:true},browser:{}};
+  static deps={state:{write:true},browser:{},api:{}};
   constructor(detail){super();this.detail=detail;}
-  execute(r,ctx){const d=this.detail;const patches={
+  async execute(r,ctx){const d=this.detail;const patches={
     navigate:()=>({view:d.view,selected:null,notice:'',error:'',modal:null,...d.filter?{filter:d.filter}:{}}),
     'set-auth':()=>({auth:d.auth,recovery:null,notice:'',error:'',emailSent:false,captchaPurpose:null}),
     'set-auth-method':()=>({authMethod:d.method,error:''}),
     'set-filter':()=>({filter:d.filter,selected:null}),search:()=>({search:d.search}),
     'search-shortcuts':()=>({bindingSearch:d.search}),'search-commands':()=>({commandSearch:d.search}),
+    'edit-space-search':()=>({searchDraft:{...current(r).searchDraft,[d.field]:d.value}}),
     'close-message':()=>({selected:null,messageRender:null}),
     'open-modal':()=>({modal:d.modal,error:''}),'close-modal':()=>({modal:null,commandSearch:'',keyChord:[]})
-  };if(d.kind==='set-auth')r.browser.setCaptchaAction(d.auth==='recover'?'recovery':d.auth==='email'?'email':d.auth==='login'?'login':'signup');if(d.kind==='open-modal')r.browser.captureFocus();update(r,ctx,patches[d.kind]?.()??{});if(d.kind==='open-modal')r.browser.modalFocus();if(d.kind==='close-modal')r.browser.restoreFocus();}
+  };if(d.kind==='set-auth')r.browser.setCaptchaAction(d.auth==='recover'?'recovery':d.auth==='email'?'email':d.auth==='login'?'login':'signup');if(d.kind==='open-modal')r.browser.captureFocus();update(r,ctx,patches[d.kind]?.()??{});if(d.kind==='open-modal')r.browser.modalFocus();if(d.kind==='close-modal')r.browser.restoreFocus();if(d.kind==='navigate'&&d.view==='billing')await loadBilling(r,ctx);}
 }
 export class NetworkChanged extends Action {
   static deps={state:{write:true},api:{},browser:{}};
   constructor(detail){super();this.detail=detail;}
   async execute(r,ctx){try{await this.perform(r,ctx,this.detail);}catch(error){if(error.status===401)clearAccount(r,ctx);update(r,ctx,{error:error.message});}}
-  async perform(r,ctx,detail){update(r,ctx,{offline:!detail.online,data:null,messageDetail:null,messageRender:null,selected:null});if(detail.online){const result=await r.api.get('/api/session');update(r,ctx,{session:result.account?{account:result.account}:null});if(result.account)await refresh(r,ctx);}}
+  async perform(r,ctx,detail){update(r,ctx,{offline:!detail.online,data:null,messageDetail:null,messageRender:null,selected:null,billing:null,billingLoading:false,billingError:'',searchDraft:{},spaceSearch:{phase:'idle',items:[]}});if(detail.online){const result=await r.api.get('/api/session');update(r,ctx,{session:result.account?{account:result.account}:null});if(result.account){await refresh(r,ctx);if(current(r).view==='billing')await loadBilling(r,ctx);}}}
 }
 export class SignUp extends Flow {
   async perform(r,ctx,detail){const s=current(r),v=detail.values;const result=await r.api.request('/api/auth/signup',{handle:v.handle,password:v.password,method:s.authMethod,termsAccepted:v.termsAccepted==='on',termsVersion:s.config.termsVersion??'2026-10-11',...r.browser.captcha(s.config)});
@@ -133,7 +147,37 @@ export class ConfirmEmail extends Flow {async perform(r,ctx,detail){const s=curr
 export class UnsubscribeChannel extends Flow {async perform(r,ctx,detail){const token=r.browser.secret('token');if(!token)throw new Error('This unsubscribe link is incomplete.');await r.api.request('/api/notifications/unsubscribe',{token,owner:r.browser.secret('owner')});update(r,ctx,{unsubscribed:true});}}
 export class SendContactMessage extends Flow {async perform(r,ctx,detail){const endpoint=r.browser.secret('contactEndpoint'),v=detail.values;if(!endpoint)throw new Error('This invitation is incomplete.');if(!(v.file?.size||v.text?.trim()))throw new Error('Write a message or attach a file before sending.');if(v.file?.size>(current(r).route.claims?.maxMessageBytes??1048576))throw new Error('This file exceeds the contact invitation’s message limit.');const payload=await r.browser.fingerprintMessage(v),s=current(r);const idempotencyKey=s.sendPayload===payload?s.sendId:r.browser.id();update(r,ctx,{sendPayload:payload,sendId:idempotencyKey});await r.api.sendContact(endpoint,v,idempotencyKey);update(r,ctx,{sent:true});}}
 export class LoadAccount extends Flow {async perform(r,ctx,detail){await refresh(r,ctx);}}
-export class ReadMessage extends Flow {async perform(r,ctx,detail){const id=detail.id;update(r,ctx,{selected:id});const item=current(r).data.messages.find(item=>item.id===id);if(!item?.readAt)await r.api.request(`/api/messages/${encodeURIComponent(id)}`,{read:true},'PATCH');const response=await r.api.get(`/api/messages/${encodeURIComponent(id)}`);update(r,ctx,{messageDetail:response.message??response,messageRender:response.render});await refresh(r,ctx);}}
+export class LoadBilling extends Flow {async perform(r,ctx){await refresh(r,ctx);await loadBilling(r,ctx);}}
+export class BillingCheckout extends Flow {
+ async perform(r,ctx,detail){const s=current(r);if(s.offline||s.billing?.enabled!==true||s.billing?.configured!==true)throw new Error('Paid plans are not available on this service yet.');if(!['plus','pro'].includes(detail.plan))throw new Error('Choose a paid plan to continue.');const result=await r.api.request('/api/billing/checkout',{plan:detail.plan});if(!current(r).offline&&current(r).session)r.browser.navigate(trustedBillingURL(result.url,s.billing.server));}
+}
+export class BillingPortal extends Flow {
+ async perform(r,ctx){const s=current(r);if(s.offline||s.billing?.enabled!==true||s.billing?.configured!==true)throw new Error('Paid plans are not available on this service yet.');const result=await r.api.request('/api/billing/portal',{});if(!current(r).offline&&current(r).session)r.browser.navigate(trustedBillingURL(result.url,s.billing.server));}
+}
+// Each request owns a model ticket. Superseded requests and replies after a
+// network/session transition cannot reintroduce private search results.
+export class SearchSpace extends Action {
+ static deps={state:{write:true},api:{},browser:{}};
+ constructor(detail={}){super();this.detail=detail;}
+ async execute(r,ctx){
+  const initial=current(r);if(initial.offline||!initial.session)return;
+  const previous=initial.spaceSearch??{items:[]},append=this.detail.kind==='search-next-page';
+  if(append&&(!previous.cursor||previous.phase==='loading'))return;
+  let values;try{values=this.detail.operationId?r.browser.consumeSubmission(this.detail.operationId):this.detail.values??initial.searchDraft??{};}catch{update(r,ctx,{spaceSearch:{...previous,phase:'error',error:'This search expired. Please try again.'}});return;}
+  const criteria=append?previous.criteria:{q:String(values.q??'').trim(),tag:String(values.tag??'').trim(),type:String(values.type??'').trim()};
+  const ticket=r.browser.id(),query=new URLSearchParams({q:criteria.q,mode:'lexical',limit:'20'});
+  if(criteria.tag)query.append('tag',criteria.tag);if(criteria.type)query.append('type',criteria.type);if(append)query.set('cursor',previous.cursor);
+  update(r,ctx,{searchDraft:criteria,spaceSearch:{phase:'loading',ticket,criteria,items:append?previous.items:[],cursor:null,error:''}});
+  try{
+   const result=await r.api.get(`/api/search?${query}`);
+   if(current(r).offline||!current(r).session||current(r).spaceSearch?.ticket!==ticket)return;
+   const incoming=Array.isArray(result.items)?result.items:[],combined=append?[...previous.items,...incoming]:incoming,items=[...new Map(combined.map(item=>[item.id,item])).values()];
+   update(r,ctx,{spaceSearch:{phase:'ready',ticket,criteria,items,cursor:result.cursor??null,indexing:result.indexing,bounded:result.bounded,semanticAvailable:result.semanticAvailable===true,error:''}});
+  }catch(error){if(current(r).spaceSearch?.ticket!==ticket||current(r).offline)return;if(error.status===401){clearAccount(r,ctx);return;}update(r,ctx,{spaceSearch:{...current(r).spaceSearch,phase:'error',cursor:append?previous.cursor:null,error:'Search could not be completed. Please try again.'}});}
+ }
+}
+export class ReadMessage extends Flow {async perform(r,ctx,detail){const id=detail.id;update(r,ctx,{selected:id,messageDetail:null,messageRender:null});const item=current(r).data.messages.find(item=>item.id===id);if(!item?.readAt)await r.api.request(`/api/messages/${encodeURIComponent(id)}`,{read:true},'PATCH');const response=await r.api.get(`/api/messages/${encodeURIComponent(id)}`);update(r,ctx,{messageDetail:response.message??response,messageRender:response.render});await refresh(r,ctx);}}
+export class ReadSearchMessage extends ReadMessage {async perform(r,ctx,detail){update(r,ctx,{view:'inbox',filter:'all',search:'',modal:null});await super.perform(r,ctx,detail);}}
 export class UpdateMessage extends Flow {async perform(r,ctx,detail){await r.api.request(`/api/messages/${detail.id}`,detail.actions,'PATCH');await refresh(r,ctx);}}
 export class OrganizeMessage extends Flow {async perform(r,ctx,detail){const v=detail.values;await r.api.request(`/api/messages/${current(r).modal.message.id}`,{collection:v.collection,tags:tags(v.tags),classification:v.classification},'PATCH');await completed(r,ctx,'Message updated.');}}
 export class CreateCollection extends Flow {async perform(r,ctx,detail){await r.api.request('/api/collections',{name:detail.values.name});await completed(r,ctx,'Collection created.');}}

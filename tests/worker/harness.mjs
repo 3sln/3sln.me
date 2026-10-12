@@ -15,7 +15,7 @@ export class TestDirectory extends IdentityDirectory {
 export class TestAccount extends AccountObject {
   async seed(owner, records){await this.warm(owner);for(const [key,value]of records)await this.ctx.storage.put(key,value);}
   async rows(){return [...await this.ctx.storage.list()];}
-  async blobReadCounter(){this.blobReads=0;const original=this.controller.blobs.get.bind(this.controller.blobs);this.controller.blobs.get=(...args)=>{this.blobReads++;return original(...args);};}
+  async blobReadCounter(){this.blobReads=0;const original=this.originalBlobGet??=this.controller.blobs.get.bind(this.controller.blobs);this.controller.blobs.get=(...args)=>{this.blobReads++;return original(...args);};}
   async readCount(){return this.blobReads||0;}
   async evictCold(){await this.ctx.storage.put('lastOwnerActiveAt',0);await super.alarm();}
   async restoreCold(owner){await this.warm(owner);return [...await this.ctx.storage.list()];}

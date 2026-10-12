@@ -1,8 +1,13 @@
-import { ContactTokenService, ContactEndpointService, MessagingService, NotificationService, renderMessage } from '../../packages/messaging/index.mjs';
+import { ContactTokenService, ContactEndpointService, MessagingService, NotificationService, renderMessage, validateSenderMetadata } from '../../packages/messaging/index.mjs';
 import { key,canonical } from '../../packages/messaging/store.mjs';
 import { encryptSecret, decryptSecret } from './secrets.mjs';
 import { S3Adapter, WebDAVAdapter } from '../../packages/storage/adapters.mjs';
 import { objectKey,StorageError } from '../storage/policy.mjs';
+import {StorageQuota,storageState} from './storage-quota.mjs';
+import {AccountItemIndex} from './item-index.mjs';
+import {BillingService} from '../billing/index.mjs';
+import {validateContent} from '../messaging/content.mjs';
+import {SearchService,SqliteSearchIndex,MetadataSearchOutbox,enqueueSearchEvent,searchRevisionKey,messageSearchDocument,extractSearchText,planBudget} from '../search/index.mjs';
 
 export class IdentityRepository {
   constructor({metadata}){this.metadata=metadata;}
@@ -50,14 +55,14 @@ function serializable(value){if(value instanceof Uint8Array)return {$bytes:Array
 function restore(value){if(value&&Object.hasOwn(value,'$bytes'))return Uint8Array.from(value.$bytes);if(Array.isArray(value))return value.map(restore);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,restore(v)]));return value;}
 
 export class AccountController {
-  constructor({metadata,gate,blobs,archives,config}){
-    this.metadata=metadata;this.gate=gate;this.blobs=blobs;this.archives=archives;this.config=config;
+  constructor({metadata,gate,blobs,archives,config,sql,sqlTransaction}){
+    this.metadata=metadata;this.gate=gate;this.blobs=blobs;this.archives=archives;this.config=config;this.quota=new StorageQuota({metadata,blobs});this.itemIndex=sql?new AccountItemIndex(sql):null;this.billing=new BillingService({config,metadata});this.searchIndex=sql?new SqliteSearchIndex({sql,transaction:sqlTransaction||sql.transaction?.bind(sql)}):null;this.searchOutbox=new MetadataSearchOutbox(metadata);this.search=this.searchIndex?new SearchService({index:this.searchIndex,outbox:this.searchOutbox,authority:{get:(owner,id,options)=>this.searchDocument(owner,id,options),scan:(owner,options)=>this.scanSearchDocuments(owner,options)}}):null;
     const store={transaction:async operation=>{
       const garbage=[];
       const result=await this.metadata.transaction(async tx=>operation({
         get:k=>tx.get(k),
-        set:async(k,v)=>{if(v?.bytes instanceof Uint8Array){const blobRef=`messages/${v.owner}/${v.id}`;await this.blobs.put(blobRef,v.bytes,{httpMetadata:{contentType:'application/octet-stream'}});const {bytes,...record}=v;await tx.put(k,{...record,blobRef});}else await tx.put(k,v);},
-        delete:async k=>{const value=await tx.get(k);if(value?.blobRef)garbage.push(value.blobRef);await tx.delete(k);},
+        set:async(k,v)=>{if(v?.bytes instanceof Uint8Array){const reservation=this.messageReservation;if(!reservation||reservation.owner!==v.owner||reservation.bytes!==v.bytes.byteLength)throw new StorageError('conflict','Message upload reservation is missing.',409);const blobRef=reservation.blobRef;const {bytes,...record}=v;const event=await this.queueMessageSearch(tx,record);record.revision=event.revision;await tx.put(k,{...record,blobRef});this.itemIndex?.upsert(record);await this.quota.commit(tx,reservation.id);}else{if(k.startsWith('message/')){const event=await this.queueMessageSearch(tx,v);v={...v,revision:event.revision};this.itemIndex?.upsert(v);}await tx.put(k,v);}},
+        delete:async k=>{const value=await tx.get(k);if(value?.blobRef)garbage.push(value.blobRef);if(k.startsWith('message/')&&value){await this.queueMessageSearch(tx,value,'tombstone');this.itemIndex?.remove(value.id);}await tx.delete(k);},
         list:async prefix=>[...(await tx.list({prefix}))].map(([key,value])=>{if(value?.blobRef){const {blobRef,...record}=value;return {key,value:record};}return {key,value};})
       }));
       for(const blobRef of garbage){try{await this.blobs.delete(blobRef);}catch{await this.metadata.put(`blob-garbage/${crypto.randomUUID()}`,blobRef);}}
@@ -65,11 +70,11 @@ export class AccountController {
     }};
     this.store=store;this.tokens=new ContactTokenService({store,issuer:config.APP_ORIGIN,allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true'});
     this.endpoints=new ContactEndpointService({tokens:this.tokens,signer:async({owner,kid})=>{const signer=await this.signingKey(owner);if(signer.kid!==kid)throw new Error('Signing key unavailable');return signer.privateKey;}});
-    this.messages=new MessagingService({store,tokens:this.endpoints,maxStoredBytes:52428800,maxStoredMessages:1000});
+    this.messages=new MessagingService({store,tokens:this.endpoints,maxStoredBytes:100_000_000_000,maxStoredMessages:1_000_000});
     this.notifications=new NotificationService({store});
   }
   async invoke({method,args}){
-    const allowed=['touch','snapshot','collections','contacts','createContact','contactURL','revokeContact','quarantineContact','inspectContact','mintContact','deliverContact','receive','message','messageBytes','updateMessage','deleteMessage','rules','notificationPreferences','subscribe','removeSubscription','unsubscribe','unsubscribeLink','resources','addResource','verifyResource','deleteResource','federationRPC'];
+    const allowed=['touch','snapshot','collections','contacts','createContact','contactURL','revokeContact','quarantineContact','inspectContact','mintContact','deliverContact','receive','message','messageBytes','updateMessage','deleteMessage','rules','notificationPreferences','subscribe','removeSubscription','unsubscribe','unsubscribeLink','resources','addResource','verifyResource','deleteResource','federationRPC','storageUsage','messagePage','billingStatus','billingCheckout','billingPortal','billingWebhookVerified','omniSearch','searchRebuild','searchDrain'];
     if(!allowed.includes(method))return {$fault:{code:'unsupported_method',message:'Unsupported account operation.',status:400}};
     return this.gate.run(async()=>{try{if(['message','messageBytes','updateMessage','deleteMessage','resources','addResource','verifyResource','deleteResource'].includes(method))await this.warm(args[0]);return await this[method](...args);}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status}};}});
   }
@@ -86,13 +91,88 @@ export class AccountController {
         const rows=restore(envelope.rows);if(rows.some(row=>!Array.isArray(row)||row.length!==2||typeof row[0]!=='string'||!row[0].startsWith('message/')&&!row[0].startsWith('resource/')))throw new Error('Account archive record invalid');
         await this.metadata.transaction(async tx=>{for(const [k,v]of rows)await tx.put(k,v);await tx.delete('shelved');});
       }
-      await this.metadata.put('owner',owner);
+      await this.metadata.put('owner',owner);await this.migrateItemIndex(owner);
       if(!(await this.messages.collections(owner)).length)await this.messages.createCollection(owner,'Inbox');
-      await this.metadata.setAlarm(Date.now()+7*86400000);
+      await this.scheduleAlarm(Date.now()+7*86400000);
     }
   }
-  async touch(owner) {await this.warm(owner);const now=Date.now();await this.metadata.put('lastOwnerActiveAt',now);await this.metadata.put('lifecycle',{status:'active'});await this.metadata.setAlarm(now+7*86400000);}
-  async snapshot(owner){await this.warm(owner);return {messages:await this.messages.list(owner,{limit:100}),collections:await this.messages.collections(owner),contacts:await this.contacts(owner),resources:await this.resources(owner),rules:await this.messages.rules(owner),notificationPreferences:await this.notifications.preferences(owner),pushDevices:await this.notifications.subscriptions(owner),lifecycle:await this.metadata.get('lifecycle')||{status:'active'}};}
+  async queueMessageSearch(tx,message,operation='upsert'){
+    const id=`message:${message.id}`,prior=await tx.get(searchRevisionKey(message.owner,id)),old=await tx.get(key('message',message.owner,message.id));
+    const revision=Math.max(prior?.revision||0,old?.revision||(old?1:0))+1;
+    const entitlement=await storageState(tx,message.owner,Date.now());
+    const event=await enqueueSearchEvent(tx,{owner:message.owner,id,source:{kind:'message',id:message.id},operation,revision},{maxQueue:planBudget(entitlement.plan==='free'?'free':'paid').limits.queue});
+    await tx.setAlarm(Date.now()+60000);return event;
+  }
+  async searchDocument(owner,id,{purpose='index',revision}={}){
+    if(typeof id!=='string'||!id.startsWith('message:'))return null;
+    const rawId=id.slice(8),message=await this.metadata.get(key('message',owner,rawId));
+    if(!message||message.owner!==owner)return null;const currentRevision=message.revision||1;
+    if(purpose!=='index'){
+      const cached=purpose==='search'?await this.searchIndex?.readContent(owner,id,revision):{title:message.senderMetadata?.subject||'',text:''};
+      if(!cached)return null;
+      return {id,owner,source:{kind:'message',id:rawId},revision:currentRevision,type:message.mimeType==='message/rfc822'?'email':'message',title:cached.title,text:cached.text,tags:message.tags||[],classification:message.classification||'unclassified',createdAt:message.receivedAt||0,acl:{readers:[owner]},quarantined:Boolean(message.quarantined),deleted:false,embeddingAllowed:false};
+    }
+    if(!message.blobRef)return {...messageSearchDocument({...message,bytes:new Uint8Array()},{revision:currentRevision}),createdAt:message.receivedAt||0};
+    const blob=await this.blobs.get(message.blobRef);if(!blob)throw new StorageError('temporarily_unavailable','Message data is temporarily unavailable.',503);
+    if(blob.size>1048576)return messageSearchDocument({...message,bytes:new Uint8Array()},{revision:currentRevision});
+    return messageSearchDocument({...message,bytes:new Uint8Array(await blob.arrayBuffer())},{revision:currentRevision});
+  }
+  async scanSearchDocuments(owner,{limit=50,cursor}={}){const page=await this.messagePage(owner,{limit,cursor});return {items:page.items.map(message=>({id:`message:${message.id}`,owner,revision:message.revision||1,deleted:false})),cursor:page.cursor};}
+  async searchDrain(owner,{limit=10}={}){
+    if(!this.search)return {processed:0};const entitlement=await this.billing.entitlement(owner),budgets=planBudget(entitlement.plan==='free'?'free':'paid').limits;this.search.budgets=budgets;this.searchIndex.budgets=budgets;
+    try{const result=await this.search.drain(owner,{limit});await this.metadata.delete('search-index-error');return result;}catch(error){await this.metadata.put('search-index-error',{code:error.code||'index_unavailable',at:Date.now()});throw error;}
+  }
+  async searchRebuild(owner,options={}){await this.warm(owner);if(!this.search)throw new StorageError('temporarily_unavailable','Search is unavailable.',503);return this.search.rebuild(owner,{...options,limit:Math.min(options.limit||50,50)});}
+  async omniSearch(owner,input){await this.warm(owner);if(!this.search)throw new StorageError('temporarily_unavailable','Search is unavailable.',503);const result=await this.search.search(owner,input);const pending=(await this.metadata.get(key('search-queue-usage',owner)))?.count||0;const error=await this.metadata.get('search-index-error');return {...result,indexing:{pending,ready:pending===0&&!error&&Boolean(await this.metadata.get('search-backfill-ready')),backfillPending:!await this.metadata.get('search-backfill-ready'),limited:Boolean(error),error:error?.code||null}};}
+  async billingStatus(owner){return this.billing.status(owner);}
+  async billingCheckout(owner,plan){return this.billing.checkout(owner,plan);}
+  async billingPortal(owner){return this.billing.portal(owner);}
+  async billingWebhookVerified(owner,event){if(event.owner!==owner)throw new StorageError('forbidden','Billing account mismatch.',403);return this.billing.applyWebhook(event);}
+  async migrateItemIndex(owner){
+    if(!this.itemIndex)return;
+    const prefix=key('message',owner);
+    // Catalog progress never depends on extraction capacity. A full search
+    // queue must not roll back the owner's authoritative inbox browse index.
+    if(!await this.metadata.get('item-index-ready')){
+      const cursor=await this.metadata.get('item-index-migration');
+      const rows=await this.metadata.list({prefix,...cursor?{startAfter:cursor}:{},limit:200});
+      await this.metadata.transaction(async tx=>{
+        for(const [,message]of rows)this.itemIndex.upsert(message);
+        if(rows.size<200){await tx.put('item-index-ready',true);await tx.delete('item-index-migration');}
+        else{await tx.put('item-index-migration',[...rows.keys()].at(-1));await tx.setAlarm(Date.now()+60000);}
+      });
+    }
+    if(await this.metadata.get('search-backfill-ready'))return;
+    // Source revision initialization and work publication remain atomic. Leave
+    // room for new deliveries while legacy work proceeds in bounded pages.
+    await this.metadata.transaction(async tx=>{
+      const entitlement=await storageState(tx,owner,Date.now()),maxQueue=planBudget(entitlement.plan==='free'?'free':'paid').limits.queue;
+      const usage=await tx.get(key('search-queue-usage',owner))||{count:0};
+      const reserve=Math.min(100,Math.floor(maxQueue/10)),capacity=Math.max(0,maxQueue-reserve-usage.count);
+      if(!capacity){await tx.put('search-backfill-blocked',{reason:'queue_capacity'});await tx.setAlarm(Date.now()+60000);return;}
+      const cursor=await tx.get('search-backfill-cursor'),limit=Math.min(200,capacity);
+      const rows=await tx.list({prefix,...cursor?{startAfter:cursor}:{},limit});
+      for(const [path,message]of rows){
+        if(message.owner!==owner||typeof message.id!=='string'||typeof message.mimeType!=='string')continue;
+        const id=`message:${message.id}`;
+        if(!await tx.get(searchRevisionKey(owner,id))){
+          const revision=message.revision||1;
+          await enqueueSearchEvent(tx,{owner,id,source:{kind:'message',id:message.id},operation:'upsert',revision},{maxQueue});
+          message.revision=revision;await tx.put(path,message);this.itemIndex.upsert(message);
+        }
+      }
+      await tx.delete('search-backfill-blocked');
+      if(rows.size<limit){await tx.put('search-backfill-ready',true);await tx.delete('search-backfill-cursor');}
+      else await tx.put('search-backfill-cursor',[...rows.keys()].at(-1));
+      if(rows.size||!await tx.get('search-backfill-ready'))await tx.setAlarm(Date.now()+60000);
+    });
+  }
+  async messagePage(owner,options={}){await this.warm(owner);if(!this.itemIndex)return {items:await this.messages.list(owner,options),cursor:null};if(!await this.metadata.get('item-index-ready'))throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options);}
+  async storageUsage(owner){return this.quota.usage(owner);}
+  async scheduleAlarm(time){const cleanup=await this.quota.nextCleanup(),owner=await this.metadata.get('owner'),pending=owner&&((await this.metadata.get(key('search-queue-usage',owner)))?.count||!await this.metadata.get('item-index-ready')||!await this.metadata.get('search-backfill-ready')),garbage=await this.metadata.list({prefix:'blob-garbage/',limit:1});return this.metadata.setAlarm(Math.min(time,cleanup||Infinity,pending||garbage.size?Date.now()+60000:Infinity));}
+  async touch(owner) {await this.warm(owner);const now=Date.now();await this.metadata.put('lastOwnerActiveAt',now);await this.metadata.put('lifecycle',{status:'active'});await this.scheduleAlarm(now+7*86400000);}
+  async snapshot(owner){await this.warm(owner);return {...await this.messageSnapshot(owner),collections:await this.messages.collections(owner),contacts:await this.contacts(owner),resources:await this.resources(owner),rules:await this.messages.rules(owner),notificationPreferences:await this.notifications.preferences(owner),pushDevices:await this.notifications.subscriptions(owner),storage:await this.storageUsage(owner),lifecycle:await this.metadata.get('lifecycle')||{status:'active'}};}
+  async messageSnapshot(owner){const page=await this.messagePage(owner,{limit:100});return {messages:page.items,messageCursor:page.cursor};}
   async collections(owner,name){await this.warm(owner);return name===undefined?this.messages.collections(owner):this.messages.createCollection(owner,name);}
   async contacts(owner){const names=await this.metadata.list({prefix:'contact-name/'});return (await this.tokens.list(owner)).map(g=>({id:g.id,name:names.get(`contact-name/${g.id}`)||'Contact link',active:g.active,quarantined:Boolean(g.quarantined),createdAt:g.createdAt,expiresAt:g.claims.exp*1000,collections:g.claims.collections,mimeTypes:g.claims.mimeTypes,messagesUsed:g.messagesUsed,maxMessages:g.claims.maxMessages,bytesUsed:g.bytesUsed,maxBytes:g.claims.maxBytes}));}
   async signingKey(owner){
@@ -114,7 +194,15 @@ export class AccountController {
   async inspectContact(owner,url){const {grant}=await this.endpoints.inspect(url);if(grant.owner!==owner)throw Object.assign(new Error('Invalid contact capability.'),{code:'unauthorized'});return {collections:await this.messages.collections(owner).then(all=>all.filter(c=>grant.claims.collections.includes(c.id)).map(({id,name})=>({id,name}))),mimeTypes:grant.claims.mimeTypes,maxMessageBytes:grant.claims.maxMessageBytes,expiresAt:grant.claims.exp*1000};}
   async mintContact(owner,url){const {grant}=await this.endpoints.inspect(url);if(grant.owner!==owner)throw Object.assign(new Error('Invalid contact capability.'),{code:'unauthorized'});return this.endpoints.mint(url);}
   async deliverContact(owner,url,input){const issued=await this.mintContact(owner,url);return this.receive(owner,issued.token,input);}
-  async receive(owner,token,input){const verified=await this.endpoints.verify(token);if(verified.claims.sub!==owner)throw new Error('Wrong recipient');await this.warm(owner);return this.messages.receive(token,{...input,bytes:Uint8Array.from(input.bytes)});}
+  async receive(owner,token,input){
+    const verified=await this.endpoints.verify(token);if(verified.claims.sub!==owner)throw new Error('Wrong recipient');await this.warm(owner);
+    const bytes=Uint8Array.from(input.bytes),receipt=await this.metadata.get(key('message-receipt',verified.claims.parent,input.idempotencyKey));
+    if(receipt)return this.messages.receive(token,{...input,bytes});
+    validateContent(input.mimeType,bytes);validateSenderMetadata(input.senderMetadata);if(!verified.claims.collections.includes(input.collection)||!verified.claims.mimeTypes.includes(input.mimeType)||(await this.metadata.get(key('collection',owner,input.collection)))?.active!==true)throw new StorageError('forbidden','Message access denied.',403);const grant=await this.metadata.get(key('contact-grant',verified.claims.parent));if(bytes.length>verified.claims.maxMessageBytes||grant.messagesUsed+1>grant.claims.maxMessages||grant.bytesUsed+bytes.length>grant.claims.maxBytes)throw new StorageError('quota_exceeded','The contact invitation limit has been reached.',429);
+    const id=crypto.randomUUID(),reservation=await this.quota.reserve(owner,{id,bytes:bytes.length,blobRef:`messages/${owner}/${id}`,kind:'message'});
+    this.messageReservation=reservation;
+    try{await this.blobs.put(reservation.blobRef,bytes,{httpMetadata:{contentType:'application/octet-stream'}});return await this.messages.receive(token,{...input,bytes});}finally{this.messageReservation=null;await this.quota.release(id);}
+  }
   async content(owner,id){const record=await this.messages.read(owner,id);if(record.blobRef){const blob=await this.blobs.get(record.blobRef);if(!blob)throw Object.assign(new Error('Message content is temporarily unavailable.'),{code:'temporarily_unavailable',status:503});return {...record,bytes:new Uint8Array(await blob.arrayBuffer())};}return record;}
   async message(owner,id){const record=await this.content(owner,id);const {bytes,blobRef,...message}=record;return {message,render:renderMessage(record)};}
   async messageBytes(owner,id){const {bytes,mimeType}=await this.content(owner,id);return {bytes:Array.from(bytes),mimeType};}
@@ -138,7 +226,7 @@ export class AccountController {
     await this.metadata.put(`resource/${resource.id}`,resource);const {secret,...publicResource}=resource;return publicResource;
   }
   async verifyResource(owner,id){const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner)throw new Error('Resource not found');const config=await decryptSecret(resource.secret,this.config.KEY_ENCRYPTION_KEY);const options={allowedHosts:(this.config.ALLOWED_CONNECTOR_HOSTS||'').split(',').filter(Boolean)};const adapter=resource.provider==='s3'?new S3Adapter(config,options):new WebDAVAdapter(config,options);await adapter.list();resource.status='connected';resource.verifiedAt=Date.now();await this.metadata.put(`resource/${id}`,resource);const {secret,...result}=resource;return result;}
-  async deleteResource(owner,id){const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner)throw new Error('Resource not found');await this.metadata.delete(`resource/${id}`);return {deleted:true};}
+  async deleteResource(owner,id){const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner)throw new Error('Resource not found');if(resource.provider==='hosted'&&(await this.metadata.list({prefix:`hosted/${id}/`,limit:1})).size)throw new StorageError('resource_not_empty','Delete the files in this hosted resource before removing it.',409);await this.metadata.delete(`resource/${id}`);return {deleted:true};}
   async federationRPC(context){
     const owner=/\/entities\/([a-f0-9-]{36})$/.exec(context.subject)?.[1];if(!owner||context.subject!==`${this.config.APP_ORIGIN}/entities/${owner}`)throw new StorageError('forbidden','Resource access denied.',403);
     await this.warm(owner);
@@ -160,34 +248,69 @@ export class AccountController {
       const encoded=JSON.stringify(result);let saved={result};if(new TextEncoder().encode(encoded).byteLength>65536){const resultRef=`rpc-results/${owner}/${await archiveDigest(context.clientId)}/${context.tx}`;await this.blobs.put(resultRef,encoded);saved={resultRef};}await this.metadata.put(journalKey,{fingerprint,state:'done',...saved,createdAt:Date.now()});await this.metadata.put('lastResourceActiveAt',Date.now());return result;
     }catch(error){if(mutating){const safe=error instanceof StorageError?{code:error.code,message:error.message,status:error.status}:{code:'indeterminate',message:'Storage outcome is unknown; reconcile before retrying.',status:503};await this.metadata.put(journalKey,{fingerprint,state:'done',error:safe,createdAt:Date.now()});throw new StorageError(safe.code,safe.message,safe.status);}throw error;}
   }
+  async migrateHostedIndex(resource){
+    if(!this.itemIndex||await this.metadata.get(`hosted-index-ready/${resource.id}`))return;
+    const cursor=await this.metadata.get(`hosted-index-cursor/${resource.id}`),prefix=`hosted/${resource.id}/`;
+    const rows=await this.metadata.list({prefix,...cursor?{startAfter:cursor}:{},limit:200});
+    await this.metadata.transaction(async tx=>{for(const [,object]of rows)this.itemIndex.upsertObject(resource.id,object);if(rows.size<200){await tx.put(`hosted-index-ready/${resource.id}`,true);await tx.delete(`hosted-index-cursor/${resource.id}`);}else await tx.put(`hosted-index-cursor/${resource.id}`,[...rows.keys()].at(-1));});
+  }
   async hostedOperation(resource,method,args={}){
     if(method==='capabilities')return resource.capabilities;
-    if(method==='list'){const limit=args.limit??100;if(!Number.isInteger(limit)||limit<1||limit>1000||typeof (args.prefix??'')!=='string'||args.cursor)throw new StorageError('invalid_args','List arguments are invalid.');const rows=await this.metadata.list({prefix:`hosted/${resource.id}/`});return {objects:[...rows.values()].filter(row=>row.key.startsWith(args.prefix??'')).sort((a,b)=>a.key.localeCompare(b.key)).slice(0,limit).map(({blobRef,...object})=>object)};}
-    objectKey(args.key);const path=`hosted/${resource.id}/${encodeURIComponent(args.key)}`;const current=await this.metadata.get(path);
-    if(method==='get'){if(!current)throw new StorageError('not_found','Object not found.',404);if(args.ifVersion!==undefined&&args.ifVersion!==current.version)throw new StorageError('conflict','Object changed.',409);const blob=await this.blobs.get(current.blobRef);if(!blob)throw new StorageError('temporarily_unavailable','Object data is temporarily unavailable.',503);let bytes=new Uint8Array(await blob.arrayBuffer());if(args.range){const {start,end}=args.range;if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<0||end<start||end>=bytes.length)throw new StorageError('invalid_args','Byte range is invalid.');bytes=bytes.slice(start,end+1);}const {blobRef,...object}=current;return {object,dataBase64:base64(bytes)};}
+    if(method==='list'){
+      const limit=args.limit??100;if(!Number.isSafeInteger(limit)||limit<1||limit>1000)throw new StorageError('invalid_args','List arguments are invalid.');
+      await this.migrateHostedIndex(resource);
+      if(!this.itemIndex||!await this.metadata.get(`hosted-index-ready/${resource.id}`))throw new StorageError('temporarily_unavailable','The object index is being upgraded. Try again shortly.',503);
+      return this.itemIndex.objectPage(resource.id,{prefix:args.prefix??'',limit:Math.min(limit,200),cursor:args.cursor});
+    }
+    objectKey(args.key);const path=`hosted/${resource.id}/${encodeURIComponent(args.key)}`,current=await this.metadata.get(path);
+    if(method==='get'){
+      if(!current)throw new StorageError('not_found','Object not found.',404);if(args.ifVersion!==undefined&&args.ifVersion!==current.version)throw new StorageError('conflict','Object changed.',409);
+      const blob=await this.blobs.get(current.blobRef);if(!blob)throw new StorageError('temporarily_unavailable','Object data is temporarily unavailable.',503);let bytes=new Uint8Array(await blob.arrayBuffer());
+      if(args.range){const {start,end}=args.range;if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<0||end<start||end>=bytes.length)throw new StorageError('invalid_args','Byte range is invalid.');bytes=bytes.slice(start,end+1);}const {blobRef,...object}=current;return {object,dataBase64:base64(bytes)};
+    }
     if(method==='put'){
       if(args.condition?.absent===true?Boolean(current):typeof args.condition?.version!=='string'||args.condition.version!==current?.version)throw new StorageError('conflict','Object changed or the creation condition is missing.',409);
-      if(typeof args.dataBase64!=='string'||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(args.dataBase64))throw new StorageError('invalid_args','Canonical base64 data is required.');const bytes=Uint8Array.from(atob(args.dataBase64),c=>c.charCodeAt(0));if(bytes.length>1048576)throw new StorageError('quota_exceeded','Objects are limited to one MiB.',429);
-      const usage=await this.metadata.get('hosted-usage')||{bytes:0,objects:0};if(usage.bytes-(current?.size||0)+bytes.length>52428800||usage.objects+(!current?1:0)>1000)throw new StorageError('quota_exceeded','Hosted storage quota exceeded.',429);
+      if(typeof args.dataBase64!=='string'||args.dataBase64.length>1398104||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(args.dataBase64))throw new StorageError('invalid_args','Canonical base64 data is required.');
+      const bytes=Uint8Array.from(atob(args.dataBase64),c=>c.charCodeAt(0));if(bytes.length>1048576)throw new StorageError('quota_exceeded','Objects are limited to one MiB.',429);
       if(args.contentType!==undefined&&(typeof args.contentType!=='string'||args.contentType.length>100||/[\r\n]/.test(args.contentType)))throw new StorageError('invalid_args','Content type is invalid.');
-      const version=crypto.randomUUID(),blobRef=`objects/${resource.owner}/${resource.id}/${version}`;await this.blobs.put(blobRef,bytes);const object={key:args.key,version,size:bytes.length,contentType:args.contentType||'application/octet-stream',modifiedAt:Date.now(),blobRef};await this.metadata.transaction(async tx=>{await tx.put(path,object);await tx.put('hosted-usage',{bytes:usage.bytes-(current?.size||0)+bytes.length,objects:usage.objects+(!current?1:0)});if(current)await tx.put(`blob-garbage/${crypto.randomUUID()}`,current.blobRef);});const {blobRef:privateRef,...publicObject}=object;return {object:publicObject};
+      const usage=await this.metadata.get('hosted-usage')||{bytes:0,objects:0};if(usage.objects+(!current?1:0)>1_000_000)throw new StorageError('quota_exceeded','The object count limit has been reached.',429);
+      const version=crypto.randomUUID(),blobRef=`objects/${resource.owner}/${resource.id}/${version}`;
+      const reservation=await this.quota.reserve(resource.owner,{id:version,bytes:bytes.length,replacedBytes:current?.size||0,blobRef,kind:'object'});
+      try{
+        await this.blobs.put(blobRef,bytes);
+        const object={key:args.key,version,size:bytes.length,contentType:args.contentType||'application/octet-stream',modifiedAt:Date.now(),blobRef};
+        await this.metadata.transaction(async tx=>{await tx.put(path,object);await tx.put('hosted-usage',{bytes:usage.bytes-(current?.size||0)+bytes.length,objects:usage.objects+(!current?1:0)});this.itemIndex?.upsertObject(resource.id,object);await this.quota.commit(tx,reservation.id);if(current)await tx.put(`blob-garbage/${crypto.randomUUID()}`,current.blobRef);});
+        const {blobRef:privateRef,...publicObject}=object;return {object:publicObject};
+      }finally{await this.quota.release(reservation.id);await this.scheduleAlarm(Date.now()+60000);}
     }
-    if(method==='delete'){if(!current)throw new StorageError('not_found','Object not found.',404);if(typeof args.version!=='string'||current.version!==args.version)throw new StorageError('conflict','Object changed.',409);await this.metadata.transaction(async tx=>{const usage=await tx.get('hosted-usage');await tx.delete(path);if(usage)await tx.put('hosted-usage',{bytes:usage.bytes-current.size,objects:usage.objects-1});await tx.put(`blob-garbage/${crypto.randomUUID()}`,current.blobRef);});return {deleted:true};}
+    if(method==='delete'){
+      if(!current)throw new StorageError('not_found','Object not found.',404);if(typeof args.version!=='string'||current.version!==args.version)throw new StorageError('conflict','Object changed.',409);
+      await this.metadata.transaction(async tx=>{const usage=await tx.get('hosted-usage');await tx.delete(path);if(usage)await tx.put('hosted-usage',{bytes:usage.bytes-current.size,objects:usage.objects-1});this.itemIndex?.removeObject(resource.id,args.key);await tx.put(`blob-garbage/${crypto.randomUUID()}`,current.blobRef);});await this.scheduleAlarm(Date.now()+60000);return {deleted:true};
+    }
     throw new StorageError('unsupported_method','Hosted storage does not support that operation.');
+  }
+  async collectBlobGarbage({limit=32}={}){
+    const cursor=await this.metadata.get('blob-garbage-cursor');let rows=await this.metadata.list({prefix:'blob-garbage/',...cursor?{startAfter:cursor}:{},limit});if(!rows.size&&cursor)rows=await this.metadata.list({prefix:'blob-garbage/',limit});
+    let cleaned=0;for(const [path,ref]of rows){try{await this.blobs.delete(ref);await this.metadata.delete(path);cleaned++;}catch{/* Retain ownership of retryable garbage. */}}
+    if(rows.size)await this.metadata.put('blob-garbage-cursor',[...rows.keys()].at(-1));return {cleaned};
   }
   async alarm(){
     await this.gate.run(async()=>{
-      const owner=await this.metadata.get('owner');if(!owner||await this.metadata.get('shelved'))return;
-      const last=await this.metadata.get('lastOwnerActiveAt')||0;if(Date.now()-last<7*86400000){await this.metadata.setAlarm(last+7*86400000);return;}
-      const all=await this.metadata.list();
+      await this.quota.cleanup();await this.collectBlobGarbage();const owner=await this.metadata.get('owner');if(!owner)return;
+      if(await this.metadata.get('shelved')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
+      await this.migrateItemIndex(owner);
+      if((await this.metadata.get(key('search-queue-usage',owner)))?.count){try{await this.searchDrain(owner,{limit:10});}catch{/* Durable outbox and health marker retain retry work. */}}
+      if((await this.metadata.get(key('search-queue-usage',owner)))?.count||this.itemIndex&&(!await this.metadata.get('item-index-ready')||!await this.metadata.get('search-backfill-ready'))){await this.scheduleAlarm(Date.now()+60000);return;}
+      const last=await this.metadata.get('lastOwnerActiveAt')||0;if(Date.now()-last<7*86400000){await this.scheduleAlarm(last+7*86400000);return;}
+      const messageRows=await this.metadata.list({prefix:key('message',owner),limit:2001}),resourceRows=await this.metadata.list({prefix:'resource/',limit:101});if(messageRows.size>2000||resourceRows.size>100){await this.metadata.put('cold-index-mode',{mode:'indexed-sqlite',reason:'paged-metadata-shelving-pending'});await this.scheduleAlarm(Date.now()+7*86400000);return;}const all=new Map([...messageRows,...resourceRows]);
       // Keep signing/public capability records hot, so invalid bearers cannot
       // trigger an archive restore. Only cold content metadata/resources move.
       const rows=[...all].filter(([k])=>k.startsWith('message/')||k.startsWith('resource/'));
       const serializedRows=serializable(rows);const serialized=JSON.stringify({version:1,owner,rows:serializedRows,digest:await archiveDigest(JSON.stringify(serializedRows))});const archiveKey=`accounts/${owner}.json`;
-      if(rows.length>2000||new TextEncoder().encode(serialized).byteLength>8388608)throw new Error('Account archive exceeds restorable limits');
+      if(new TextEncoder().encode(serialized).byteLength>8388608){await this.metadata.put('cold-index-mode',{mode:'indexed-sqlite',reason:'paged-metadata-shelving-pending'});await this.scheduleAlarm(Date.now()+7*86400000);return;}
       await this.archives.put(archiveKey,serialized,{httpMetadata:{contentType:'application/json'}});
       const verified=await this.archives.get(archiveKey);if(!verified||await verified.text()!==serialized)throw new Error('Archive verification failed');
-      await this.metadata.transaction(async tx=>{for(let i=0;i<rows.length;i+=100)await tx.delete(rows.slice(i,i+100).map(([k])=>k));await tx.put('shelved',true);});
+      await this.metadata.transaction(async tx=>{for(let i=0;i<rows.length;i+=100)await tx.delete(rows.slice(i,i+100).map(([k])=>k));await tx.put('shelved',true);});await this.scheduleAlarm(Date.now()+7*86400000);
     });
   }
 }

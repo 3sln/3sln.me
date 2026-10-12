@@ -12,5 +12,9 @@
   ]},
   "migrations":[{"tag":"v1","new_sqlite_classes":["IdentityDirectory","AccountObject","AbuseGuard"]}],
   "r2_buckets":[{"binding":"BLOBS","bucket_name":"3sln-me-blobs-local"},{"binding":"ARCHIVES","bucket_name":"3sln-me-account-archives-local"}],
-  "vars":{"APP_ORIGIN":"http://localhost:8787","RP_ID":"localhost","TERMS_VERSION":"2026-10-11","LOCAL_DEVELOPMENT":"true","TURNSTILE_SITE_KEY":"1x00000000000000000000AA","TURNSTILE_SECRET_KEY":"1x0000000000000000000000000000000AA","RELEASE_READY":"false","VAPID_PUBLIC_KEY":"","ALLOWED_CONNECTOR_HOSTS":""}
+  "vars":{"APP_ORIGIN":"http://localhost:8787","RP_ID":"localhost","TERMS_VERSION":"2026-10-11","LOCAL_DEVELOPMENT":"true","TURNSTILE_SITE_KEY":"1x00000000000000000000AA","TURNSTILE_SECRET_KEY":"1x0000000000000000000000000000000AA","RELEASE_READY":"false",
+    "BILLING_ENABLED":"false",
+    "POLAR_SERVER":"sandbox",
+    "POLAR_PRODUCT_ID_PLUS":"",
+    "POLAR_PRODUCT_ID_PRO":"","VAPID_PUBLIC_KEY":"","ALLOWED_CONNECTOR_HOSTS":""}
 }

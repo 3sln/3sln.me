@@ -79,3 +79,17 @@ Preferences include channels, delays, repeat limits and collections. Hosted push
 ## What these checks establish
 
 The isolated browser suite exercises maintained Argon2id in a dedicated worker, Node/browser interoperability and the archived seven-type vector, malicious public metadata, wrong answers, wrong-provider files, duplicate submits, cancellation, real virtual-authenticator WebAuthn and full recovery rotation. Mobile layout and Spanish/user-content checks run separately. Production CAPTCHA, physical devices, low-memory performance, inbox delivery and all external storage providers remain separate verification.
+
+## 13. See storage usage and annual plans
+
+The visible account meter shows 500 MB on the free plan, reserved uploads and a messages/files breakdown. Plus is 5 GB for $5/year; Pro is 100 GB for $30/year. Checkout remains disabled until Polar setup and verification. These additional screenshots use the actual Chrome-rendered portal with explicitly mocked account/API data to exercise UI states; they do not prove live billing or deployed storage capacity.
+
+![Storage usage and annual plans](walkthrough-assets/storage-desktop.png)
+
+![Storage on a narrow phone](walkthrough-assets/storage-mobile.png)
+
+## 14. Search messages across the account
+
+Lexical and tag search support bounded cursor pages, index-lag notices and opening messages outside the initial inbox page. Semantic search remains unavailable until its provider is configured and verified. User-authored titles and snippets retain their language and render as inert text.
+
+![Account search](walkthrough-assets/search-desktop.png)

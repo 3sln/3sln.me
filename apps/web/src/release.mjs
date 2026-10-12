@@ -49,7 +49,10 @@ const constructors={
   'inspect-device':actions.InspectDeviceLogin,'approve-device':actions.ApproveDeviceLogin,
   'deny-device':actions.DenyDeviceLogin,'set-language':actions.SetLanguage,
   'save-shortcut':actions.SetShortcut,'reset-shortcut':actions.ResetShortcuts,
-  'reset-shortcuts':actions.ResetShortcuts
+  'reset-shortcuts':actions.ResetShortcuts,
+  'load-billing':actions.LoadBilling,'billing-checkout':actions.BillingCheckout,
+  'billing-portal':actions.BillingPortal,'search-space':actions.SearchSpace,
+  'search-next-page':actions.SearchSpace,'read-search-message':actions.ReadSearchMessage
 };
 function dispatchIntent(input){let detail=input;if(input.form){detail={...input,operationId:captureSubmission(input.form)};delete detail.form;}if(detail.kind==='run-command'){dispatchCommand(detail.id);return;}const Action=constructors[detail.kind]??actions.NavigateSpace;engine.dispatch(new Action(detail));}
 function dispatchCommand(id){try{engine.dispatch(new RunPortalCommand(registry,id)).next('complete').catch(error=>engine.dispatch(new actions.ReportCommandError({message:error.message})));}catch(error){engine.dispatch(new actions.ReportCommandError({message:error.message}));}}

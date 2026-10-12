@@ -91,6 +91,8 @@ test('Worker metadata updates do not read payload R2 objects; cold restore retai
  const issued=await contact();const response=await send(issued.url);assert.equal(response.status,202);const {id}=await response.json();await object.blobReadCounter();
  const update=await h.request(`/api/messages/${id}`,{method:'PATCH',headers:ownerHeaders(),value:{read:true,tags:['owner']}});assert.equal(update.status,200);assert.equal(await object.readCount(),0);
  await object.evictCold();assert.equal(new Map(await object.rows()).has(`message/${owner.result.account.id}/${id}/`),false);
+ // Alarm extraction reads the payload once; owner restore itself reads only metadata.
+ assert.equal(await object.readCount(),1);await object.blobReadCounter();
  const restored=new Map(await object.restoreCold(owner.result.account.id));assert.equal(typeof restored.get(`message/${owner.result.account.id}/${id}/`).blobRef,'string');assert.equal(await object.readCount(),0);
  const download=await h.request(`/api/messages/${id}/download`,{headers:{Cookie:owner.cookie}});assert.equal(download.status,200);assert.equal(await download.text(),'Hello from a sender');assert.equal(await object.readCount(),1);
 });

@@ -1,0 +1,55 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {launch,baseURL,screenshot} from './browser.mjs';
+
+// Actual portal assets in Chrome, with explicit API fault injection. These
+// fixtures verify UI behavior and do not claim provider or Worker conformance.
+let browser;
+test.before(async()=>{browser=await launch();});
+test.after(async()=>{await browser?.close();});
+const storage={plan:'free',planName:'Free',storageBytes:500000000,usedBytes:123450000,reservedBytes:2000000,remainingBytes:374550000,overLimit:false,messagesBytes:100000000,objectsBytes:23450000,messageCount:101,objectCount:4};
+const plans=[{id:'free',name:'Free',storageBytes:500000000,annualAmount:0,currency:'usd'},{id:'plus',name:'Plus',storageBytes:5000000000,annualAmount:500,currency:'usd'},{id:'pro',name:'Pro',storageBytes:100000000000,annualAmount:3000,currency:'usd'}];
+async function fixture(t,{locale='en',billing={plan:'free',enabled:false,configured:false,plans},storageOverride={}}={}){
+ const context=await browser.newContext({viewport:{width:1440,height:1050},serviceWorkers:'block'});t.after(()=>context.close());
+ await context.addInitScript(value=>localStorage.setItem('personal-space-preferences',JSON.stringify({locale:value})),locale);
+ const page=await context.newPage();page.setDefaultTimeout(10000);const errors=[];page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error'&&message.text()!=='Failed to load resource: the server responded with a status of 503 (Service Unavailable)'&&message.text()!=='Failed to load resource: net::ERR_INTERNET_DISCONNECTED')errors.push(message.text());});t.after(()=>assert.deepEqual(errors,[],'No browser runtime errors'));
+ const account={id:'browser-owner',handle:'river',status:'active'};
+ await page.route('**/api/config',route=>route.fulfill({json:{environment:'Plans/search browser fault injection',localDevelopment:true,providers:{}}}));
+ await page.route('**/api/session',route=>route.fulfill({json:{account,csrfToken:'fixture-csrf'}}));
+ await page.route('**/api/account',route=>route.fulfill({json:{account,storage:{...storage,...storageOverride},collections:[{id:'inbox',name:'Inbox'}],messages:[],contacts:[],resources:[],rules:[],grants:[]}}));
+ await page.route('**/api/billing',route=>route.fulfill({json:billing}));
+ await page.goto(baseURL);await page.locator('.app-shell').waitFor();return {page,context};
+}
+test('localized storage meter and annual plan cards disable checkout without configuration and fit mobile',async t=>{
+ const {page}=await fixture(t,{locale:'es'});let checkout=0;await page.route('**/api/billing/checkout',route=>{checkout++;return route.fulfill({status:503,json:{message:'unavailable'}});});
+ await page.getByRole('button',{name:'Almacenamiento y facturación',exact:true}).click();await page.getByRole('heading',{name:'Almacenamiento y facturación'}).waitFor();
+ await page.getByText(/planes de pago aún no están disponibles/).waitFor();assert.equal(await page.locator('.plan-card').count(),3);assert.equal(await page.getByText('500 MB',{exact:true}).count(),1);assert.equal(await page.getByText('5 GB',{exact:true}).count(),1);assert.equal(await page.getByText('100 GB',{exact:true}).count(),1);
+ assert.ok((await page.locator('.plan-price').allTextContents()).some(price=>price.includes('5')&&price.includes('año')));assert.equal(await page.locator('.plan-card button:disabled').count(),3);assert.equal(checkout,0);
+ assert.equal(await page.locator('.storage-panel meter').getAttribute('aria-label'),'Almacenamiento de la cuenta utilizado');
+ await screenshot(page,'plans-storage-es-desktop');
+ for(const width of [390,320]){await page.setViewportSize({width,height:900});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`billing fits ${width}px`);}
+ await screenshot(page,'plans-storage-es-mobile');
+});
+test('billing failure disables actions and an over-limit account keeps a clear read/export/delete explanation',async t=>{
+ const {page}=await fixture(t,{storageOverride:{overLimit:true,usedBytes:600000000,remainingBytes:0}});
+ await page.route('**/api/billing',route=>route.fulfill({status:503,json:{message:'Provider failed'}}));
+ await page.getByRole('button',{name:'Storage & billing',exact:true}).click();await page.getByText('Plan information could not be loaded. Please try again.').waitFor();assert.ok(await page.getByText(/You can still read, export, and delete/).isVisible());assert.ok(await page.getByRole('button',{name:'Manage subscription',exact:true}).isDisabled());
+});
+test('full-space search preserves user language, cursor pages, index lag and reads content beyond the inbox page',async t=>{
+ const {page}=await fixture(t,{locale:'es'});const queries=[];
+ await page.route('**/api/search?*',route=>{const params=new URL(route.request().url()).searchParams;queries.push(Object.fromEntries(params));const second=params.has('cursor');return route.fulfill({json:{items:[{id:`message:${second?'older':'first'}`,source:{kind:'message',id:second?'older':'first'},type:'message',title:second?'Beyond the first 100 messages':'Inbox',snippet:'Free <script>keep user words</script>',tags:['Storage']}],cursor:second?null:'cursor-two',semanticAvailable:false,bounded:true,indexing:{pending:2,ready:false}}});});
+ await page.keyboard.press(process.platform==='darwin'?'Meta+Shift+f':'Control+Shift+f');await page.getByRole('heading',{name:'Buscar en tu espacio'}).waitFor();
+ await page.getByLabel('Términos de búsqueda').fill('private phrase');await page.getByLabel('Etiqueta',{exact:true}).fill('owner-tag');await page.getByRole('button',{name:'Buscar todo el contenido',exact:true}).click();
+ await page.getByRole('heading',{name:'Inbox',exact:true}).waitFor();assert.ok(await page.getByText('Free <script>keep user words</script>',{exact:true}).isVisible());assert.ok(await page.getByText(/índice de búsqueda se está actualizando/).isVisible());assert.equal(await page.locator('.search-results script').count(),0);assert.equal(queries[0].mode,'lexical');assert.equal(queries[0].tag,'owner-tag');
+ await page.getByRole('button',{name:'Cargar más resultados',exact:true}).click();await page.getByRole('heading',{name:'Beyond the first 100 messages'}).waitFor();assert.equal(queries[1].cursor,'cursor-two');assert.equal(await page.locator('.search-result').count(),2);
+ await screenshot(page,'omni-search-es-desktop');await page.setViewportSize({width:320,height:900});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'search fits 320px');
+ await page.route('**/api/messages/older',route=>route.fulfill({json:{message:{id:'older',title:'Beyond the first 100 messages',mimeType:'text/plain',text:'A message outside the loaded inbox',readAt:1},render:{kind:'text'}}}));
+ await page.locator('.search-result').filter({has:page.getByRole('heading',{name:'Beyond the first 100 messages'})}).getByRole('button',{name:'Abrir mensaje'}).click();await page.getByText('A message outside the loaded inbox',{exact:true}).waitFor();
+});
+test('empty, API failure, and offline search states never show successful or stale content',async t=>{
+ const {page,context}=await fixture(t);await page.getByRole('button',{name:'Search your space',exact:true}).first().click();
+ await page.route('**/api/search?*',route=>route.fulfill({json:{items:[],cursor:null,indexing:{pending:0,ready:true}}}));
+ await page.getByLabel('Search terms').fill('missing');await page.getByRole('button',{name:'Search all content',exact:true}).click();await page.getByRole('heading',{name:'No matches yet.'}).waitFor();
+ await page.route('**/api/search?*',route=>route.fulfill({status:503,json:{message:'internal storage details'}}));await page.getByRole('button',{name:'Search all content',exact:true}).click();await page.getByText('Search could not be completed. Please try again.').waitFor();assert.equal(await page.getByText('internal storage details').count(),0);
+ await context.setOffline(true);await page.getByText(/You’re offline/).waitFor();assert.equal(await page.locator('.search-result').count(),0);assert.equal(await page.getByText('123.45 MB').count(),0);
+});

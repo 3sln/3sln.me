@@ -3,6 +3,7 @@ import { enforceAbusePolicy } from '../core/abuse-policy.mjs';
 import { MessagingFault, CONTACT_TOKEN_MIME } from '../messaging/index.mjs';
 import { StorageError } from '../storage/policy.mjs';
 import QRCode from 'qrcode';
+import {verifyPolarWebhook} from '../billing/index.mjs';
 
 const encoder=new TextEncoder();
 const privateHeaders={ 'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Permissions-Policy':'camera=(), microphone=(), geolocation=()' };
@@ -44,6 +45,12 @@ export default {
    const url=new URL(request.url);const local=env.LOCAL_DEVELOPMENT==='true';
    if(url.origin!==env.APP_ORIGIN)return json({error:'invalid_origin',message:'Use the configured account domain.'},403);
    const path=url.pathname;const mutation=!['GET','HEAD','OPTIONS'].includes(request.method);
+   if(path==='/api/billing/webhook'){
+    if(request.method!=='POST')return json({error:'method_not_allowed'},405,{Allow:'POST'});
+    const verified=await verifyPolarWebhook(request,env);if(verified.ignored)return json({accepted:true,ignored:true});
+    const account=await env.IDENTITY_REPOSITORY.get(verified.owner);if(!account||account.status!=='active')return json({error:'billing_account_unavailable'},409);
+    return json(await accountHandle(env,verified.owner).billingWebhookVerified(verified.owner,verified));
+   }
    if(path==='/manifest.webmanifest'&&request.method==='GET'){const asset=await env.ASSETS.fetch(request);const manifest=await asset.json();const name=env.BRAND_NAME||'3sln.me';return new Response(JSON.stringify({...manifest,name,short_name:name}),{headers:{'Content-Type':'application/manifest+json','Cache-Control':'no-cache'}});}
    const signedContact=/^\/users\/([a-z][a-z0-9_-]{2,31})\/contact\/([a-f0-9-]{36})$/.exec(path);
    if(signedContact||path==='/api/messages'&&request.method==='OPTIONS'){
@@ -65,12 +72,12 @@ export default {
      if(request.method==='HEAD'){await handle.inspectContact(claims.sub,request.url);return new Response(null,{headers:{...privateHeaders,...publicHeaders,'Content-Type':wantsToken?CONTACT_TOKEN_MIME:'text/html'}});}
      if(request.method==='GET'&&wantsInfo)return json(await handle.inspectContact(claims.sub,request.url),200,publicHeaders);
      if(request.method==='GET'){const minted=await handle.mintContact(claims.sub,request.url);return new Response(minted.token,{headers:{...privateHeaders,...publicHeaders,'Content-Type':CONTACT_TOKEN_MIME,'X-Token-Expires-At':String(minted.expiresAt)}});}
-     const input=await multipartMessage(request);const result=await handle.deliverContact(claims.sub,request.url,input);return json(result,202,publicHeaders);
+     const input=await multipartMessage(request);const result=await handle.deliverContact(claims.sub,request.url,input);execution?.waitUntil?.(handle.searchDrain(claims.sub,{limit:10}).catch(()=>{}));return json(result,202,publicHeaders);
     }
    }
    const allow=allowedMethods(path);if(allow&&!allow.includes(request.method))return json({error:'method_not_allowed',message:'This operation does not support that request method.'},405,{Allow:allow.join(', ')});
    if(path.startsWith('/api/demo'))return json({error:'not_found'},404);
-   if(path==='/api/config')return json({origin:env.APP_ORIGIN,brand:{name:env.BRAND_NAME||(local?'3sln.me':'3sln.me'),host:new URL(env.APP_ORIGIN).host},termsVersion:env.TERMS_VERSION,turnstileSiteKey:env.TURNSTILE_SITE_KEY,localDevelopment:local,signupEnabled:local||env.RELEASE_READY==='true'&&Boolean(env.TURNSTILE_SECRET_KEY&&env.KEY_ENCRYPTION_KEY),passwordEnabled:true,passkeyEnabled:true,emailEnabled:env.EMAIL_AVAILABLE===true,notificationEmailEnabled:false,pushEnabled:false,vapidPublicKey:env.VAPID_PUBLIC_KEY,providers:providerConfig(env)});
+   if(path==='/api/config')return json({origin:env.APP_ORIGIN,brand:{name:env.BRAND_NAME||(local?'3sln.me':'3sln.me'),host:new URL(env.APP_ORIGIN).host},termsVersion:env.TERMS_VERSION,turnstileSiteKey:env.TURNSTILE_SITE_KEY,localDevelopment:local,signupEnabled:local||env.RELEASE_READY==='true'&&Boolean(env.TURNSTILE_SECRET_KEY&&env.KEY_ENCRYPTION_KEY),passwordEnabled:true,passkeyEnabled:true,emailEnabled:env.EMAIL_AVAILABLE===true,notificationEmailEnabled:false,pushEnabled:false,vapidPublicKey:env.VAPID_PUBLIC_KEY,billingEnabled:env.BILLING_ENABLED==='true',searchEnabled:true,semanticSearchEnabled:false,providers:providerConfig(env)});
    if(path==='/api/notifications/unsubscribe'&&request.method==='POST'){
      const input=await body(request);const pieces=typeof input.token==='string'?input.token.split('.'):[];const owner=pieces.length===2?pieces[0]:input.owner;const token=pieces.length===2?pieces[1]:input.token;
      if(typeof owner!=='string'||!/^[a-f0-9-]{36}$/.test(owner)||typeof token!=='string'||token.length!==43)return json({error:'invalid_unsubscribe',message:'This unsubscribe link is invalid.'},400);
@@ -90,7 +97,7 @@ export default {
     const account=accountHandle(env,claims.sub);let bytes;
     if(typeof input.text==='string')bytes=encoder.encode(input.text);else if(typeof input.dataBase64==='string'){try{bytes=Uint8Array.from(atob(input.dataBase64),c=>c.charCodeAt(0));}catch{return json({error:'invalid_message'},400);}}else return json({error:'invalid_message'},400);
     if(bytes.length>1048576)return json({error:'body_too_large'},413);
-    const result=await account.receive(claims.sub,token,{collection:input.collection,mimeType:input.mimeType,bytes:Array.from(bytes),idempotencyKey:input.idempotencyKey,senderMetadata:input.senderMetadata});return json(result,202,{'Access-Control-Allow-Origin':'*'});
+    const result=await account.receive(claims.sub,token,{collection:input.collection,mimeType:input.mimeType,bytes:Array.from(bytes),idempotencyKey:input.idempotencyKey,senderMetadata:input.senderMetadata});execution?.waitUntil?.(account.searchDrain(claims.sub,{limit:10}).catch(()=>{}));return json(result,202,{'Access-Control-Allow-Origin':'*'});
    }
    if(mutation&&path.startsWith('/api/')&&request.headers.get('Origin')!==env.APP_ORIGIN)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
    if(path.startsWith('/api/')){
@@ -115,13 +122,19 @@ export default {
     if(mutation&&context.csrfToken!==owner.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
     await object.touch(id);
     if(path==='/api/account'&&request.method==='GET')return json({...await object.snapshot(id),account:owner.account,credentials:owner.credentials,devices:owner.devices,audit:owner.audit,grants:[]});
+    if(path==='/api/storage/usage')return json(await object.storageUsage(id));
+    if(path==='/api/billing'&&request.method==='GET')return json(await object.billingStatus(id));
+    if(path==='/api/billing/checkout'&&request.method==='POST')return json(await object.billingCheckout(id,(await body(request)).plan));
+    if(path==='/api/billing/portal'&&request.method==='POST')return json(await object.billingPortal(id));
+    if(path==='/api/messages/page'){const p=url.searchParams;return json(await object.messagePage(id,{limit:Number(p.get('limit')||100),...p.has('collection')?{collection:p.get('collection')}:{},...p.has('unread')?{unread:p.get('unread')==='true'}:{},...p.has('quarantined')?{quarantined:p.get('quarantined')==='true'}:{},cursor:p.get('cursor')||undefined}));}
+    if(path==='/api/search'){const p=url.searchParams;if(!await limit(env,{operation:'search',remoteIP:context.remoteIP,handle:owner.account.handle}))return json({error:'rate_limited',message:'Please wait before searching again.'},429);return json(await object.omniSearch(id,{text:p.get('q')||'',mode:p.get('mode')||'lexical',tags:{all:p.getAll('tag'),any:p.getAll('anyTag')},types:p.getAll('type'),...p.has('from')?{from:Number(p.get('from'))}:{},...p.has('to')?{to:Number(p.get('to'))}:{},limit:Number(p.get('limit')||20),cursor:p.get('cursor')||undefined}));}
     if(path==='/api/collections')return json(request.method==='POST'?await object.collections(id,(await body(request)).name):await object.collections(id));
     if(path==='/api/contacts')return json(request.method==='POST'?await object.createContact(id,owner.account.handle,await body(request)): (await object.snapshot(id)).contacts);
     const quarantine=/^\/api\/contacts\/([a-f0-9-]{36})\/quarantine$/.exec(path);if(quarantine&&request.method==='POST')return json(await object.quarantineContact(id,quarantine[1],(await body(request)).quarantined));
     const contact=/^\/api\/contacts\/([a-f0-9-]{36})(?:\/(qr\.svg|url))?$/.exec(path);
     if(contact){if(request.method==='DELETE')return json(await object.revokeContact(id,contact[1]));const share=await object.contactURL(id,contact[1]);if(contact[2]==='qr.svg'){const svg=await QRCode.toString(share,{type:'svg',width:320,margin:2});return new Response(svg,{headers:{...privateHeaders,'Content-Type':'image/svg+xml','Content-Security-Policy':"default-src 'none'; sandbox"}});}return json({url:share});}
     const message=/^\/api\/messages\/([a-f0-9-]{36})(?:\/(download))?$/.exec(path);
-    if(message){if(request.method==='PATCH')return json(await object.updateMessage(id,message[1],await body(request)));if(request.method==='DELETE')return json(await object.deleteMessage(id,message[1]));if(message[2]){const payload=await object.messageBytes(id,message[1]);return new Response(Uint8Array.from(payload.bytes),{headers:{...privateHeaders,'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="message.bin"'}});}return json(await object.message(id,message[1]));}
+    if(message){if(request.method==='PATCH'){const result=await object.updateMessage(id,message[1],await body(request));return json(result);}if(request.method==='DELETE'){const result=await object.deleteMessage(id,message[1]);return json(result);}if(message[2]){const payload=await object.messageBytes(id,message[1]);return new Response(Uint8Array.from(payload.bytes),{headers:{...privateHeaders,'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="message.bin"'}});}return json(await object.message(id,message[1]));}
     if(path==='/api/messages')return json((await object.snapshot(id)).messages);
     if(path==='/api/rules')return json(await object.rules(id,request.method==='PUT'? (await body(request)).rules:undefined));
     const rule=/^\/api\/rules\/([^/]+)$/.exec(path);if(rule&&request.method==='DELETE'){const rules=await object.rules(id);return json(await object.rules(id,rules.filter(r=>r.id!==rule[1])));}
@@ -153,6 +166,8 @@ function securePage(response,isolatedRecovery=false){const headers=new Headers(r
 async function brandPage(response,env){if(!env.BRAND_NAME||env.BRAND_NAME==='3sln.me'||!response.headers.get('Content-Type')?.includes('text/html'))return response;const name=env.BRAND_NAME.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');let html=await response.text();html=html.replace(/<title>3sln\.me[^<]*<\/title>/,`<title>${name}</title>`).replaceAll('<span>3sln.me</span>',`<span>${name}</span>`);return new Response(html,{status:response.status,headers:response.headers});}
 function allowedMethods(path){
  if(path.startsWith('/api/auth/'))return ['POST'];
+ if(['/api/billing/checkout','/api/billing/portal'].includes(path))return ['POST'];
+ if(['/api/storage/usage','/api/billing','/api/messages/page','/api/search'].includes(path))return ['GET'];
  if(['/api/config','/api/session','/api/account'].includes(path))return ['GET'];
  if(['/api/collections','/api/contacts','/api/resources'].includes(path))return ['GET','POST'];
  if(['/api/rules','/api/notifications'].includes(path))return ['GET','PUT'];
