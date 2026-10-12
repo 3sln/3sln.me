@@ -22,7 +22,7 @@
   "triggers": {"crons":["17 */6 * * *"]},
   "send_email": [{
     "name":"EMAIL",
-    "allowed_sender_addresses":["verify@3sln.me","login@3sln.me","notify@3sln.me","accounts@3sln.me","security@3sln.me"]
+    "allowed_sender_addresses":["verify@sys.3sln.com","login@sys.3sln.com","notify@sys.3sln.com","accounts@sys.3sln.com","security@sys.3sln.com"]
   }],
   "vars": {
     "APP_ORIGIN":"https://3sln.me",
@@ -31,6 +31,7 @@
     "TERMS_VERSION":"2026-10-11",
     "RELEASE_READY":"false",
     "MAIL_ENABLED":"false",
+    "MAIL_SENDER_DOMAIN":"sys.3sln.com",
     "TURNSTILE_SITE_KEY":"",
     "ALLOWED_CONNECTOR_HOSTS":"",
     "VAPID_PUBLIC_KEY":""

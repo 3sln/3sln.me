@@ -170,3 +170,12 @@ Final CI browser group includes the repaired signed-endpoint composer fixture an
 ## 2026-10-11 — Source publication and remote verification
 
 Committed the reviewed source snapshot to `3sln/3sln.me` main as `75b699e9da25f2eebbfa6d39224d23176009ffec` and pushed under the user's repository/main authorization. [GitHub checks run](https://github.com/3sln/3sln.me/actions/runs/38197748448) completed successfully: dependency audit, unit tests, actual Worker integration, DOM/state checks, production-config dry run and the full isolated Linux/Chromium browser group. This publishes source and documentation only. No hosted Worker deployment, domain activation, live email or DNS onboarding occurred. A follow-up documentation commit records this evidence without changing verified application code.
+
+
+## 2026-10-11 — Dedicated system-email sender subdomain
+
+User changed the hosted sender domain to `sys.3sln.com`, reserving bare-domain addresses for potential user mail. This supersedes the earlier `@3sln.me` sender examples without rewriting their historical evidence. Hosted Wrangler now explicitly sets `MAIL_SENDER_DOMAIN="sys.3sln.com"` and permits only `verify`, `login`, `notify`, `accounts` and `security` at that domain. Self-hosted defaults remain operator-controlled; account/verification/unsubscribe links remain on the identity app origin. Setup docs now name the sending subdomain and parent DNS zone. No DNS changes, onboarding, mail or deployment were performed.
+
+| D036 | Use `sys.3sln.com` for hosted system senders, keeping bare domains available for user email. Direction explicitly requested by user; configuration verification remains separate from deliverability. | Reviewer: ___ Date: ___ Outcome: ___ |
+
+Verification: all nine focused email adapter/configuration tests passed, including host-origin links with a separate sender domain. Production Wrangler dry run passed with the five `@sys.3sln.com` senders and `MAIL_ENABLED="false"`.
