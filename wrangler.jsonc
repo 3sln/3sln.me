@@ -95,6 +95,7 @@
     }
   ],
   "vars": {
+    "GOOGLE_CLIENT_ID": "88558903900-8r8m0igv5bceo4k6r5j7nvfd3jlgckmj.apps.googleusercontent.com",
     "APP_ORIGIN": "https://3sln.me",
     "LOCAL_DEVELOPMENT": "false",
     "BRAND_NAME": "3sln.me",

@@ -389,3 +389,8 @@ User explicitly authorized generating a random key with Wrangler, with its value
 The master key supplies AES-256-GCM for provider-held credentials/private capabilities: per-user Google tokens/OAuth state, S3/WebDAV credentials, server-held account signing keys, contact URLs, conversation capabilities and file-sharing invitations. It does not provide end-to-end file encryption, replace password hashing, hold authenticator passkey private keys or replace the separate recovery-file key derivation. Loss or unplanned replacement would make existing encrypted records unreadable.
 
 Live public config confirms Google configured/enabled=true, localDevelopment=false and signupEnabled=false. No Google-account consent or live provider conformance is claimed. Production keep_vars=true now preserves dashboard-only settings on future Wrangler deploys, with LOCAL_DEVELOPMENT explicitly pinned false. No additional application deployment was necessary for the secret update.
+
+
+## 2026-10-12 — Dashboard variable synchronization
+
+User supplied the current production variable set. All supplied existing values match the checked-in configuration; added the public GOOGLE_CLIENT_ID to wrangler.jsonc. Preserved explicit LOCAL_DEVELOPMENT=false, RELEASE_READY=false and keep_vars=true. Client secret and credential-encryption key remain exclusively runtime secrets; no values copied into source or logs. Updated setup documentation to supersede the previous dashboard-only client-ID guidance. Validated JSON/config consistency and secret absence. No deployment was needed because the dashboard already has these values.
