@@ -11,7 +11,7 @@ async function fixture(){
  const directory=await mkdtemp(join(tmpdir(),'bindle-node-contact-'));let app=await createNodeServer({directory,config:{APP_ORIGIN:origin,BRAND_NAME:'Private Notes'}});
  const request=(path,{method='GET',value,headers={},form}={})=>app.fetch(new Request(new URL(path,origin),{method,headers:{...(value===undefined?{}:{'Content-Type':'application/json'}),...headers},...(form?{body:form}:value===undefined?{}:{body:JSON.stringify(value)})}));
  const post=(path,value,headers={})=>request(path,{method:'POST',value,headers:{Origin:origin,...headers}});
- const signup=await post('/api/auth/signup',{handle:'local_contact',method:'password',password:'Private self-host account password!',termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'});assert.equal(signup.status,200);const pending=await signup.json();
+ const signup=await post('/api/auth/signup',{method:'password',password:'Private self-host account password!',termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'});assert.equal(signup.status,200);const pending=await signup.json();
  const recovery=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();
  const activated=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true});assert.equal(activated.status,200);const session=await activated.json(),cookie=activated.headers.get('Set-Cookie').split(';')[0];
  const headers={Origin:origin,Cookie:cookie,'X-CSRF-Token':session.csrfToken};
@@ -24,7 +24,7 @@ async function fixture(){
 test('Node signed contact uses configured origin and survives SQLite restart with encrypted URL/key custody',async()=>{
  const f=await fixture();try{
   const config=await (await f.request('/api/config')).json();assert.equal(config.origin,origin);assert.equal(config.brand.name,'Private Notes');
-  const contact=await f.create();assert(contact.url.startsWith(origin+'/users/local_contact/contact/'));
+  const contact=await f.create();assert(contact.url.startsWith(`${origin}/users/${f.session.account.handle}/contact/`));
   const tokenResponse=await f.request(contact.url,{headers:{Accept:MIME,Origin:'https://sender.example'}});assert.equal(tokenResponse.status,200);assert.equal(tokenResponse.headers.get('Set-Cookie'),null);assert.equal(tokenResponse.headers.get('Access-Control-Allow-Credentials'),null);const token=await tokenResponse.text();
   const claims=JSON.parse(Buffer.from(token.split('.')[1],'base64url'));assert.equal(claims.iss,origin);assert.equal(claims.aud,origin+'/api/messages');
   const controller=f.app.resources.accounts.get(f.session.account.id);const rows=new Map(await controller.metadata.list());

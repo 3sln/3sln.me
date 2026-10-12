@@ -1,15 +1,41 @@
-/* Only public application assets are cached. Account data and credentials never enter Cache Storage. */
-const CACHE='3sln-shell-v12';
-const ASSETS=["/src/bl/google-drive.mjs", "/generic-icon.svg", "/branding/3sln-lockup.svg", "/branding/3sln-avatar.png", "/src/bl/automation.mjs", "/src/providers/automation.mjs", "/src/providers/webmcp.mjs", "/src/ui/release-automation.mjs", "/src/bl/owner-flow.mjs", "/src/bl/conversations.mjs", "/src/bl/mcp.mjs", "/src/ui/release-conversations.mjs", "/src/ui/release-mcp.mjs", "/", "/styles.css", "/manifest.webmanifest", "/icon.svg", "/src/main.mjs", "/src/release.mjs", "/src/shared/stack.mjs", "/src/bl/release.mjs", "/src/bl/browser-codecs.mjs", "/src/providers/api.mjs", "/src/providers/browser.mjs", "/src/providers/browser-state.mjs", "/src/ui/release-app.mjs", "/src/ui/release-auth.mjs", "/src/ui/release-inbox.mjs", "/src/ui/release-billing.mjs", "/src/ui/release-search.mjs", "/src/ui/release-beaming.mjs", "/src/bl/beaming.mjs", "/src/providers/beaming.mjs", "/src/ui/release-security.mjs", "/src/ui/release-dialogs.mjs", "/src/ui/release-public.mjs", "/src/ui/release-views.mjs", "/src/ui/release-primitives.mjs", "/src/ui/release-settings.mjs", "/src/ui/localize.mjs", "/src/ui/interface-text.mjs", "/src/shared/i18n.mjs", "/src/shared/portal-modules.mjs", "/src/shared/portal-bindings.mjs", "/src/providers/portal-access.mjs", "/src/providers/recovery-file.mjs", "/src/ui/release-recovery.mjs", "/src/ui/recovery-questions.mjs", "/packages/recovery/index.mjs", "/packages/recovery/normalization.mjs", "/recovery-kdf-worker.mjs", "/packages/portal/index.mjs", "/packages/portal/keybindings.mjs", "/packages/i18n/index.mjs", "/packages/i18n/catalogues.mjs", "/packages/i18n/vendor/bab/index.js", "/vendor/dodo/index.js", "/vendor/dodo/reactive.js", "/vendor/dodo/src/reactive.js", "/vendor/dodo/src/settings.js", "/vendor/dodo/src/vdom.js", "/vendor/dodo/src/html.js", "/vendor/dodo/src/scheduler.js", "/vendor/ngin/index.js", "/vendor/ngin/src/index.js", "/vendor/ngin/src/engine.js", "/vendor/ngin/src/providers.js", "/vendor/ngin/src/actions.js", "/vendor/ngin/src/queries.js", "/vendor/ngin/src/interceptors.js", "/vendor/ngin/src/internal.js"];
-self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
-self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
+/* Generated from the final public build. Account responses and credentials never enter Cache Storage. */
+const BUILD=/*__3SLN_PUBLIC_BUILD__*/null;
+if(!BUILD)throw new Error('Build the public application before registering its service worker.');
+const CACHE=`3sln-public-shell:${BUILD.buildId}:${BUILD.cacheVersion}`;
+const ASSETS=new Map(BUILD.assets.map(asset=>[asset.url,asset.sha256]));
+const digest=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),byte=>byte.toString(16).padStart(2,'0')).join('');
+function publicResponse(response){return response.ok&&!response.redirected&&!response.headers.has('set-cookie')&&!/\b(?:no-store|private)\b/i.test(response.headers.get('cache-control')||'');}
+async function immutableResponse(url){
+  const response=await fetch(new Request(new URL(url,self.location.origin),{credentials:'omit',cache:'no-store',redirect:'error'}));
+  if(!publicResponse(response))throw new Error('A public shell dependency could not be cached.');
+  if(await digest(await response.clone().arrayBuffer())!==ASSETS.get(url))throw new Error('A public shell dependency does not match the build manifest.');
+  return response;
+}
+self.addEventListener('install',event=>event.waitUntil((async()=>{
+  // Fetch and authenticate the complete generation before publishing any of it.
+  // A missing or replaced dependency rejects install, leaving the old worker active.
+  const responses=await Promise.all([...ASSETS.keys()].map(async url=>[url,await immutableResponse(url)]));
+  const existed=(await caches.keys()).includes(CACHE),cache=await caches.open(CACHE);
+  try{for(const [url,response]of responses)await cache.put(url,response);}catch(error){if(!existed)await caches.delete(CACHE);throw error;}
+})()));
+self.addEventListener('activate',event=>event.waitUntil(Promise.resolve()));
+// Deliberately use the browser's normal waiting-worker lifecycle. Existing tabs
+// keep their controller and cache; no skipWaiting, clients.claim, or old-generation
+// deletion can strand a running tab that still needs one of its old module URLs.
 self.addEventListener('fetch',event=>{
   const request=event.request,url=new URL(request.url);
-  if(request.method!=='GET'||url.origin!==self.location.origin||url.pathname.startsWith('/api/')||url.pathname.startsWith('/.well-known/')||url.pathname.startsWith('/contact/')||url.pathname.startsWith('/c/')||url.pathname.startsWith('/unsubscribe')||url.search) return;
-  const asset=ASSETS.includes(url.pathname);
-  if(!asset) return;
-  event.respondWith(fetch(request).then(response=>{
-    if(response.ok&&!response.headers.has('set-cookie')&&!response.headers.get('cache-control')?.includes('no-store')){const copy=response.clone();event.waitUntil(caches.open(CACHE).then(cache=>cache.put(request,copy)));}
-    return response;
-  }).catch(()=>caches.match(request).then(response=>response??Response.error())));
+  if(request.method!=='GET'||url.origin!==self.location.origin||url.search)return;
+  if(request.mode==='navigate'&&url.pathname==='/'){
+    // Live HTML may contain nonce-bearing CSP or request-specific public bootstrap.
+    // Never cache that response. The fallback is this build's static public document.
+    event.respondWith(fetch(request).catch(async()=>{
+      const cache=await caches.open(CACHE);return await cache.match(BUILD.offlineDocument)??Response.error();
+    }));return;
+  }
+  if(!ASSETS.has(url.pathname))return;
+  event.respondWith((async()=>{
+    const cache=await caches.open(CACHE),stored=await cache.match(url.pathname);if(stored)return stored;
+    // Only exact build-manifest URLs can be populated after installation.
+    try{const response=await immutableResponse(url.pathname);await cache.put(url.pathname,response.clone());return response;}catch{return Response.error();}
+  })());
 });

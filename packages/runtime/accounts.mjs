@@ -1,3 +1,4 @@
+import {encodeFreeHandleNumber,normalizeHandle,validatePaidHandle} from '../identity/handles.mjs';
 import {GoogleDriveService} from '../storage/google-drive.mjs';
 import {automationMethods} from '../automation/account.mjs';
 import {AppConnections} from '../apps/connections.mjs';
@@ -29,20 +30,65 @@ export class IdentityRepository {
   async shardLookup(...args){return new IdentityShardStorage(this.metadata).lookup(...args);}
   async shardClaim(...args){return new IdentityShardStorage(this.metadata).claim(...args);}
   async shardRelease(...args){return new IdentityShardStorage(this.metadata).release(...args);}
+  async shardNamespaceBound(...args){return new IdentityShardStorage(this.metadata).namespaceBound(...args);}
+  async shardPaidHandleRead(...args){return new IdentityShardStorage(this.metadata).paidHandleRead(...args);}
+  async shardPaidHandleAnchor(...args){return new IdentityShardStorage(this.metadata).paidHandleAnchor(...args);}
+  async shardPaidHandleFinish(...args){return new IdentityShardStorage(this.metadata).paidHandleFinish(...args);}
+  async shardPaidHandleClaim(...args){return new IdentityShardStorage(this.metadata).paidHandleClaim(...args);}
+  async shardHandleLookup(...args){return new IdentityShardStorage(this.metadata).handleLookup(...args);}
+  async shardHandleClaim(...args){return new IdentityShardStorage(this.metadata).handleClaim(...args);}
+  async shardHandleConsume(...args){return new IdentityShardStorage(this.metadata).handleConsume(...args);}
+  async shardHandleGrandfather(...args){return new IdentityShardStorage(this.metadata).handleGrandfather(...args);}
+  async shardNextHandleNumber(...args){return new IdentityShardStorage(this.metadata).nextHandleNumber(...args);}
   async shardPage(...args){return new IdentityShardStorage(this.metadata).page(...args);}
   constructor({metadata}){this.metadata=metadata;}
   async get(id) { return this.metadata.get(`account/${id}`); }
-  async findByHandle(handle) { const id=await this.metadata.get(`handle/${handle}`); return id ? this.get(id) : null; }
+  async findByHandle(handle) {
+    handle=normalizeHandle(handle);
+    const id=await this.metadata.get(`handle/${handle}`);
+    if(id){const account=await this.get(id);await this.shardHandleGrandfather(handle,id,account?.assignmentId);return account;}
+    const claim=await this.shardHandleLookup(handle);if(claim?.state!=='paid-alias')return null;const account=await this.get(claim.owner);return account?.assignmentId===claim.assignmentId?account:null;
+  }
+  async allocateFreeHandle(baseIgnored,owner=crypto.randomUUID(),assignmentId){
+    if(typeof owner!=='string'||!owner||owner.length>128||assignmentId!==undefined&&(typeof assignmentId!=='string'||!assignmentId||assignmentId.length>128))throw new TypeError('Invalid handle allocation identity');
+    const lane=crypto.getRandomValues(new Uint8Array(1))[0]%64;
+    // Node transactions share one adapter, but each durable lane has its own counter.
+    const metadata={transaction:fn=>this.metadata.transaction(tx=>fn({get:key=>tx.get(`allocator/${lane}/${key}`),put:(key,value)=>tx.put(`allocator/${lane}/${key}`,value)}))};
+    const number=await new IdentityShardStorage(metadata).nextHandleNumber(lane),handle=encodeFreeHandleNumber(number);
+    const legacy=await this.metadata.get(`handle/${handle}`);if(legacy){const old=await this.get(legacy);await this.shardHandleGrandfather(handle,legacy,old?.assignmentId);}
+    if(!await this.shardHandleClaim(handle,{owner,assignmentId}))throw new Error('Permanent handle allocation collision');return handle;
+  }
+  async paidHandleForOwner(owner){const account=await this.get(owner),anchor=await this.shardPaidHandleRead(owner);return account&&anchor?.state==='committed'&&anchor.assignmentId===account.assignmentId?anchor.handle:null;}
+  // Caller has already verified paid eligibility and recent authentication.
+  async claimPaidHandle(handle,owner,assignmentId){
+    handle=validatePaidHandle(handle);
+    if(typeof assignmentId!=='string'||!assignmentId)throw new TypeError('Invalid paid handle identity');
+    const account=await this.get(owner);if(!account||account.assignmentId!==assignmentId)return false;
+    for(let attempt=0;attempt<2;attempt++){
+      const anchor=await this.shardPaidHandleAnchor(owner,handle,assignmentId);
+      if(anchor.state==='committed')return anchor.handle===handle&&anchor.assignmentId===assignmentId;
+      const oldOwner=await this.metadata.get(`handle/${anchor.handle}`);if(oldOwner){const old=await this.get(oldOwner);await this.shardHandleGrandfather(anchor.handle,oldOwner,old?.assignmentId);}
+      const claimed=await this.shardPaidHandleClaim(anchor.handle,owner,anchor.assignmentId);
+      await this.shardPaidHandleFinish(owner,anchor,claimed);
+      if(claimed)return anchor.handle===handle&&anchor.assignmentId===assignmentId;
+      if(anchor.handle===handle)return false;
+    }
+    return false;
+  }
   async findByEmail(email) { const id=await this.metadata.get(`email/${email}`); return id ? this.get(id) : null; }
   async create(account) {
     return this.metadata.transaction(async tx=>{
-      if(await tx.get(`handle/${account.handle}`)||await tx.get(`account/${account.id}`))return false;
+      const namespace=`identity-namespace/${account.handle}`,oldClaim=await tx.get(namespace),oldOwner=await tx.get(`handle/${account.handle}`);
+      if(oldOwner){if(!oldClaim){const oldAccount=await tx.get(`account/${oldOwner}`);await tx.put(namespace,{owner:oldOwner,assignmentId:oldAccount?.assignmentId??null,state:'assigned'});}return false;}
+      if(await tx.get(`account/${account.id}`))return false;
+      if(oldClaim&&(oldClaim.state!=='allocated'||oldClaim.owner!==account.id||oldClaim.assignmentId!==(account.assignmentId??null)))return false;
+      await tx.put(namespace,{owner:account.id,assignmentId:account.assignmentId??null,state:'assigned'});
       await tx.put(`account/${account.id}`,account);await tx.put(`handle/${account.handle}`,account.id);return true;
     });
   }
   async compareAndSwap(id, revision, account) {
     return this.metadata.transaction(async tx=>{
-      const old=await tx.get(`account/${id}`);if(!old||old.revision!==revision)return false;
+      const old=await tx.get(`account/${id}`);if(!old||old.revision!==revision||account.handle!==old.handle||account.assignmentId!==old.assignmentId)return false;
       const email=account.verifiedEmail;
       if(email){const owner=await tx.get(`email/${email}`);if(owner&&owner!==id)return false;await tx.put(`email/${email}`,id);}
       if(old.verifiedEmail&&old.verifiedEmail!==email)await tx.delete(`email/${old.verifiedEmail}`);
@@ -96,7 +142,7 @@ export class AccountController {
     this.beams=new BeamService({metadata,config,entitlement:owner=>this.billing.entitlement(owner)});this.beamContacts=new BeamContacts({metadata,endpoints:this.endpoints});
   }
   async invoke({method,args}){
-    const allowed=['googleDriveStart','googleDriveComplete',...Object.keys(automationMethods),...Object.keys(conversationMethods).filter(m=>m!=='conversationIdentity'),'appConnectionBinding','appConnections','appConnect','appDisconnect','appConnectionCheck','mcpCollections','mcpOperation','admitWork','touch','snapshot','collections','contacts','createContact','contactURL','revokeContact','quarantineContact','inspectContact','mintContact','deliverContact','receive','message','messageBytes','updateMessage','deleteMessage','rules','notificationPreferences','subscribe','removeSubscription','unsubscribe','unsubscribeLink','resources','addResource','verifyResource','deleteResource','federationRPC','storageUsage','messagePage','billingStatus','billingCheckout','billingPortal','billingWebhookVerified','omniSearch','searchRebuild','searchDrain','searchPreferences','updateSearchPreferences','beamInviteURL','beamOutbox','beamStatus','beamCreate','beamRaw','beamAction','beamMailbox','beamNotify','beamIce','beamProfile','beamContactEnable','beamContactRedeem','beamContactRemember','beamDirectory','beamContactForget','beamPermission','beamDisclosed','beamContactInfo','contactProfile','beamInviteCreate','beamInviteGet','beamInviteJoin','beamPair'];
+    const allowed=['paidHandleEligibility','identityKeychain','googleDriveStart','googleDriveComplete',...Object.keys(automationMethods),...Object.keys(conversationMethods).filter(m=>m!=='conversationIdentity'),'appConnectionBinding','appConnections','appConnect','appDisconnect','appConnectionCheck','mcpCollections','mcpOperation','admitWork','touch','snapshot','collections','contacts','createContact','contactURL','revokeContact','quarantineContact','inspectContact','mintContact','deliverContact','receive','message','messageBytes','updateMessage','deleteMessage','rules','notificationPreferences','subscribe','removeSubscription','unsubscribe','unsubscribeLink','resources','addResource','verifyResource','deleteResource','federationRPC','storageUsage','messagePage','billingStatus','billingCheckout','billingPortal','billingWebhookVerified','omniSearch','searchRebuild','searchDrain','searchPreferences','updateSearchPreferences','beamInviteURL','beamOutbox','beamStatus','beamCreate','beamRaw','beamAction','beamMailbox','beamNotify','beamIce','beamProfile','beamContactEnable','beamContactRedeem','beamContactRemember','beamDirectory','beamContactForget','beamPermission','beamDisclosed','beamContactInfo','contactProfile','beamInviteCreate','beamInviteGet','beamInviteJoin','beamPair'];
     if(!allowed.includes(method))return {$fault:{code:'unsupported_method',message:'Unsupported account operation.',status:400}};
     // Fanout runs outside the account gate: a recipient may concurrently submit
     // to this source while its own account gate is held. Receiver writes retain
@@ -234,6 +280,7 @@ export class AccountController {
   }
   async searchRebuild(owner,options={}){await this.warm(owner);if(!this.search)throw new StorageError('temporarily_unavailable','Search is unavailable.',503);await this.configureSemanticSearch(owner);return this.search.rebuild(owner,{...options,limit:Math.min(options.limit||50,50)});}
   async omniSearch(owner,input){await this.warm(owner);if(!this.search)throw new StorageError('temporarily_unavailable','Search is unavailable.',503);await this.configureSemanticSearch(owner);const result=await this.search.search(owner,input);const pending=(await this.metadata.get(key('search-queue-usage',owner)))?.count||0;const error=await this.metadata.get('search-index-error');return {...result,semantic:await this.searchPreferences(owner),indexing:{pending,ready:pending===0&&!error&&Boolean(await this.metadata.get('search-backfill-ready')),backfillPending:!await this.metadata.get('search-backfill-ready'),limited:Boolean(error),error:error?.code||null}};}
+  async paidHandleEligibility(owner){return this.billing.paidHandleEligibility(owner);}
   async billingStatus(owner){const result=await this.billing.status(owner);return {...result,plans:result.plans.map(plan=>({...plan,...this.workBudget?{monthlyWorkUnits:this.workBudget.limits[plan.id]}:{}}))};}
   async billingCheckout(owner,plan){return this.billing.checkout(owner,plan);}
   async billingPortal(owner){return this.billing.portal(owner);}
@@ -300,6 +347,19 @@ export class AccountController {
     await this.tokens.registerKey(owner,{kid,alg:'ES256',publicJwk});
     await this.metadata.put('signing-key',{kid,encrypted:await encryptSecret(await crypto.subtle.exportKey('jwk',pair.privateKey),this.config.KEY_ENCRYPTION_KEY)});
     return {kid,privateKey:pair.privateKey};
+  }
+  // Internal identity-backup port only; never exposed by owner/MCP HTTP routes.
+  async identityKeychain(owner,{create=true}={}){
+    if(create){await this.warm(owner);await this.signingKey(owner);}
+    const signing=await this.metadata.get('signing-key');
+    let encryption=await this.metadata.get('encryption-key');
+    if(!signing||(!encryption&&!create))throw new StorageError('identity_keys_unavailable','Identity keys are unavailable.',409);
+    if(!encryption){
+      const pair=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveKey','deriveBits']);
+      encryption={kid:crypto.randomUUID(),encrypted:await encryptSecret(await crypto.subtle.exportKey('jwk',pair.privateKey),this.config.KEY_ENCRYPTION_KEY)};
+      await this.metadata.put('encryption-key',encryption);
+    }
+    return {version:1,signing:{kid:signing.kid,privateJWK:await decryptSecret(signing.encrypted,this.config.KEY_ENCRYPTION_KEY)},encryption:{kid:encryption.kid,privateJWK:await decryptSecret(encryption.encrypted,this.config.KEY_ENCRYPTION_KEY)}};
   }
   async createContact(owner,handle,input){await this.warm(owner);if(typeof input.name!=='string'||!input.name.trim()||input.name.length>100)throw new Error('Contact name is required');const signer=await this.signingKey(owner);const issued=await this.endpoints.create(owner,{...input,handle,kid:signer.kid});await this.metadata.put(`contact-name/${issued.grant.id}`,input.name.trim());if(input.beamEnabled!==undefined||input.profileFields!==undefined||input.discloseProfile!==undefined)await this.beamContacts.enable(owner,issued.grant.id,{beamEnabled:input.beamEnabled??false,...input.profileFields!==undefined?{profileFields:input.profileFields}:{},...input.discloseProfile!==undefined?{discloseProfile:input.discloseProfile}:{}});await this.metadata.put(`contact-url/${issued.grant.id}`,await encryptSecret({url:issued.url},this.config.KEY_ENCRYPTION_KEY));return {...(await this.contacts(owner)).find(g=>g.id===issued.grant.id),url:issued.url};}
   async contactURL(owner,id){const g=(await this.tokens.list(owner)).find(g=>g.id===id);if(!g)throw new Error('Contact not found');const record=await this.metadata.get(`contact-url/${id}`);return (await decryptSecret(record,this.config.KEY_ENCRYPTION_KEY)).url;}

@@ -3,6 +3,13 @@ import {BILLING_PLANS,BILLING_STATE_KEY,BillingError,assertOwner,assertBillingCo
 const EVENT_PREFIX='billing/event/';
 const EVENT_RETENTION_MS=35*86400000;
 const MAX_EVENTS=4096;
+export const PAID_HANDLE_MARKER_PREFIX='billing/ever-paid/';
+const paidMarkerKey=(server,owner)=>`${PAID_HANDLE_MARKER_PREFIX}${server}/${owner}`;
+const boundedId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(value);
+const orderStatuses=new Set(['draft','pending','paid','refunded','partially_refunded','void']);
+function validPaidMarker(marker,owner,config){
+  return marker?.version===1&&marker.source==='polar'&&marker.owner===owner&&marker.server===config.POLAR_SERVER&&['sandbox','production'].includes(marker.server)&&['plus','pro'].includes(marker.plan)&&boundedId(marker.productId)&&boundedId(marker.organizationId)&&boundedId(marker.orderId)&&boundedId(marker.subscriptionId)&&Number.isSafeInteger(marker.verifiedAt)&&marker.verifiedAt>=0;
+}
 const fail=()=>new BillingError('billing_provider_unavailable','Billing could not be verified. Please retry later.',503);
 const timestamp=value=>typeof value==='string'?Date.parse(value):NaN;
 function portalURL(value,server){
@@ -41,10 +48,46 @@ export class BillingService {
     this.catalogCache={fingerprint,organizationId,entries,expiresAt:this.now()+300000};return this.catalogCache;
   }
   async entitlement(owner){assertOwner(owner);const state=await this.metadata.get(BILLING_STATE_KEY);return entitlementFromState(state?.owner===owner?state:null,this.now());}
+  async paidHandleEligibility(owner){
+    assertOwner(owner);
+    const markerKey=paidMarkerKey(this.config.POLAR_SERVER,owner),existing=await this.metadata.get(markerKey);
+    if(existing!==undefined){if(!validPaidMarker(existing,owner,this.config))throw fail();return true;}
+    assertBillingConfiguration(this.config);
+    const catalog=await this.catalog(),client=await this.client();
+    let pagination,examined=0;const seen=new Set();
+    for(let page=1;page<=2;page++){
+      let result;
+      try{result=await client.orders.list({external_customer_id:owner,organization_id:catalog.organizationId,product_id:['plus','pro'].map(plan=>catalog.entries[plan].id),status:'paid',limit:100,page});}catch{throw fail();}
+      const current=result?.pagination;
+      if(!Array.isArray(result?.items)||result.items.length>100||!Number.isSafeInteger(current?.total_count)||current.total_count<0||!Number.isSafeInteger(current?.max_page)||current.max_page<0||current.max_page!==Math.ceil(current.total_count/100)&&!(current.total_count===0&&current.max_page===1))throw fail();
+      if(pagination&&(current.total_count!==pagination.total_count||current.max_page!==pagination.max_page))throw fail();
+      pagination=current;
+      if(result.items.length!==Math.min(100,Math.max(0,current.total_count-(page-1)*100)))throw fail();
+      let candidate;
+      for(const order of result.items){
+        const plan=Object.keys(catalog.entries).find(name=>catalog.entries[name].id===order?.product_id),expected=BILLING_PLANS[plan],subscription=order?.subscription;
+        if(!boundedId(order?.id)||seen.has(order.id)||!plan||typeof order.paid!=='boolean'||!orderStatuses.has(order.status)||!Number.isFinite(timestamp(order.created_at))||typeof order.currency!=='string'||!['net_amount','total_amount','refunded_amount'].every(name=>Number.isSafeInteger(order[name])&&order[name]>=0))throw fail();
+        seen.add(order.id);examined++;
+        if(!boundedId(order.customer_id)||order.customer?.id!==order.customer_id||order.customer.external_id!==owner||order.customer.organization_id!==catalog.organizationId||order.product?.id!==order.product_id||order.product.organization_id!==catalog.organizationId||order.product.is_recurring!==true||order.product.recurring_interval!=='year'||order.product.recurring_interval_count!==1)throw fail();
+        if(!boundedId(order.subscription_id)||subscription?.id!==order.subscription_id||subscription.customer_id!==order.customer_id||subscription.product_id!==order.product_id||subscription.currency!==expected.currency||subscription.recurring_interval!=='year'||subscription.recurring_interval_count!==1||!Number.isSafeInteger(subscription.amount)||subscription.amount!==expected.annualAmount)throw fail();
+        if(order.paid===true&&order.status==='paid'&&order.currency==='usd'&&order.net_amount>0&&order.net_amount>=expected.annualAmount&&order.total_amount>=order.net_amount&&order.refunded_amount===0)candidate??={version:1,source:'polar',owner,server:this.config.POLAR_SERVER,organizationId:catalog.organizationId,plan,productId:order.product_id,orderId:order.id,subscriptionId:order.subscription_id,verifiedAt:this.now()};
+      }
+      // An authenticated qualifying order is sufficient even when older
+      // history is longer than the scan budget. No negative cache is stored.
+      if(candidate){
+        if(!validPaidMarker(candidate,owner,this.config))throw fail();
+        await this.metadata.transaction(async tx=>{const prior=await tx.get(markerKey);if(prior!==undefined){if(!validPaidMarker(prior,owner,this.config))throw fail();return;}await tx.put(markerKey,candidate);});
+        return true;
+      }
+      if(examined===pagination.total_count)return false;
+    }
+    throw new BillingError('billing_order_capacity','Payment history needs operator reconciliation. Please retry later.',503);
+  }
   async status(owner){
     const entitlement=await this.entitlement(owner),state=await this.metadata.get(BILLING_STATE_KEY);
     let configured=false;try{assertBillingConfiguration(this.config);configured=true;}catch{}
-    return {...entitlement,enabled:billingEnabled(this.config),configured,server:['sandbox','production'].includes(this.config.POLAR_SERVER)?this.config.POLAR_SERVER:null,plans:Object.values(BILLING_PLANS),subscription:state?.owner===owner?{status:state.status,cancelAtPeriodEnd:state.cancelAtPeriodEnd||false,validUntil:state.validUntil,reconciledAt:state.reconciledAt}:null};
+    const paidMarker=await this.metadata.get(paidMarkerKey(this.config.POLAR_SERVER,owner));
+    return {...entitlement,paidHandleEligible:validPaidMarker(paidMarker,owner,this.config),enabled:billingEnabled(this.config),configured,server:['sandbox','production'].includes(this.config.POLAR_SERVER)?this.config.POLAR_SERVER:null,plans:Object.values(BILLING_PLANS),subscription:state?.owner===owner?{status:state.status,cancelAtPeriodEnd:state.cancelAtPeriodEnd||false,validUntil:state.validUntil,reconciledAt:state.reconciledAt}:null};
   }
   async checkout(owner,plan){
     assertOwner(owner);if(!['plus','pro'].includes(plan))throw new BillingError('invalid_plan','Choose Plus or Pro.');

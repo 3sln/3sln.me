@@ -29,6 +29,8 @@ export default worker;`;
 let mf, directory, accounts, abuse, archives, temporary;
 const origin = 'http://localhost:8787';
 test.before(async () => {
+  const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+  const recoverySigningKey=JSON.stringify({kid:crypto.randomUUID(),privateJWK:await crypto.subtle.exportKey('jwk',pair.privateKey)});
   temporary = await mkdtemp(path.join(tmpdir(), '3sln-worker-security-'));
   const out = path.join(temporary, 'worker.mjs');
   await build({ stdin: { contents: harness, resolveDir: process.cwd(), sourcefile: 'test-harness.mjs' }, outfile: out,
@@ -43,7 +45,7 @@ test.before(async () => {
   mf = new Miniflare(convertV4MiniflareOptions({ name: 'identity-security-test', modulesRoot: temporary, modules: [{ type: 'ESModule', path: out }, ...['argon2', 'blake2b'].map(name => ({ type: 'CompiledWasm', path: path.join(temporary, `${name}.wasm`) }))],
     compatibilityDate: '2026-10-11', compatibilityFlags: ['nodejs_compat'], log: new Log(LogLevel.ERROR),
     bindings: { APP_ORIGIN: origin, RP_ID: 'localhost', TERMS_VERSION: '2026-10-11', LOCAL_DEVELOPMENT: 'true', IDENTITY_LAYOUT:'v1-64-fresh', SIGNUP_IP_WINDOW_MS:'1000', SIGNUP_IP_DAILY_LIMIT:'20',
-      KEY_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'), ABUSE_HASH_KEY: 'isolated-test-rate-limit-key' },
+      RECOVERY_SIGNING_KEY:recoverySigningKey, KEY_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'), ABUSE_HASH_KEY: 'isolated-test-rate-limit-key' },
     durableObjects: { IDENTITIES: { className: 'TestDirectory', useSQLite: true }, ACCOUNTS: { className: 'TestAccount', useSQLite: true }, ABUSE: { className: 'TestAbuse', useSQLite: true } },
     r2Buckets: ['BLOBS', 'ARCHIVES'], serviceBindings: { ASSETS: async () => new Response('<!doctype html><title>Test</title>', { headers: { 'Content-Type': 'text/html' } }) } }));
   const identities = await mf.getDurableObjectNamespace('IDENTITIES'); directory = new ShardedIdentityRepository({shard:name=>identities.get(identities.idFromName(name)),layout:'v1-64-fresh'});directory.passwordVector=(...args)=>identities.get(identities.idFromName('password-vector-test')).passwordVector(...args);

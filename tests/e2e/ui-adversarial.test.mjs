@@ -82,10 +82,12 @@ test('hostile HTML is readable in the sandbox without script execution or extern
 });
 test('installed public shell reloads offline without cached account responses',async t=>{
   const context=await browser.newContext();t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(8000);
-  await waitForApp(page);await page.evaluate(()=>navigator.serviceWorker.ready);
-  await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller));
-  const urls=await publicAssetCache(page);assert.ok(urls.some(url=>new URL(url).pathname==='/src/release.mjs'),'shell cached');
+  await waitForApp(page);await page.waitForFunction(async()=>Boolean((await navigator.serviceWorker.getRegistration())?.active));await page.evaluate(()=>navigator.serviceWorker.ready);
+  await page.reload();await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller));
+  const urls=await publicAssetCache(page);assert.ok(urls.some(url=>/^\/assets\/apps\/web\/src\/release\.[a-f0-9]+\.mjs$/.test(new URL(url).pathname)),'shell cached');
   assert.ok(urls.every(url=>!new URL(url).pathname.startsWith('/api/')),'private APIs not cached');
+  const imports=await page.evaluate(()=>JSON.parse(document.querySelector('script[type=importmap]').textContent).imports);
+  for(const path of ['/src/bl/identity.mjs','/packages/recovery/identity-backup.mjs','/packages/identity/handles.mjs'])assert.ok(urls.some(url=>new URL(url).pathname===imports[path]),'hashed identity shell dependency cached');
   await context.setOffline(true);await page.reload();await page.getByText(/You’re offline/).waitFor();await page.locator('.auth-card').waitFor();
   assert.equal(await page.getByRole('button',{name:'Create my account'}).isDisabled(),true);await screenshot(page,'offline-shell');
 });

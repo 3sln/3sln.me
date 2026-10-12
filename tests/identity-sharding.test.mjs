@@ -25,7 +25,7 @@ function fixture(){
   const repo=()=>new ShardedIdentityRepository({shard,layout:IDENTITY_LAYOUT,clock:()=>now});
   return {repository:repo(),repo,shards,calls,fail:value=>{failure=value;},advance:value=>{now=value;}};
 }
-const account=(id,handle=id)=>({id,handle,revision:0,status:'active',verifiedEmail:null});
+const account=(id,handle=id.toLowerCase())=>({id,handle,revision:0,status:'active',verifiedEmail:null});
 
 test('versioned routing has independent 64 bucket families and rejects implicit migration',async()=>{
   assert.throws(()=>new ShardedIdentityRepository({shard:()=>{}}),/legacy identity data/);
@@ -102,12 +102,12 @@ test('device code uniqueness, direct request CAS, expiry reuse, and immutable ex
   assert.equal((await r.findDeviceByCode(a.userCode)).id,b.id);
 });
 
-test('an email conflict aborts a new account and frees its partially reserved handle',async()=>{
+test('an email conflict aborts a new account and permanently burns its admitted handle',async()=>{
   const f=fixture(),r=f.repository,owner={...account('owner'),verifiedEmail:'taken@example.example'};
   assert(await r.create(owner));
   assert.equal(await r.create({...account('loser','free-handle'),verifiedEmail:owner.verifiedEmail}),false);
   assert.equal(await r.get('loser'),null);assert.equal(await r.findByHandle('free-handle'),null);
-  assert(await r.create(account('replacement','free-handle')));
+  assert.equal(await r.create(account('replacement','free-handle')),false);
   assert.equal((await r.findByEmail(owner.verifiedEmail)).id,owner.id);
 });
 

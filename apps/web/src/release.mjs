@@ -1,4 +1,5 @@
 import * as googleDriveActions from './bl/google-drive.mjs';
+import * as identityActions from './bl/identity.mjs';
 import * as conversationActions from './bl/conversations.mjs';
 import * as mcpActions from './bl/mcp.mjs';
 import * as automationActions from './bl/automation.mjs';
@@ -30,6 +31,7 @@ const captureSubmission=await engine.container.use(['browser'],({browser})=>brow
 const readModel=await engine.container.use(['state'],({state})=>state.snapshot);
 const prepareBeamDestination=await engine.container.use(['beaming'],({beaming})=>beaming.prepareDestination);
 const constructors={
+ 'claim-handle':identityActions.ClaimHandle,'download-name-certificate':identityActions.DownloadNameCertificate,
  'start-google-drive':googleDriveActions.StartGoogleDrive,
  'clear-automation-review':automationActions.ClearAutomationReview,'load-automation':automationActions.LoadAutomation,'enable-automation':automationActions.EnableAutomation,'disable-automation':automationActions.DisableAutomation,'confirm-automation':automationActions.ConfirmAutomation,
  'load-mcp-request':mcpActions.LoadMCPRequest,'decide-mcp':mcpActions.DecideMCP,'load-mcp-grants':mcpActions.LoadMCPGrants,'revoke-mcp-grant':mcpActions.RevokeMCPGrant,'disconnect-app':mcpActions.DisconnectApp,

@@ -16,7 +16,8 @@ async function recovery(r,ctx){
  if(current(r).route.kind!=='recovery-setup'){r.browser.navigate('/recovery/setup');return;}
  const result=await r.api.request('/api/auth/recovery/download',{pendingToken:r.browser.secret('pending')});
  r.browser.storeSecret('recovery',result);r.browser.storeSecret('encryptedRecovery',null);
- update(r,ctx,{recovery:{fileName:result.fileName},recoveryStage:'questions',recoveryQuestions:[{id:r.browser.id(),type:'passphrase',prompt:createLocalization({locale:current(r).locale}).t('What is my private recovery passphrase?'),hint:''}],downloaded:false,recoveryVerified:false});
+ const handle=result.account?.handle??result.handle??current(r).pendingHandle;
+ update(r,ctx,{pendingHandle:typeof handle==='string'&&/^[a-z0-9][a-z0-9_.-]{2,31}$/.test(handle)?handle:null,recovery:{fileName:result.fileName},recoveryStage:'questions',recoveryQuestions:[{id:r.browser.id(),type:'passphrase',prompt:createLocalization({locale:current(r).locale}).t('What is my private recovery passphrase?'),hint:''}],downloaded:false,recoveryVerified:false});
 }
 async function accept(r,ctx,result){if(!result.account||!result.csrfToken)throw new Error('Sign-in did not create a verified account session.');r.browser.clearPending();r.api.csrf=result.csrfToken;update(r,ctx,{pending:false,recovery:null,beaming:{},beamGeneration:(current(r).beamGeneration??0)+1,session:{account:result.account},auth:'login',notice:'',deviceLogin:null});await refresh(r,ctx);}
 const tags=value=>String(value??'').split(',').map(value=>value.trim()).filter(Boolean);
@@ -91,8 +92,9 @@ export class NetworkChanged extends Action {
   async perform(r,ctx,detail){update(r,ctx,{busy:false,conversations:{},mcpRequest:null,mcpGrants:null,automation:null,beaming:{},beamGeneration:(current(r).beamGeneration??0)+1,modal:null,offline:!detail.online,data:null,messageDetail:null,messageRender:null,selected:null,billing:null,billingLoading:false,billingError:'',semanticPreferences:null,searchDraft:{},spaceSearch:{phase:'idle',items:[]}});this.generation=current(r).beamGeneration??0;if(detail.online){const result=await r.api.get('/api/session');if(current(r).offline||(current(r).beamGeneration??0)!==this.generation)return;update(r,ctx,{...(current(r).session?.account?.id!==result.account?.id?{busy:false,conversations:{},mcpRequest:null,mcpGrants:null,automation:null,beaming:{},beamGeneration:(current(r).beamGeneration??0)+1}:{}),session:result.account?{account:result.account}:null});this.generation=current(r).beamGeneration??0;if(result.account){if(!await refresh(r,ctx))return;if(current(r).view==='billing')await loadBilling(r,ctx);}}}
 }
 export class SignUp extends Flow {
-  async perform(r,ctx,detail){const s=current(r),v=detail.values;const result=await r.api.request('/api/auth/signup',{handle:v.handle,password:v.password,method:s.authMethod,termsAccepted:v.termsAccepted==='on',termsVersion:s.config.termsVersion??'2026-10-11',...r.browser.captcha(s.config)});
+  async perform(r,ctx,detail){const s=current(r),v=detail.values;const result=await r.api.request('/api/auth/signup',{password:v.password,method:s.authMethod,termsAccepted:v.termsAccepted==='on',termsVersion:s.config.termsVersion??'2026-10-11',...r.browser.captcha(s.config)});
     pending(r,ctx,result.pendingToken,s.authMethod==='passkey'?'credential':'recovery');
+    update(r,ctx,{pendingHandle:result.account?.handle??null});
     if(s.authMethod==='passkey')await r.api.request('/api/auth/passkey/register',{pendingToken:result.pendingToken,response:await r.browser.createPasskey(result.registrationOptions)});
     await recovery(r,ctx);
   }
@@ -112,7 +114,7 @@ export class InspectRecovery extends Flow {
 }
 export class RecoverAccount extends Flow {
  async perform(r,ctx,detail){const s=current(r),turnstileToken=r.browser.recoveryChallenge(s.config),file=r.browser.secret('restoreFile');if(!file)throw new Error('Choose your encrypted recovery file first.');const answers=s.unlockQuestions.map(question=>detail.values['unlock:'+question.id]);let payload;try{payload=await r.recoveryFile.decrypt(file,answers,s.config.origin);}finally{answers.fill('');}
- const result=await r.api.request('/api/auth/recover',{recoveryToken:payload.recoveryToken,turnstileToken});r.browser.storeSecret('restoreFile',null);r.browser.clearRecoveryChallenge();pending(r,ctx,result.pendingToken,result.credentialRequired?'credential':'recovery');r.browser.navigate('/recovery/setup');
+ const result=await r.api.request('/api/auth/recover',{recoveryToken:payload.recoveryToken,...payload.version===2?{identityBackup:payload}:{},turnstileToken});r.browser.storeSecret('restoreFile',null);r.browser.clearRecoveryChallenge();pending(r,ctx,result.pendingToken,result.credentialRequired?'credential':'recovery');r.browser.navigate('/recovery/setup');
  }
 }
 export class SetPendingPasskey extends Flow {async perform(r,ctx,detail){const pendingToken=r.browser.secret('pending'),begin=await r.api.request('/api/auth/passkey/register/begin',{pendingToken});await r.api.request('/api/auth/passkey/register',{pendingToken,response:await r.browser.createPasskey(begin.registrationOptions)});await recovery(r,ctx);}}

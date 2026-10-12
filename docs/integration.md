@@ -23,3 +23,7 @@ The primary shared contact capability is a signed endpoint URL. HTML GET opens t
 ## Self-hosting and extension
 
 [Self-hosting instructions](self-hosting.md) explain the same portable application behind Workers and Node, unbranded by default. Integration credentials, branding and runtime resources belong to the operator. The specifications are open drafts; contact MIME registration, complete machine grant schemas, portability conformance and external storage credentials are still release work. Read the independent interoperability and security reviews before implementing against an assumed stable protocol.
+
+## Hosted SDK artifacts
+
+The documented `/packages/sdk/src/login-element.mjs` and `/packages/sdk/src/identity.mjs` URLs are revalidating public loaders to standalone content-addressed ESM. An embedding app needs no portal import map; anonymous CORS applies to these loaders and their hashed targets. The portal's build manifest also exposes SDK targets for explicit version pinning. This packaging preserves the element's current intent-only behavior; it does not enable unfinished federated OAuth or grant account/resource access.

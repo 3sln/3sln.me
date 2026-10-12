@@ -35,7 +35,7 @@ test('recovery documents exclude third-party scripts and allow only WebAssembly 
 });
 
 test('actual Worker signed endpoint serves composer and stateless short-lived bearer without delivery',async()=>{
- const issued=await contact();assert.match(issued.url,/\/users\/contact_owner\/contact\/[a-f0-9-]+\?sig=/);assert.equal(new URL(issued.url).hash,'');
+ const issued=await contact();assert.equal(new URL(issued.url).pathname,`/users/${owner.result.account.handle}/contact/${issued.id}`);assert.equal(new URL(issued.url).hash,'');
  const before=new Map(await object.rows());
  const composer=await h.mf.dispatchFetch(issued.url,{headers:{Accept:'text/html'}});assert.equal(composer.status,200);assert.match(composer.headers.get('Content-Type'),/^text\/html/);assert.equal(composer.headers.get('Referrer-Policy'),'no-referrer');assert.equal(composer.headers.get('Cache-Control'),'no-store');
  const first=await mint(issued.url,{Origin:'https://sender.example'});assert.equal(first.status,200);assert.match(first.headers.get('Content-Type'),/^application\/vnd\.bindle\.contact-token\+jwt/);const token=await first.text();assert.equal(token.split('.').length,3);
@@ -51,7 +51,7 @@ test('actual Worker signed endpoint serves composer and stateless short-lived be
 test('Worker binds signed URL to path, recipient, issuer and unambiguous query',async()=>{
  const issued=await contact();const original=new URL(issued.url);
  const corrupted=new URL(original);const pieces=corrupted.searchParams.get('sig').split('.');pieces[2]='A'.repeat(86);corrupted.searchParams.set('sig',pieces.join('.'));
- for(const url of [issued.url+'&extra=1',issued.url+'&sig=duplicate',issued.url.replace('/contact_owner/','/another_owner/'),issued.url.replace(issued.id,crypto.randomUUID()),original.origin+original.pathname,corrupted.href]){
+ for(const url of [issued.url+'&extra=1',issued.url+'&sig=duplicate',issued.url.replace('/'+owner.result.account.handle+'/','/another_owner/'),issued.url.replace(issued.id,crypto.randomUUID()),original.origin+original.pathname,corrupted.href]){
   const response=await mint(url);assert.equal(response.status,401,url);assert.equal(response.headers.get('Set-Cookie'),null);assert.equal(response.headers.get('Access-Control-Allow-Origin'),'*');
  }
  assert.equal((await mint(issued.url.replace(h.origin,'https://wrong.example'))).status,403);
@@ -75,7 +75,7 @@ test('Worker rejects malformed multipart, wrong scope, duplicate fields and boun
  assert.equal((await send(issued.url,form({subject:'bad\r\nsubject'}))).status,400);
  const extra=form();extra.append('read','true');assert.equal((await send(issued.url,extra)).status,400);
  const huge=form();huge.set('message',new Blob(['x'.repeat(1600000)]),'large.txt');assert.equal((await send(issued.url,huge)).status,413);
- const encoder=new TextEncoder();let remaining=20;const streamed=new ReadableStream({pull(controller){if(remaining--===20)controller.enqueue(encoder.encode('--bounded\r\nContent-Disposition: form-data; name="message"; filename="large.txt"\r\nContent-Type: text/plain\r\n\r\n'));else if(remaining>=0)controller.enqueue(new Uint8Array(100000).fill(120));else{controller.enqueue(encoder.encode('\r\n--bounded--\r\n'));controller.close();}}});
+ const encoder=new TextEncoder();let remaining=20;const streamed=new ReadableStream({async pull(controller){await new Promise(resolve=>setTimeout(resolve,5));if(remaining--===20)controller.enqueue(encoder.encode('--bounded\r\nContent-Disposition: form-data; name="message"; filename="large.txt"\r\nContent-Type: text/plain\r\n\r\n'));else if(remaining>=0)controller.enqueue(new Uint8Array(100000).fill(120));else{controller.enqueue(encoder.encode('\r\n--bounded--\r\n'));controller.close();}}});
  const streamedResponse=await h.mf.dispatchFetch(issued.url,{method:'POST',body:streamed,duplex:'half',headers:{'Content-Type':'multipart/form-data; boundary=bounded','CF-Connecting-IP':'198.51.100.9',Connection:'close'}});assert.equal(streamedResponse.status,413);assert.equal((await streamedResponse.json()).error,'body_too_large');
 });
 

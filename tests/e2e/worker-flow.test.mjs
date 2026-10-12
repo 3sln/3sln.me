@@ -25,6 +25,10 @@ async function setup(t){
   await waitForApp(page);return {page,context};
 }
 const recoveryAnswer='Private browser recovery phrase 2026!';
+function assertAssignedIdentity(account){
+  assert.match(account.id,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  assert.match(account.handle,/^n\.[0-9abcdefghjkmnpqrstvwxyz]+$/);
+}
 async function finishRecoveryDownload(page){
   await page.getByRole('heading',{name:'Keep a way back in.'}).waitFor();
   await page.getByLabel('What is my private recovery passphrase?',{exact:true}).fill(recoveryAnswer);
@@ -49,15 +53,16 @@ async function ownerAPI(page,path,body,method='POST'){
 }
 test('real passkey signup, confirmation gate, sign out and assertion login',async t=>{
   const {page,context}=await setup(t);await virtualAuthenticator(context,page);
-  const handle=`passkey_${Date.now().toString(36)}`;
-  await page.getByLabel('Your handle').fill(handle);await page.getByRole('checkbox').check();await page.getByRole('button',{name:'Create my account'}).click();
+  assert.equal(await page.getByLabel('Your handle').count(),0);
+  await page.getByRole('checkbox').check();await page.getByRole('button',{name:'Create my account'}).click();
   await page.getByRole('heading',{name:'Keep a way back in.'}).waitFor();
   assert.equal((await context.request.get(`${baseURL}/api/session`)).status(),200);
   assert.equal((await (await context.request.get(`${baseURL}/api/session`)).json()).authenticated,false);
   await finishRecoveryDownload(page);await screenshot(page,'live-passkey-inbox-desktop');
+  const assigned=(await (await context.request.get(`${baseURL}/api/session`)).json()).account;assertAssignedIdentity(assigned);const handle=assigned.handle;
   await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.getByLabel('Your handle').fill(handle);
   await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();await page.getByRole('heading',{name:'A quieter inbox.'}).waitFor();
-  const session=await (await context.request.get(`${baseURL}/api/session`)).json();assert.equal(session.account.handle,handle);assert.equal(session.account.passkeyCount,1);
+  const session=await (await context.request.get(`${baseURL}/api/session`)).json();assert.equal(session.account.handle,handle);assert.equal(session.account.id,assigned.id);assert.equal(session.account.passkeyCount,1);
   const cookies=await context.cookies();assert.ok(cookies.some(c=>c.httpOnly&&c.sameSite==='Strict'));
   await page.getByRole('button',{name:'Contact links',exact:true}).click();await page.getByRole('button',{name:'New contact link',exact:true}).click();
   await page.getByLabel('Name this link').fill('Friends');await page.getByRole('button',{name:'Create contact link',exact:true}).click();
@@ -68,17 +73,19 @@ test('real passkey signup, confirmation gate, sign out and assertion login',asyn
   await page.setViewportSize({width:390,height:844});await screenshot(page,'live-security-mobile');
 });
 test('real password setup resumes, recovery rotates, contacts constrain messages, and private APIs never cache',async t=>{
-  const {page,context}=await setup(t);const handle=`password_${Date.now().toString(36)}`;
-  await page.getByRole('button',{name:'Password',exact:true}).click();await page.getByLabel('Your handle').fill(handle);
+  const {page,context}=await setup(t);
+  await page.getByRole('button',{name:'Password',exact:true}).click();assert.equal(await page.getByLabel('Your handle').count(),0);
   await page.getByLabel('Password',{exact:true}).fill('Test only long password 2026!');await page.getByRole('checkbox').check();await page.getByRole('button',{name:'Create my account'}).click();
   await page.getByRole('heading',{name:'Keep a way back in.'}).waitFor();await page.reload();
   const recovery=await finishRecoveryDownload(page);
+  const assigned=(await (await context.request.get(`${baseURL}/api/session`)).json()).account;assertAssignedIdentity(assigned);
   await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.getByRole('button',{name:'Use my recovery file'}).click();
   await page.getByRole('button',{name:'Continue to recovery',exact:true}).click();
   await page.getByLabel('Encrypted recovery file',{exact:true}).setInputFiles({name:'recovery.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(recovery))});
   await page.getByRole('button',{name:'Read recovery questions',exact:true}).click();
   await page.getByLabel('What is my private recovery passphrase?',{exact:true}).fill(recoveryAnswer);await page.getByRole('button',{name:'Unlock recovery file',exact:true}).click();await page.getByLabel('Or choose a password').fill('Rotated test password 2026!');
   await page.getByRole('button',{name:'Set password & continue'}).click();const rotated=await finishRecoveryDownload(page);assert.notEqual(rotated.ciphertext,recovery.ciphertext);
+  const recovered=(await (await context.request.get(`${baseURL}/api/session`)).json()).account;assert.equal(recovered.id,assigned.id);assert.equal(recovered.handle,assigned.handle);
   const replayPage=await context.newPage();await replayPage.goto(`${baseURL}/recovery/restore`);
   await replayPage.getByLabel('Encrypted recovery file',{exact:true}).setInputFiles({name:'recovery.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(recovery))});
   await replayPage.getByRole('button',{name:'Read recovery questions',exact:true}).click();await replayPage.getByLabel('What is my private recovery passphrase?',{exact:true}).fill(recoveryAnswer);

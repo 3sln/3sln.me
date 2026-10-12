@@ -5,7 +5,7 @@ export { createArgon2Hasher } from './crypto.mjs';
 export { createWebAuthnAdapter } from './webauthn.mjs';
 export { planAccountLifecycle } from './lifecycle.mjs';
 
-const mutations = new Set(['signup', 'beginPasskeyRegistration', 'registerPasskey', 'setPendingPassword', 'downloadRecovery', 'confirmRecovery', 'loginPassword', 'beginPasskeyLogin', 'finishPasskeyLogin', 'recover', 'logout', 'emailStart', 'emailConfirm', 'emailLoginStart', 'emailLoginConfirm', 'configureEmailLogin', 'credentialBegin', 'credentialFinish', 'renamePasskey', 'removePasskey', 'renameSession', 'revokeSession', 'revokeOtherSessions', 'createDeviceLogin', 'approveDeviceLogin', 'denyDeviceLogin', 'pollDeviceLogin', 'cancelDeviceLogin']);
+const mutations = new Set(['claimHandle','handleCertificate','signup', 'beginPasskeyRegistration', 'registerPasskey', 'setPendingPassword', 'downloadRecovery', 'confirmRecovery', 'loginPassword', 'beginPasskeyLogin', 'finishPasskeyLogin', 'recover', 'logout', 'emailStart', 'emailConfirm', 'emailLoginStart', 'emailLoginConfirm', 'configureEmailLogin', 'credentialBegin', 'credentialFinish', 'renamePasskey', 'removePasskey', 'renameSession', 'revokeSession', 'revokeOtherSessions', 'createDeviceLogin', 'approveDeviceLogin', 'denyDeviceLogin', 'pollDeviceLogin', 'cancelDeviceLogin']);
 export class IdentityAction extends Action {
   static deps = ['identity'];
   constructor(method, input, context) { super(); if (!mutations.has(method)) throw new TypeError('Unknown identity action'); this.method = method; this.input = input; this.context = context; }

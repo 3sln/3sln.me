@@ -19,7 +19,9 @@ const config=JSON.parse(await readFile('wrangler.local.jsonc','utf8'));
 config.main=resolve(config.main);config.assets.directory=resolve(config.assets.directory);delete config.$schema;
 config.vars.APP_ORIGIN=origin;
 await writeFile(configPath,JSON.stringify(config));
-await writeFile(resolve(configDirectory,'.dev.vars'),`KEY_ENCRYPTION_KEY=${randomBytes(32).toString('base64')}\n`,{mode:0o600});
+const recoveryAuthority=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+const recoverySigningKey=JSON.stringify({kid:crypto.randomUUID(),privateJWK:await crypto.subtle.exportKey('jwk',recoveryAuthority.privateKey)});
+await writeFile(resolve(configDirectory,'.dev.vars'),`KEY_ENCRYPTION_KEY=${randomBytes(32).toString('base64')}\nRECOVERY_SIGNING_KEY=${recoverySigningKey}\n`,{mode:0o600});
 const worker=spawn(process.execPath,['node_modules/wrangler/bin/wrangler.js','dev','--config',configPath,'--port',String(port),'--persist-to',persistence],{stdio:['ignore','pipe','pipe'],env:{...process.env,WRANGLER_SEND_METRICS:'false',WRANGLER_LOG_PATH:resolve(configDirectory,'wrangler.log')}});
 let failed;
 worker.once('error',error=>{failed=error;});
@@ -28,7 +30,7 @@ let logs='';for(const stream of [worker.stdout,worker.stderr])stream.on('data',c
 try{
   let ready=false;for(let i=0;i<90;i++){if(failed)throw failed;try{const response=await fetch(`${origin}/api/config`);if(response.ok&&(await response.json()).origin===origin){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,500));}
   if(!ready)throw new Error('Wrangler did not become ready.');
-  const defaultTests=['tests/e2e/recovery-crypto.test.mjs','tests/e2e/recovery-security.test.mjs','tests/e2e/worker-flow.test.mjs','tests/e2e/ui-adversarial.test.mjs','tests/e2e/plans-search.test.mjs','tests/e2e/beaming.test.mjs','tests/e2e/mcp-conversations.test.mjs','tests/e2e/app-connections.test.mjs','tests/e2e/browser-automation.test.mjs','tests/e2e/browser-automation-native.test.mjs','tests/e2e/resource-verification.test.mjs','tests/e2e/google-drive.test.mjs','tests/e2e/branding.test.mjs','tests/browser/recovery-layout.mjs'];
+  const defaultTests=['tests/e2e/build-model.test.mjs','tests/e2e/identity-names.test.mjs','tests/e2e/recovery-crypto.test.mjs','tests/e2e/recovery-security.test.mjs','tests/e2e/worker-flow.test.mjs','tests/e2e/ui-adversarial.test.mjs','tests/e2e/plans-search.test.mjs','tests/e2e/beaming.test.mjs','tests/e2e/mcp-conversations.test.mjs','tests/e2e/app-connections.test.mjs','tests/e2e/browser-automation.test.mjs','tests/e2e/browser-automation-native.test.mjs','tests/e2e/resource-verification.test.mjs','tests/e2e/google-drive.test.mjs','tests/e2e/branding.test.mjs','tests/browser/recovery-layout.mjs'];
   const suite=spawn(process.execPath,['--test','--test-concurrency=1',...(process.argv.length>2?process.argv.slice(2):defaultTests)],{stdio:'inherit',env:{...process.env,E2E_BASE_URL:origin,E2E_ARTIFACTS:'artifacts/browser'}});
   const code=await new Promise(resolve=>suite.once('exit',resolve));if(code!==0)process.exitCode=code||1;
 }finally{worker.kill('SIGTERM');await new Promise(resolve=>{if(worker.exitCode!==null)return resolve();worker.once('exit',resolve);setTimeout(resolve,5000).unref();});await writeFile('artifacts/browser/wrangler.log',logs.replace(/([?&]sig=)[^\s]*/g,'$1[redacted]'));await rm(persistence,{recursive:true,force:true});await rm(configDirectory,{recursive:true,force:true});}

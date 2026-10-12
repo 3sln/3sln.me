@@ -1,3 +1,4 @@
+import {validateIdentityBackup} from './identity-backup.mjs';
 import { ANSWER_NORMALIZATION, assertFields, normalizeAnswer, validateArray, validateQuestions, validateText } from './normalization.mjs';
 
 export { ANSWER_NORMALIZATION, MAX_METADATA_BYTES, MAX_QUESTIONS, MAX_TEXT_BYTES, QUESTION_TYPES, normalizeAnswer, validateQuestions } from './normalization.mjs';
@@ -85,7 +86,8 @@ function validatePayload(input) {
     if (input.length > MAX_PAYLOAD_BYTES || encoder.encode(input).length > MAX_PAYLOAD_BYTES) throw formatError('Recovery payload is too large.');
     try { input = JSON.parse(input); } catch { throw formatError('Recovery payload must contain valid JSON.'); }
   }
-  // Keep the existing service credential and payload schema unchanged.
+  if(input?.version===2)return validateIdentityBackup(input);
+  // Legacy files retain their original schema.
   assertFields(input, ['version', 'issuer', 'handle', 'recoveryToken', 'warning'], 'recovery payload');
   if (input.version !== 1) throw formatError('Unsupported recovery payload version.');
   validateText(input.issuer, 'Recovery issuer');

@@ -195,3 +195,13 @@ The first Cloudflare Worker is live at [3sln.me](https://3sln.me). These screens
 ![Actual gated Cloudflare deployment](walkthrough-assets/deployed-landing-desktop.png)
 
 ![Actual gated deployment on a phone](walkthrough-assets/deployed-landing-mobile.png)
+
+## 26. Stable identity and permanent handle aliases
+
+A new free account receives a short `n.<Crockford Base32>` handle automatically. Its UUID stays stable. Account & security shows the UUID, numbered handle, and separate public name-certificate download. A customer with verified paid subscription history can claim one permanent custom alias, even after cancellation; the original numbered handle continues to work. The encrypted recovery file contains the UUID and private identity keys, with no name assignment.
+
+These screenshots show the real local Wrangler app and a real passkey account, without a simulated paid subscription. Chrome verified a separate certificate download, case-insensitive numbered-handle login, and cancellation during signature verification. Paid-history and alias retention after cancellation are verified by provider fixtures and durable runtime tests; live Polar verification remains pending.
+
+![Actual local identity and permanent-alias controls](walkthrough-assets/identity-names-desktop.png)
+
+![Identity controls on a narrow phone](walkthrough-assets/identity-names-mobile.png)

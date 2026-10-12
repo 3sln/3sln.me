@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { argon2id } from 'hash-wasm';
 import { encryptRecoveryFile, decryptRecoveryFile } from '../../packages/recovery/index.mjs';
+import {RECOVERY_V1_VECTOR as vector} from '../../packages/recovery/vectors.mjs';
 import { launch, baseURL } from './browser.mjs';
 
 test('real browser recovery worker interoperates with Node and authenticates public question metadata',async()=>{
@@ -18,13 +19,13 @@ test('real browser recovery worker interoperates with Node and authenticates pub
   await page.route(`${baseURL}/recovery/restore`,async route=>{
    const response=await route.fetch();
    assert.ok(response.headers()['content-security-policy'].includes("'wasm-unsafe-eval'"));
-   await route.fulfill({response,body:'<!doctype html><title>Recovery conformance</title>'});
+   await route.fulfill({response});
   });
   await page.goto(`${baseURL}/recovery/restore`);
-  const result=await page.evaluate(async({envelope,payload,questions,answers})=>{
+  const result=await page.evaluate(async({envelope,payload,questions,answers,vector})=>{
    const core=await import('/packages/recovery/index.mjs');
    const deriveKey=options=>new Promise((resolve,reject)=>{
-    const worker=new Worker('/recovery-kdf-worker.mjs',{type:'module'});
+    const worker=new Worker(JSON.parse(document.querySelector('script[type=importmap]').textContent).imports['/recovery-kdf-worker.mjs'],{type:'module'});
     const stop=()=>{clearTimeout(timer);worker.terminate();};
     const timer=setTimeout(()=>{stop();reject(new Error('Derivation timed out'));},90000);
     worker.onerror=()=>{stop();reject(new Error('Derivation failed'));};
@@ -33,7 +34,6 @@ test('real browser recovery worker interoperates with Node and authenticates pub
    });
    const decrypted=await core.decryptRecoveryFile(envelope,['2000/02/29','001234'],{deriveKey});
    const browserFile=await core.encryptRecoveryFile(payload,questions,answers,{deriveKey});
-   const {RECOVERY_V1_VECTOR:vector}=await import('/packages/recovery/vectors.mjs');
    const golden={format:core.RECOVERY_FORMAT,version:core.RECOVERY_VERSION,normalization:core.ANSWER_NORMALIZATION,
     questions:vector.questions,kdf:{...core.KDF_PARAMETERS,salt:vector.salt},
     cipher:{name:'AES-256-GCM',iv:vector.iv},ciphertext:vector.ciphertext};
@@ -44,7 +44,7 @@ test('real browser recovery worker interoperates with Node and authenticates pub
    const tampered=structuredClone(envelope);tampered.questions[0].hint='Changed public hint';
    try{await core.decryptRecoveryFile(tampered,answers,{deriveKey});}catch(error){tamperRejected=error.code==='recovery_file_authentication_failed';}
    return {decrypted,browserFile,tamperRejected,vectorMatches};
-  },{envelope,payload,questions,answers});
+  },{envelope,payload,questions,answers,vector});
   assert.deepEqual(result.decrypted,payload);
   assert.deepEqual(await decryptRecoveryFile(result.browserFile,answers,{deriveKey:argon2id}),payload);
   assert.equal(result.tamperRejected,true);

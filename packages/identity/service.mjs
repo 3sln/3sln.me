@@ -1,3 +1,4 @@
+import {normalizeHandle,validatePaidHandle} from './handles.mjs';
 import { IdentityCrypto, secureEqual } from './crypto.mjs';
 import { DeviceLogin } from './device-login.mjs';
 
@@ -7,17 +8,15 @@ export class IdentityFault extends Error {
 const fail = (code, message) => { throw new IdentityFault(code, message); };
 const publicAccount = a => ({ id: a.id, handle: a.handle, status: a.status, createdAt: a.createdAt,
   termsVersion: a.termsVersion, hasPassword: Boolean(a.passwordHash), passkeyCount: a.credentials.length,
-  recoveryConfigured: Boolean(a.recoveryHash), verifiedEmail: a.verifiedEmail || null, emailLoginEnabled: a.emailLoginEnabled === true, lastActiveAt: a.lastActiveAt });
+  recoveryConfigured: Boolean(a.recoveryHash), paidHandle:a.paidHandle||null, aliases:[a.handle,...a.paidHandle?[a.paidHandle]:[]], verifiedEmail: a.verifiedEmail || null, emailLoginEnabled: a.emailLoginEnabled === true, lastActiveAt: a.lastActiveAt });
 function emailAddress(value) {
   if (typeof value !== 'string' || value.length > 254 || !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+$/.test(value)) fail('invalid_email', 'Enter an ordinary email address.');
   const [local, domain] = value.split('@');
   if (local.length > 64 || local.startsWith('.') || local.endsWith('.') || local.includes('..') || !domain.includes('.') || domain.split('.').some(part => !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(part))) fail('invalid_email');
   return `${local}@${domain.toLowerCase()}`;
 }
-function handle(value) {
-  if (typeof value !== 'string' || !/^[a-z][a-z0-9_-]{2,31}$/.test(value)) fail('invalid_handle', 'Use 3–32 lowercase letters, numbers, underscores or hyphens, starting with a letter.');
-  return value;
-}
+function handle(value){try{return normalizeHandle(value);}catch{fail('invalid_handle','Enter your complete account handle.');}}
+
 function password(value) {
   if (typeof value !== 'string' || [...value].length < 15 || [...value].length > 128 || new TextEncoder().encode(value).length > 512) fail('invalid_password', 'Use a password of 15–128 characters.');
   return value;
@@ -36,13 +35,13 @@ const publicCredentials = account => account.credentials.map(({ id, label, devic
 /** Platform-independent account policy. Repository must implement linearizable
  * create and compareAndSwap; an in-memory repository is only a test resource. */
 export class IdentityService {
-  constructor({ repository, deviceRequests, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, config }) {
+  constructor({ repository, deviceRequests, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, config }) {
     if (!repository || !turnstile || !rateLimiter || !webauthn || !passwordHasher || !config?.termsVersion) throw new TypeError('Identity resources and terms version are required');
     const origin = new URL(config.origin);
     if (origin.origin !== config.origin || origin.hostname !== config.rpID || (origin.protocol !== 'https:' && !(config.allowInsecureLocalhost && origin.protocol === 'http:' && origin.hostname === 'localhost'))) throw new TypeError('Exact RP origin is required');
     this.repository = repository; this.crypto = new IdentityCrypto(crypto); this.clock = clock;
     this.turnstile = turnstile; this.rateLimiter = rateLimiter; this.webauthn = webauthn; this.passwordHasher = passwordHasher;
-    this.mailer = mailer;
+    this.mailer = mailer; this.identityBackup = identityBackup; this.paidHandleEligibility=paidHandleEligibility;
     this.deviceRequests = deviceRequests;
     this.config = { rpName: '3sln.me', sessionTtlMs: 86400000, pendingTtlMs: 1800000, challengeTtlMs: 300000, ...config };
     if (!(this.config.sessionTtlMs > 0 && this.config.sessionTtlMs <= 86400000)) throw new TypeError('Sessions must expire within 24 hours');
@@ -93,15 +92,18 @@ export class IdentityService {
   }
   async sessionID(session) { return session.id || this.crypto.hash('session-public-id', session.hash); }
   async signup(input, context) {
-    await this.guard('signup', input, context); handle(input.handle);
+    await this.guard('signup', input, context);
+    if(!this.repository.allocateFreeHandle)handle(input.handle);
     if (input.termsAccepted !== true || input.termsVersion !== this.config.termsVersion) fail('terms_required', 'Agree to the current account terms.');
     if (!['passkey', 'password'].includes(input.method)) fail('invalid_method');
     const selectedPassword = input.method === 'password' ? password(input.password) : null;
-    if (await this.repository.findByHandle(input.handle)) fail('handle_unavailable', 'Choose another account handle.');
+    if (!this.repository.allocateFreeHandle&&await this.repository.findByHandle(input.handle)) fail('handle_unavailable', 'Choose another account handle.');
     // Global/daily creation capacity is reserved only for a valid proof and
     // complete valid signup, never for anonymous CAPTCHA or malformed attempts.
     if (!await this.rateLimiter.check({ phase: 'admitted', operation: 'signup', remoteIP: context.remoteIP, region:context.region, handle: input.handle })) fail('rate_limited', 'Account creation is limited for this network or region. Please try again in a few hours.');
-    const account = { id: this.crypto.id(), revision: 0, handle: input.handle, status: 'pending',
+    const id=this.crypto.id(),assignmentId=this.crypto.id();
+    const allocatedHandle=this.repository.allocateFreeHandle?await this.repository.allocateFreeHandle(input.handle,id,assignmentId):input.handle;
+    const account = { id, assignmentId, nameAssignmentId:assignmentId, revision: 0, handle: allocatedHandle, status: 'pending',
       createdAt: this.clock(), lastActiveAt: this.clock(), termsVersion: this.config.termsVersion,
       termsAcceptedAt: this.clock(), credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null, emailLoginEnabled: false,
       passwordHash: selectedPassword ? await this.passwordHasher.hash(selectedPassword) : null };
@@ -141,22 +143,48 @@ export class IdentityService {
     if (!account.passwordHash && !account.credentials.length) fail('credential_required', 'Set up your passkey or password first.');
     const recoveryToken = `${account.id}.${this.crypto.random()}`;
     account.recoveryHash = await this.crypto.hash('recovery', recoveryToken); account.recoveryIssuedAt = this.clock();
+    let backup;
+    if(this.identityBackup){
+      account.nameAssignmentId ||= this.crypto.id();
+      backup=await this.identityBackup.issue(account,recoveryToken);
+      account.recoveryBackupVersion=2;
+    }
     this.audit(account, 'recovery-file-issued'); await this.save(account, revision);
+    if(backup)return {fileName:`3sln-recovery-${account.id}.json`,content:JSON.stringify(backup),handle:account.handle,recoveryToken};
     return { fileName: `3sln-recovery-${account.handle}.json`, content: JSON.stringify({ version: 1,
       issuer: this.config.origin, handle: account.handle, recoveryToken,
       warning: 'Keep this file private and backed up. It is the only way to recover this account without a verified email or phone. It starts one recovery transaction and can resume that transaction until replacement setup is confirmed.' }, null, 2), recoveryToken };
+  }
+  async claimHandle(input,context){
+    const {account}=await this.recent(context);
+    let selected;try{selected=validatePaidHandle(input.handle);}catch{fail('invalid_handle','Choose a custom handle of 3–32 letters, digits, underscores or hyphens.');}
+    if(!await this.rateLimiter.check({operation:'handle-claim',remoteIP:context.remoteIP}))fail('rate_limited','Please wait before trying again.');
+    if(account.paidHandle&&account.paidHandle!==selected)fail('handle_already_claimed','This identity already has a permanent custom handle.');
+    if(!this.paidHandleEligibility||!await this.paidHandleEligibility(account.id))fail('paid_history_required','A verified paid subscription is required to claim a custom handle.');
+    if(!this.repository.claimPaidHandle||!account.assignmentId)fail('handle_claim_unavailable','Custom handles are unavailable for this identity.');
+    if(!await this.repository.claimPaidHandle(selected,account.id,account.assignmentId))fail('handle_unavailable','This handle is permanently assigned or you already claimed another handle.');
+    if(!account.paidHandle){const revision=account.revision;account.paidHandle=selected;this.audit(account,'paid-handle-claimed');await this.save(account,revision);}
+    return {account:publicAccount(account)};
+  }
+  async handleCertificate(input,context){
+    const {account}=await this.authorized(context,true);
+    if(!this.identityBackup?.certificate)fail('recovery_unavailable','Certificate signing is unavailable.');
+    const selected=input.handle===undefined?account.handle:handle(input.handle);
+    if(selected!==account.handle&&selected!==account.paidHandle&&selected!==await this.repository.paidHandleForOwner?.(account.id))fail('forbidden','This handle does not belong to your identity.');
+    const certificate=await this.identityBackup.certificate(account,selected,this.clock());
+    return {fileName:`handle-claim-${selected}.json`,content:JSON.stringify(certificate,null,2)};
   }
   async confirmRecovery(input, context) {
     this.origin(context); const account = await this.pending(input.pendingToken); const revision = account.revision;
     if (input.downloadConfirmed !== true || !account.recoveryHash || typeof input.recoveryToken !== 'string' || !secureEqual(account.recoveryHash, await this.crypto.hash('recovery', input.recoveryToken))) fail('recovery_confirmation_required', 'Download and confirm your recovery file before continuing.');
     if (!account.passwordHash && !account.credentials.length) fail('credential_required');
     account.status = 'active'; account.pendingHash = null; account.pendingExpiresAt = null; account.challenges = [];
-    delete account.recoveryResumeHash;
+    delete account.recoveryResumeHash; delete account.recoveryResumeBackupVersion;
     this.audit(account, 'account-activated'); const result = await this.session(account);
     await this.save(account, revision); return result;
   }
   async loginPassword(input, context) {
-    await this.guard('login', input, context); handle(input.handle); password(input.password);
+    this.origin(context);input={...input,handle:handle(input.handle)};await this.guard('login', input, context); password(input.password);
     const account = await this.repository.findByHandle(input.handle);
     // The dummy hash performs equivalent KDF work for unknown accounts.
     this.dummyPasswordHash ??= this.passwordHasher.dummyHash || this.passwordHasher.hash(this.crypto.random());
@@ -167,7 +195,7 @@ export class IdentityService {
     const revision = account.revision; const result = await this.session(account, { label: input.label }); await this.save(account, revision); return result;
   }
   async beginPasskeyLogin(input, context) {
-    await this.guard('login', input, context); handle(input.handle);
+    this.origin(context);input={...input,handle:handle(input.handle)};await this.guard('login', input, context);
     const account = await this.repository.findByHandle(input.handle);
     const authenticationOptions = await this.webauthn.authenticationOptions({ config: this.config });
     const challengeToken = `${account?.id || this.crypto.id()}.${this.crypto.random()}`;
@@ -199,9 +227,14 @@ export class IdentityService {
     const proofHash = await this.crypto.hash('recovery', input.recoveryToken);
     const resumed = account?.status === 'recovering' && secureEqual(account.recoveryResumeHash, proofHash);
     if (!account || (!resumed && (account.status !== 'active' || !secureEqual(account.recoveryHash, proofHash)))) fail('unauthorized', 'Recovery failed.');
+    if((resumed?account.recoveryResumeBackupVersion:account.recoveryBackupVersion)===2){
+      if(!this.identityBackup||!input.identityBackup)fail('unauthorized','Provide the signed identity recovery file.');
+      try{await this.identityBackup.verify(input.identityBackup,account,input.recoveryToken);}catch{fail('unauthorized','Recovery failed.');}
+    }
     const revision = account.revision;
     if (!resumed) {
       account.recoveryResumeHash = account.recoveryHash;
+      account.recoveryResumeBackupVersion=account.recoveryBackupVersion||1;
       account.status = 'recovering'; account.recoveryHash = null; account.credentials = []; account.passwordHash = null; account.sessions = []; account.emailChallenges = [];
     }
     // Resumption only rotates the limited setup authority; completed replacement
@@ -214,6 +247,7 @@ export class IdentityService {
   }
   async owner(input, context) {
     const { account, session } = await this.authorized(context);
+    if(!account.paidHandle&&this.repository.paidHandleForOwner)account.paidHandle=await this.repository.paidHandleForOwner(account.id)||undefined;
     // Throttle last-use persistence; telemetry must not cause a read to fail
     // if another authenticated mutation won the account revision race.
     if ((session.lastUsedAt || session.createdAt) + 60000 <= this.clock()) {
