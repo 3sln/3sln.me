@@ -23,7 +23,7 @@ root.addEventListener('account-request',async event=>{
   try {
     if(kind==='consent') {
       // Preference updates are a separate operation. The preview does not mutate shared settings implicitly.
-      await engine.dispatch(new ChangeAccount('consent',{client:'https://myunifieddrive.example',methods:['get','list','put','delete'],...detail})).next('complete');
+      await engine.dispatch(new ChangeAccount('consent',{client:'https://myunifieddrive.example',methods:['get','put','delete'],...detail})).next('complete');
     }else if(kind==='preferences')await engine.dispatch(new ChangeAccount('preferences',detail)).next('complete');
     else if(kind==='revoke')await engine.dispatch(new ChangeAccount('revoke',detail)).next('complete');
       await new Promise(resolve=>setTimeout(resolve,0));

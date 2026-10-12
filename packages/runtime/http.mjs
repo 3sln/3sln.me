@@ -173,7 +173,7 @@ export default {
     if(path==='/api/notifications/subscribe'&&request.method==='POST')return json(await object.subscribe(id,await body(request)));
     const device=/^\/api\/notifications\/devices\/([^/]+)$/.exec(path);if(device&&request.method==='DELETE')return json(await object.removeSubscription(id,device[1]));
     if(path==='/api/resources')return json(request.method==='POST'?await object.addResource(id,await body(request)):await object.resources(id));
-    const resource=/^\/api\/resources\/([a-f0-9-]{36})(?:\/(verify))?$/.exec(path);if(resource){if(request.method==='DELETE')return json(await object.deleteResource(id,resource[1]));if(resource[2]&&request.method==='POST')return json(await object.verifyResource(id,resource[1]));}
+    const resource=/^\/api\/resources\/([a-f0-9-]{36})(?:\/(verify))?$/.exec(path);if(resource){if(request.method==='DELETE')return json(await object.deleteResource(id,resource[1]));if(resource[2]&&request.method==='POST')return json(await object.verifyResource(id,resource[1],await body(request)));}
     return json({error:'not_found'},404);
    }
    if(path==='/.well-known/bindle/manifest.json')return json({error:'not_yet_conformant',message:'Federated OAuth service is not enabled.'},503);

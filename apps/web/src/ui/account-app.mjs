@@ -16,7 +16,7 @@ export default function accountApp({snapshot,error}) {
           div().classes('rule'),h3(fragment.title),p(fragment.description),p(fragment.id).classes('origin'),
           h3('Choose which storage the app may use'),p('Only the resources you select below will be shared. No resource is selected for you.'),
           ...(snapshot.resources??[]).map(r=>label(input().props({type:'checkbox',value:r.id,name:'resource',disabled:!resourceIds.includes(r.id)}),div(strong(r.name),span(resourceIds.includes(r.id)?'Already configured in this shared preference':'Not assigned to this preference; unavailable to this request'),span(r.id))).classes('choice')),
-          p('Allowed operations: read files, list files, write files, and delete files.').classes('warning'),
+          p('Allowed operations: read known files, write files, and delete files.').classes('warning'),
           p(active.length?`This fragment currently has ${active.length} active app grant(s). Review each below before changing it.`:'No apps currently have access to this fragment.'),
           label(input().props({type:'checkbox',name:'acknowledged'}),div('I understand this app can read, write, and delete files in the selected storage.')).classes('choice'),
           div(button('Allow selected storage').classes('primary').on({click:event=>{ const card=event.currentTarget.closest('.consent');const resources=[...card.querySelectorAll('input[name=resource]:checked')].map(x=>x.value); const acknowledged=card.querySelector('input[name=acknowledged]').checked; request(event.currentTarget,'consent',{resources,acknowledged});}}),button('Decline').on({click:event=>request(event.currentTarget,'decline')})).classes('buttons'),

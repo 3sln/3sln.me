@@ -5,6 +5,7 @@ function fixture() {
   let now = 1000;
   const e = new BindleEngine({ clock: () => now });
   const resource = e.addStorage('alice', 'Storage'); e.configure('alice', [resource]);
+  e.resources.get(resource).objects.set('known',{value:'seed',etag:'fixture-version'});
   const issue = options => e.consent('alice', 'app', { acknowledged: true, ...options });
   const call = (token, method, args = {}, tx = 'tx1') => e.rpc(token, { tx, resource, contract: STORAGE, method, args });
   return { e, resource, issue, call, advance: () => { now += 3600001; } };
@@ -17,21 +18,23 @@ test('explicit consent and resource ownership are required', () => {
 test('read-only grant cannot write; revocation affects existing tokens immediately', () => {
   const {e, issue, call} = fixture(); const {access_token, grant} = issue();
   assert.throws(() => call(access_token, 'put', {key:'a',value:'b',ifMatch:null}), {code:'forbidden'});
-  assert.deepEqual(call(access_token, 'list').result, {objects:[]});
+  assert.equal(call(access_token,'get',{key:'known'}).result.value,'seed');
+  assert.throws(()=>issue({methods:['list']}),{code:'invalid_grant'});
+  assert.throws(()=>call(access_token,'list'),{code:'forbidden'});
   e.revoke('alice', grant.id);
-  assert.throws(() => call(access_token, 'list'), {code:'unauthorized'});
+  assert.throws(() => call(access_token, 'get',{key:'known'}), {code:'unauthorized'});
 });
 test('assignment changes remove access and do not silently add new resources', () => {
   const {e, resource, issue, call} = fixture(); const {access_token} = issue();
   e.configure('alice', []);
-  assert.throws(() => call(access_token, 'list'), {code:'forbidden'});
+  assert.throws(() => call(access_token, 'get',{key:'known'}), {code:'forbidden'});
   e.configure('alice', [resource]);
-  assert.throws(() => call(access_token, 'list'), {code:'forbidden'});
+  assert.throws(() => call(access_token, 'get',{key:'known'}), {code:'forbidden'});
   const added = e.addStorage('alice','New'); e.configure('alice',[added]);
-  assert.throws(() => e.rpc(access_token,{tx:'new',resource:added,contract:STORAGE,method:'list'}),{code:'forbidden'});
+  assert.throws(() => e.rpc(access_token,{tx:'new',resource:added,contract:STORAGE,method:'get',args:{key:'known'}}),{code:'forbidden'});
 });
 test('writes require version match; transaction replay is idempotent and collisions fail', () => {
-  const {issue, call} = fixture(); const {access_token} = issue({methods:['get','put','delete','list']});
+  const {issue, call} = fixture(); const {access_token} = issue({methods:['get','put','delete']});
   const args = {key:'file',value:'one',ifMatch:null};
   const first = call(access_token,'put',args);
   assert.deepEqual(call(access_token,'put',args),first);
@@ -43,6 +46,6 @@ test('writes require version match; transaction replay is idempotent and collisi
 });
 test('expiry is enforced even for cached transaction responses', () => {
   const {issue,call,advance} = fixture(); const {access_token} = issue();
-  call(access_token,'list'); advance();
-  assert.throws(() => call(access_token,'list'),{code:'unauthorized'});
+  call(access_token,'get',{key:'known'}); advance();
+  assert.throws(() => call(access_token,'get',{key:'known'}),{code:'unauthorized'});
 });

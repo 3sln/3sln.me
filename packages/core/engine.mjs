@@ -39,9 +39,9 @@ export class BindleEngine {
       if (grant.owner === owner) grant.resources = grant.resources.filter(id => ids.includes(id));
     }
   }
-  consent(owner, client, { methods = ['get', 'list'], resources, acknowledged = false, lifetimeMs = 300000 } = {}) {
+  consent(owner, client, { methods = ['get'], resources, acknowledged = false, lifetimeMs = 300000 } = {}) {
     if (!acknowledged) fail('consent_required', 'Explicit consent is required.');
-    if (!client || !Array.isArray(methods) || !methods.length || methods.some(m => !['get', 'list', 'put', 'delete'].includes(m))) fail('invalid_grant', 'Unknown method or client.');
+    if (!client || !Array.isArray(methods) || !methods.length || methods.some(m => !['get', 'put', 'delete'].includes(m))) fail('invalid_grant', 'Unknown method or client.');
     if (!Number.isFinite(lifetimeMs) || lifetimeMs <= 0 || lifetimeMs > 300000) fail('invalid_grant', 'Token lifetime must be at most five minutes.');
     const assigned = this.preferences.get(owner) || [];
     const selected = resources ?? assigned;
@@ -74,10 +74,9 @@ export class BindleEngine {
       if (prior.fingerprint !== fingerprint) fail('transaction_conflict', 'Transaction identifier was reused with different arguments.');
       return clone(prior.response);
     }
-    if (method !== 'list' && (typeof args.key !== 'string' || !args.key.length || args.key.length > 1024)) fail('invalid_request', 'Object key is required.');
+    if (typeof args.key !== 'string' || !args.key.length || args.key.length > 1024) fail('invalid_request', 'Object key is required.');
     let result;
     const current = target.objects.get(args.key);
-    if (method === 'list') result = { objects: [...target.objects].map(([key, value]) => ({ key, etag: value.etag })) };
     if (method === 'get') {
       if (!current) fail('not_found', 'Object not found.');
       result = clone(current);

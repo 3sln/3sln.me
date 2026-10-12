@@ -18,9 +18,10 @@ test('HTTP adapter rejects cross-origin mutations and validates JSON', async () 
     assert.equal(cross.status,403);
     const malformed = await request(server, '/api/demo/preferences', {method:'POST',headers:{'content-type':'application/json'},body:'{'});
     assert.equal(malformed.status,400);
-    const consent = await request(server, '/api/demo/consent',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({client:'https://app.example',acknowledged:true,resources:[snapshot.resources[0].id]})});
+    const consent = await request(server, '/api/demo/consent',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({client:'https://app.example',acknowledged:true,methods:['get','put'],resources:[snapshot.resources[0].id]})});
     const token = await consent.json(); assert.equal(consent.status,200);
-    const rpc = await request(server, '/rpc',{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token.access_token}`},body:JSON.stringify({tx:'http-test',resource:snapshot.resources[0].id,contract:snapshot.resources[0].contracts[0],method:'list'})});
-    assert.equal(rpc.status,200);
+    const created=await request(server,'/rpc',{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token.access_token}`},body:JSON.stringify({tx:'seed',resource:snapshot.resources[0].id,contract:snapshot.resources[0].contracts[0],method:'put',args:{key:'known',value:'seed',ifMatch:null}})});assert.equal(created.status,200);
+    const rpc = await request(server, '/rpc',{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token.access_token}`},body:JSON.stringify({tx:'http-test',resource:snapshot.resources[0].id,contract:snapshot.resources[0].contracts[0],method:'get',args:{key:'known'}})});
+    assert.equal(rpc.status,200);assert.equal((await rpc.json()).result.value,'seed');
     const unknown = await request(server, '/.well-known/bindle/manifest.json'); assert.equal(unknown.status,404);
 });

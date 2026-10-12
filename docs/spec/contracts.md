@@ -22,23 +22,22 @@ Every object has `{key, version, size, contentType?, modifiedAt}`. Version is an
 
 | Method | Arguments | Result | Permission and semantics |
 | --- | --- | --- | --- |
-| `list` | `{prefix?: string, cursor?: string, limit?: integer}` | `{objects: ObjectMetadata[], nextCursor?: string}` | `list`; default prefix empty, limit 100; cursor opaque, bound to entity/resource/prefix and expiring. No strong snapshot promise. |
 | `get` | `{key, ifVersion?: string}` | `{object: ObjectMetadata, dataBase64: string}` | `read`; ifVersion mismatch is conflict, absence is not_found. |
 | `put` | `{key, dataBase64, contentType?: string, condition}` | `{object: ObjectMetadata}` | `write`; condition is `{absent:true}` or `{version:string}`. Strict canonical base64; contentType bounded. No unconditional overwrite in v1. |
 | `delete` | `{key, version}` | `{deleted:true}` | `delete`; requires matching version, missing object not_found. |
 
-`put` and `delete` preconditions MUST be atomic relative to this resource's writes. The gateway serializes writes per key where needed, but a gateway lock alone does not protect against external Drive/WebDAV edits. Adapters without reliable upstream conditional writes MUST NOT claim object-store/v1 conformance for externally mutable objects. A dedicated provider-managed namespace with all writes mediated by the gateway may satisfy this contract if the upstream guarantees needed for durable read/write reconciliation are documented. Silent last-write-wins is forbidden. App sync logic reads versions and resolves conflicts itself; this contract supplies no CRDT or global transaction.
+`put` and `delete` preconditions MUST be atomic relative to this resource's writes. The gateway serializes writes per key where needed, but a gateway lock alone does not protect against external Drive/WebDAV edits. Adapters without reliable upstream conditional writes MUST NOT advertise writable object-store/v1 capabilities for externally mutable objects. A dedicated provider-managed namespace with all writes mediated by the gateway may satisfy this contract if the upstream guarantees needed for durable read/write reconciliation are documented. Silent last-write-wins is forbidden. App sync logic reads versions and resolves conflicts itself; this contract supplies no CRDT or global transaction.
 
-List results MUST have deterministic key ordering within each returned page. Concurrent writes may cause duplicate/missing entries across pages; clients deduplicate keys and perform a later rescan. Cursor replay cannot cross a resource, client or prefix. Stale cursors return invalid_args with a safe restart hint. Resource adapters must have conformance tests for empty/Unicode keys, pagination, atomic condition failure, concurrent writes, deletion, quota exhaustion, and unknown outcomes after upstream timeout.
+Object enumeration is deliberately absent. Applications keep a known root directory/index object and use exact-key reads plus atomic conditional index updates. See [application-managed directories](storage.md#application-managed-directories) for bootstrap, conflicts, orphan recovery and deletion limits. Resource adapters need conformance tests for Unicode keys, atomic condition failure, concurrent writes, deletion, quota exhaustion and unknown outcomes after upstream timeout.
 
 ### Adapter rollout
 
 1. **3sln hosted object store:** first production target; offers scoped per-entity namespaces and provider-controlled versions. Encryption at rest is provider custody, not user-only encryption.
 2. **S3-compatible bucket/prefix:** use upstream conditional requests, validate endpoint/region, prevent SSRF, and scope credentials/root. Publish an explicit capability check and deny connectors whose implementation lacks required conditional semantics.
-3. **WebDAV:** use ETags/conditional requests only after conformance validation. Weak ETags, unreliable If-Match and traversal behavior block write conformance; read-only implementations may expose a separately published read-only contract.
+3. **WebDAV:** use ETags/conditional requests only after conformance validation. Weak ETags, unreliable If-Match and traversal behavior block write conformance; read-only implementations must advertise writes unavailable.
 4. **Google Drive:** use a dedicated managed namespace and integration-specific verified version/precondition behavior. Do not equate Drive revision metadata with atomic object-store conditions. Read-only support can ship first; object-store write compliance is a release gate.
 
-Apps MUST NOT infer an adapter's capabilities from its brand. Conformance depends on the actual resource and exact contract URL. Read-only object access should receive its own immutable contract URL with list/get definitions rather than pretending to implement the full write contract.
+Apps MUST NOT infer an adapter's capabilities from its brand. Conformance depends on the actual resource and exact contract URL. This capability-negotiated draft permits read-only resources; they MUST advertise writes/deletes unavailable and reject those calls. Atomic-write requirements apply only to advertised writable capabilities.
 
 ## Useful follow-ons, outside initial release
 

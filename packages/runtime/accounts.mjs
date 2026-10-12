@@ -329,21 +329,22 @@ export class AccountController {
   async removeSubscription(owner,id){return this.notifications.unsubscribeDevice(owner,id);}
   async unsubscribe(owner,token){return this.notifications.unsubscribe(token);}
   async unsubscribeLink(owner){return `${owner}.${await this.notifications.issueUnsubscribe(owner,'email')}`;}
-  async resources(owner){const rows=await this.metadata.list({prefix:'resource/'});return [...rows.values()].filter(r=>r.kind!=='app-connection').map(({secret,...resource})=>resource);}
+  async resources(owner){const rows=await this.metadata.list({prefix:'resource/'});return [...rows.values()].filter(r=>r.kind!=='app-connection').map(({secret,...resource})=>{const {list:legacyList,...capabilities}=resource.capabilities||{};return {...resource,capabilities};});}
   async addResource(owner,input){
     if((await this.resources(owner)).length>=100)throw Object.assign(new Error('This account has reached its resource limit.'),{code:'resource_limit',status:429});
     if(typeof input.name!=='string'||!input.name.trim()||input.name.length>100)throw new Error('Resource name required');
-    if(input.provider==='hosted'){const resource={id:crypto.randomUUID(),owner,name:input.name.trim(),provider:'hosted',status:'connected',contracts:['https://3sln.me/artefacts/contracts/object-storage/v1'],capabilities:{read:true,write:true,list:true,range:true,conditionalWrites:true,presigned:{read:false,write:false},maxObjectBytes:1048576},verifiedAt:Date.now()};await this.metadata.put(`resource/${resource.id}`,resource);return resource;}
+    if(input.provider==='hosted'){const resource={id:crypto.randomUUID(),owner,name:input.name.trim(),provider:'hosted',status:'connected',contracts:['https://3sln.me/artefacts/contracts/object-storage/v1'],capabilities:{read:true,write:true,range:true,conditionalWrites:true,presigned:{read:false,write:false},maxObjectBytes:1048576},verifiedAt:Date.now()};await this.metadata.put(`resource/${resource.id}`,resource);return resource;}
     if(!['s3','webdav'].includes(input.provider))throw new Error('Provider requires OAuth configuration');
     const config=input.config||input;const options={allowedHosts:(this.config.ALLOWED_CONNECTOR_HOSTS||'').split(',').filter(Boolean)};
     const adapter=input.provider==='s3'?new S3Adapter({...config,write:false,conditionalWrites:false},options):new WebDAVAdapter(config,options);
     const resource={id:crypto.randomUUID(),owner,name:input.name.trim(),provider:input.provider,status:'unverified',contracts:['https://3sln.me/artefacts/contracts/object-storage/v1'],capabilities:adapter.describe(),secret:await encryptSecret({...config,write:false,conditionalWrites:false},this.config.KEY_ENCRYPTION_KEY)};
     await this.metadata.put(`resource/${resource.id}`,resource);const {secret,...publicResource}=resource;return publicResource;
   }
-  async verifyResource(owner,id){const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner||resource.kind==='app-connection')throw new Error('Resource not found');const config=await decryptSecret(resource.secret,this.config.KEY_ENCRYPTION_KEY);const options={allowedHosts:(this.config.ALLOWED_CONNECTOR_HOSTS||'').split(',').filter(Boolean)};const adapter=resource.provider==='s3'?new S3Adapter(config,options):new WebDAVAdapter(config,options);await adapter.list();resource.status='connected';resource.verifiedAt=Date.now();await this.metadata.put(`resource/${id}`,resource);const {secret,...result}=resource;return result;}
+  async verifyResource(owner,id,input={}){objectKey(input.key);const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner||resource.kind==='app-connection')throw new Error('Resource not found');const config=await decryptSecret(resource.secret,this.config.KEY_ENCRYPTION_KEY);const options={allowedHosts:(this.config.ALLOWED_CONNECTOR_HOSTS||'').split(',').filter(Boolean)};const adapter=resource.provider==='s3'?new S3Adapter(config,options):new WebDAVAdapter(config,options);await adapter.get({key:input.key});resource.capabilities=adapter.describe();resource.status='connected';resource.verifiedAt=Date.now();await this.metadata.put(`resource/${id}`,resource);const {secret,...result}=resource;return result;}
   async deleteResource(owner,id){const app=await this.metadata.get(`resource/${id}`);if(app?.kind==='app-connection')return this.apps.disconnect(owner,id);const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner)throw new Error('Resource not found');if(resource.provider==='hosted'&&(await this.metadata.list({prefix:`hosted/${id}/`,limit:1})).size)throw new StorageError('resource_not_empty','Delete the files in this hosted resource before removing it.',409);await this.metadata.delete(`resource/${id}`);return {deleted:true};}
   async federationRPC(context){
     const owner=/\/entities\/([a-f0-9-]{36})$/.exec(context.subject)?.[1];if(!owner||context.subject!==`${this.config.APP_ORIGIN}/entities/${owner}`)throw new StorageError('forbidden','Resource access denied.',403);
+    if(context.method==='list')throw new StorageError('unsupported_method','Object storage has no listing operation; use application-managed directory objects.');
     await this.warm(owner);
     const resourceId=new RegExp(`^${escapeRegex(this.config.APP_ORIGIN)}/entities/${owner}/resources/([a-f0-9-]{36})$`).exec(context.resource)?.[1];
     const resource=resourceId&&await this.metadata.get(`resource/${resourceId}`);
@@ -359,7 +360,7 @@ export class AccountController {
     try{
       let result;
       if(resource.provider==='hosted')result=await this.hostedOperation(resource,context.method,context.args,reserveJournal);
-      else {const config=await decryptSecret(resource.secret,this.config.KEY_ENCRYPTION_KEY);const options={allowedHosts:(this.config.ALLOWED_CONNECTOR_HOSTS||'').split(',').filter(Boolean)};const adapter=resource.provider==='s3'?new S3Adapter(config,options):new WebDAVAdapter(config,options);if(context.method==='capabilities')result=adapter.describe();else if(context.method==='get'){const value=await adapter.get(context.args);result={dataBase64:base64(value.bytes),object:{key:context.args.key,version:value.version,size:value.bytes.byteLength,contentType:value.contentType}};}else if(['list','presign'].includes(context.method))result=await adapter[context.method](context.args);else throw new StorageError('unsupported_method','This connector does not support that operation.');}
+      else {const config=await decryptSecret(resource.secret,this.config.KEY_ENCRYPTION_KEY);const options={allowedHosts:(this.config.ALLOWED_CONNECTOR_HOSTS||'').split(',').filter(Boolean)};const adapter=resource.provider==='s3'?new S3Adapter(config,options):new WebDAVAdapter(config,options);if(context.method==='capabilities')result=adapter.describe();else if(context.method==='get'){const value=await adapter.get(context.args);result={dataBase64:base64(value.bytes),object:{key:context.args.key,version:value.version,size:value.bytes.byteLength,contentType:value.contentType}};}else if(context.method==='presign')result=await adapter[context.method](context.args);else throw new StorageError('unsupported_method','This connector does not support that operation.');}
       if(!mutating)return result;
       const encoded=JSON.stringify(result);let saved={result};if(new TextEncoder().encode(encoded).byteLength>65536){const resultRef=`rpc-results/${owner}/${await archiveDigest(context.clientId)}/${context.tx}`;await this.blobs.put(resultRef,encoded);saved={resultRef};}await this.metadata.put(journalKey,{fingerprint,state:'done',...saved,createdAt:Date.now()});await this.metadata.put('lastResourceActiveAt',Date.now());return result;
     }catch(error){if(mutating&&journalReserved){const safe=error instanceof StorageError?{code:error.code,message:error.message,status:error.status}:{code:'indeterminate',message:'Storage outcome is unknown; reconcile before retrying.',status:503};await this.metadata.put(journalKey,{fingerprint,state:'done',error:safe,createdAt:Date.now()});throw new StorageError(safe.code,safe.message,safe.status);}throw error;}
@@ -371,13 +372,8 @@ export class AccountController {
     await this.metadata.transaction(async tx=>{for(const [,object]of rows)this.itemIndex.upsertObject(resource.id,object);if(rows.size<200){await tx.put(`hosted-index-ready/${resource.id}`,true);await tx.delete(`hosted-index-cursor/${resource.id}`);}else await tx.put(`hosted-index-cursor/${resource.id}`,[...rows.keys()].at(-1));});
   }
   async hostedOperation(resource,method,args={},beforeEffect=async()=>{}){
-    if(method==='capabilities')return resource.capabilities;
-    if(method==='list'){
-      const limit=args.limit??100;if(!Number.isSafeInteger(limit)||limit<1||limit>1000)throw new StorageError('invalid_args','List arguments are invalid.');
-      await this.migrateHostedIndex(resource);
-      if(!this.itemIndex||!await this.metadata.get(`hosted-index-ready/${resource.id}`))throw new StorageError('temporarily_unavailable','The object index is being upgraded. Try again shortly.',503);
-      return this.itemIndex.objectPage(resource.id,{prefix:args.prefix??'',limit:Math.min(limit,200),cursor:args.cursor});
-    }
+    if(method==='capabilities'){const {list:legacyList,...capabilities}=resource.capabilities;return capabilities;}
+    if(method==='list')throw new StorageError('unsupported_method','Object storage has no listing operation; use application-managed directory objects.');
     objectKey(args.key);const path=`hosted/${resource.id}/${encodeURIComponent(args.key)}`,current=await this.metadata.get(path);
     if(method==='get'){
       if(!current)throw new StorageError('not_found','Object not found.',404);if(args.ifVersion!==undefined&&args.ifVersion!==current.version)throw new StorageError('conflict','Object changed.',409);

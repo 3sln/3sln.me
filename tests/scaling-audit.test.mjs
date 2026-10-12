@@ -131,8 +131,8 @@ test('audit: actual hosted objects share inbox quota and preserve reads/shrinks/
     const before=f.checks.length;await assert.rejects(call('put',{key:'two',dataBase64:'eA==',condition:{absent:true}}),{code:'account_quota_exceeded'});assert.equal(f.checks.length,before,'over-quota growth must be refused before upload');
     assert.equal(Buffer.from((await call('get',{key:'📁/one'})).dataBase64,'base64').toString(),'one');
     const shrunk=await call('put',{key:'📁/one',dataBase64:'eA==',condition:{version:created.object.version}});assert.equal(shrunk.object.size,1);assert.equal((await f.controller.storageUsage(owner)).usedBytes,500000001);
-    const page=await call('list',{prefix:'📁/'});assert.equal(page.objects.length,1);assert.equal(page.objects[0].key,'📁/one');
-    await call('delete',{key:'📁/one',version:shrunk.object.version});assert.equal((await f.controller.storageUsage(owner)).usedBytes,500000000);assert.equal((await call('list',{})).objects.length,0);
+    await assert.rejects(call('list',{prefix:'📁/'}),{code:'unsupported_method'});
+    await call('delete',{key:'📁/one',version:shrunk.object.version});assert.equal((await f.controller.storageUsage(owner)).usedBytes,500000000);await assert.rejects(call('get',{key:'📁/one'}),{code:'not_found'});
     await f.invoke('deleteResource',resource.id);assert.equal(await f.metadata.get('resource/'+resource.id),undefined);
   }finally{f.close();}
 });

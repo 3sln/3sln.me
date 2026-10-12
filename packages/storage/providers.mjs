@@ -1,5 +1,5 @@
 import { StorageError, objectKey, checkedFetch, jsonBody, readResult, rangeHeaders, listLimit, localKey, scopePrefix, sorted, cursorEncode, cursorDecode, approvedEndpoint, boundedBody } from './policy.mjs';
-const caps=extra=>({read:true,list:true,write:false,delete:false,range:false,presigned:{read:false,write:false},conditionalWrites:false,maxObjectBytes:1048576,...extra});
+const caps=extra=>({read:true,write:false,delete:false,range:false,presigned:{read:false,write:false},conditionalWrites:false,maxObjectBytes:1048576,...extra});
 const id=value=>{if(typeof value!=='string'||!/^[a-zA-Z0-9_!-]{1,200}$/.test(value))throw new StorageError('invalid_id','Provider identifier is invalid.');return value;};
 const unsupported=()=>{throw new StorageError('unsupported','This provider operation is unavailable.');};
 const bearer=token=>({Authorization:`Bearer ${token}`});

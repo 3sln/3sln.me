@@ -76,3 +76,10 @@ Required evidence includes identical business outcomes across adapters, a host w
 | Existing callable contract methods are the foundation; optional user-command presentation is independent of host UI and transport. | Reviewer ___ / date ___ / outcome ___ |
 | Trusted native commands retain custom UI; external contributions use bounded declarative presentation through reviewed adapters. | Reviewer ___ / date ___ / outcome ___ |
 | Share business dispatch while preserving owner, assistant and browser-session authority separately. | Reviewer ___ / date ___ / outcome ___ |
+
+
+## Implemented first host adapter
+
+The user approved the direction on 2026-10-12. [Callable bindings and command projection](../../packages/portal/callable-commands.mjs) now provide an opt-in trusted-host foundation: exact pinned resource/contract/method identity, bounded strict scalar/enumeration input schemas, immutable arguments and original caller context, reviewed effects, post-review live binding resolution and optional inert labels/argument hints. The existing portal contribution interface can wrap this binding through explicitly injected trusted authority ports; a host without a palette can invoke the same binding directly. No descriptor can supply executable host code or obtain an owner credential. Icon support and generic nested-schema forms are intentionally outside this implemented subset.
+
+[Native integration fixtures](../../tests/callable-commands.test.mjs) use actual FederationService grants and FederationController dispatch/journaling. They verify separate owner/assistant authority, shared outcomes, revocation/disconnection, exact-transaction replay, collisions and indeterminate writes. [Independent regressions](../../tests/callable-commands-audit.test.mjs) cover hostile descriptors/results, exact arguments and caller substitution during asynchronous review. This is a trusted injectable adapter, not an activated third-party app registry, generic command-form renderer, upstream MCP importer or production OAuth-to-Bindle grant bridge. Those remain integration work.

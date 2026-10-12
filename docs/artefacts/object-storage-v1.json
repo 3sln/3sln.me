@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://3sln.me/artefacts/contracts/object-storage/v1",
   "title": "Object storage RPC request v1",
-  "description": "Draft capability-negotiated contract. Unsupported methods fail; possession of a descriptor grants no permissions. Byte-range ordering and quota checks additionally require runtime validation.",
+  "description": "Draft capability-negotiated contract. Unsupported methods fail; possession of a descriptor grants no permissions. Byte-range ordering and quota checks additionally require runtime validation. No object enumeration. Applications maintain their own directory/index objects.",
   "oneOf": [
     {
       "type": "object",
@@ -12,22 +12,6 @@
         },
         "args": {
           "$ref": "#/$defs/capabilitiesArgs"
-        }
-      },
-      "required": [
-        "method",
-        "args"
-      ],
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "const": "list"
-        },
-        "args": {
-          "$ref": "#/$defs/listArgs"
         }
       },
       "required": [
@@ -137,24 +121,6 @@
     "capabilitiesArgs": {
       "type": "object",
       "properties": {},
-      "required": [],
-      "additionalProperties": false
-    },
-    "listArgs": {
-      "type": "object",
-      "properties": {
-        "prefix": {
-          "type": "string"
-        },
-        "cursor": {
-          "type": "string"
-        },
-        "limit": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1000
-        }
-      },
       "required": [],
       "additionalProperties": false
     },
@@ -297,9 +263,6 @@
         "read": {
           "type": "boolean"
         },
-        "list": {
-          "type": "boolean"
-        },
         "write": {
           "type": "boolean"
         },
@@ -344,31 +307,11 @@
       },
       "required": [
         "read",
-        "list",
         "write",
         "range",
         "presigned",
         "conditionalWrites",
         "maxObjectBytes"
-      ],
-      "additionalProperties": false
-    },
-    "listResult": {
-      "type": "object",
-      "properties": {
-        "objects": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ObjectMetadata"
-          },
-          "maxItems": 1000
-        },
-        "nextCursor": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "objects"
       ],
       "additionalProperties": false
     },
@@ -454,7 +397,6 @@
   "x-permissions": {
     "capabilities": "describe",
     "get": "read",
-    "list": "list",
     "put": "write",
     "delete": "delete",
     "presign": "presign:read or presign:write"
