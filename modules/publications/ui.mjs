@@ -1,0 +1,8 @@
+// The host injects its one dodo instance and a translator at factory creation.
+// Content is always rendered as text; publication bodies are never translated.
+export default function publicationsView({h,t}){
+ if(typeof h!=='function'||typeof t!=='function')throw new TypeError('Publications needs DOM and translation capabilities.');
+ const intent=(target,command,detail)=>target.dispatchEvent(new CustomEvent('3sln-intent',{bubbles:true,detail:{kind:'portal-command',command,detail}}));
+ const form=(state,entry)=>h('form',h('label',t('Title'),h('input').props({name:'title',value:entry?.title??'',required:true}).attrs({maxlength:'200'})),h('label',t('Body'),h('textarea').props({name:'body',value:entry?.body??'',required:true}).attrs({maxlength:'65536'})),h('button',t(entry?'Save changes':'Create publication')).props({type:'submit',disabled:!!state.busy})).on({submit:event=>{event.preventDefault();if(!event.currentTarget.checkValidity())return;const values=Object.fromEntries(new FormData(event.currentTarget));intent(event.currentTarget,entry?'publications.update':'publications.create',{...values,...entry?{id:entry.id,revision:entry.revision}:{}});}});
+ return state=>{return h('section',h('h1',t('Publications')),h('p',t('Sample module: in-memory publications, not enabled in production.')).classes('security-note'),form(state),...(state.publications?.length?state.publications.map(item=>h('article',h('h2',item.title),h('p',item.body),form(state,item),h('button',t('Delete publication')).props({type:'button',disabled:!!state.busy}).on({click:event=>intent(event.currentTarget,'publications.delete',{id:item.id,revision:item.revision})})).key(item.id)):[h('p',t('No publications yet.'))]));};
+}

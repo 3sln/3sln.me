@@ -1,0 +1,463 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://3sln.me/artefacts/contracts/object-storage/v1",
+  "title": "Object storage RPC request v1",
+  "description": "Draft capability-negotiated contract. Unsupported methods fail; possession of a descriptor grants no permissions. Byte-range ordering and quota checks additionally require runtime validation.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "capabilities"
+        },
+        "args": {
+          "$ref": "#/$defs/capabilitiesArgs"
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "list"
+        },
+        "args": {
+          "$ref": "#/$defs/listArgs"
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "get"
+        },
+        "args": {
+          "$ref": "#/$defs/getArgs"
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "put"
+        },
+        "args": {
+          "$ref": "#/$defs/putArgs"
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "delete"
+        },
+        "args": {
+          "$ref": "#/$defs/deleteArgs"
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "presign"
+        },
+        "args": {
+          "$ref": "#/$defs/presignArgs"
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "ObjectMetadata": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "modifiedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "version",
+        "size"
+      ],
+      "additionalProperties": false
+    },
+    "capabilitiesArgs": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "listArgs": {
+      "type": "object",
+      "properties": {
+        "prefix": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "getArgs": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "ifVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "range": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "additionalProperties": false
+    },
+    "putArgs": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "dataBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "condition": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "absent": {
+                  "const": true
+                }
+              },
+              "required": [
+                "absent"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "version"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "contentType": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "dataBase64",
+        "condition"
+      ],
+      "additionalProperties": false
+    },
+    "deleteArgs": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "key",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "presignArgs": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "operation": {
+          "enum": [
+            "read",
+            "write"
+          ]
+        },
+        "expiresIn": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        }
+      },
+      "required": [
+        "key",
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "capabilitiesResult": {
+      "type": "object",
+      "properties": {
+        "read": {
+          "type": "boolean"
+        },
+        "list": {
+          "type": "boolean"
+        },
+        "write": {
+          "type": "boolean"
+        },
+        "delete": {
+          "type": "boolean"
+        },
+        "range": {
+          "type": "boolean"
+        },
+        "presigned": {
+          "type": "object",
+          "properties": {
+            "read": {
+              "type": "boolean"
+            },
+            "write": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "read",
+            "write"
+          ],
+          "additionalProperties": false
+        },
+        "conditionalWrites": {
+          "type": "boolean"
+        },
+        "maxObjectBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "nativeDocuments": {
+          "type": "boolean"
+        },
+        "downloadRequiresApprovedHost": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "read",
+        "list",
+        "write",
+        "range",
+        "presigned",
+        "conditionalWrites",
+        "maxObjectBytes"
+      ],
+      "additionalProperties": false
+    },
+    "listResult": {
+      "type": "object",
+      "properties": {
+        "objects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ObjectMetadata"
+          },
+          "maxItems": 1000
+        },
+        "nextCursor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "objects"
+      ],
+      "additionalProperties": false
+    },
+    "getResult": {
+      "type": "object",
+      "properties": {
+        "dataBase64": {
+          "type": "string"
+        },
+        "object": {
+          "$ref": "#/$defs/ObjectMetadata"
+        }
+      },
+      "required": [
+        "dataBase64",
+        "object"
+      ],
+      "additionalProperties": false
+    },
+    "putResult": {
+      "type": "object",
+      "properties": {
+        "object": {
+          "$ref": "#/$defs/ObjectMetadata"
+        }
+      },
+      "required": [
+        "object"
+      ],
+      "additionalProperties": false
+    },
+    "deleteResult": {
+      "type": "object",
+      "properties": {
+        "deleted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "deleted"
+      ],
+      "additionalProperties": false
+    },
+    "presignResult": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "PUT"
+          ]
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "expiresAt": {
+          "type": "integer"
+        },
+        "revocation": {
+          "enum": [
+            "expires-only",
+            "live"
+          ]
+        }
+      },
+      "required": [
+        "url",
+        "method",
+        "expiresAt",
+        "revocation"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "x-permissions": {
+    "capabilities": "describe",
+    "get": "read",
+    "list": "list",
+    "put": "write",
+    "delete": "delete",
+    "presign": "presign:read or presign:write"
+  },
+  "x-status": "draft-unpublished"
+}

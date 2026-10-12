@@ -1,0 +1,19 @@
+{
+  "package": "hash-wasm",
+  "version": "4.12.0",
+  "source": "https://registry.npmjs.org/hash-wasm/-/hash-wasm-4.12.0.tgz",
+  "upstream": "https://github.com/Daninet/hash-wasm",
+  "license": "MIT",
+  "originalSourceSha256": "2d6333a619d7f64adc313a38732425fc0c6f0baaa36c1419cf05672bcd89340d",
+  "adaptation": "Original Argon2id and BLAKE2b retained; WASMInterface selects statically imported modules instead of runtime WebAssembly.compile. Public exports narrowed to argon2id and argon2Verify.",
+  "binaries": {
+    "argon2": {
+      "bytes": 6660,
+      "sha256": "83b5829d20b4312aca1a56819f95eef20492e058c70f282c9ed6929f579b20ed"
+    },
+    "blake2b": {
+      "bytes": 7442,
+      "sha256": "b478c0d889d97d7a8db4d10501457ad78dd406d02dcb4c892c0d844805ef05bb"
+    }
+  }
+}

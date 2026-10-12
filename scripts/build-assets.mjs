@@ -1,0 +1,17 @@
+import { cp, mkdir, rm } from 'node:fs/promises';
+import { build } from 'esbuild';
+await rm('.output/public', {recursive:true,force:true});
+await mkdir('.output/public/packages/sdk', {recursive:true});
+await cp('apps/web', '.output/public', {recursive:true});
+await cp('vendor/dodo', '.output/public/vendor/dodo', {recursive:true});
+await cp('vendor/ngin', '.output/public/vendor/ngin', {recursive:true});
+await cp('packages/sdk/src', '.output/public/packages/sdk/src', {recursive:true});
+await cp('packages/i18n', '.output/public/packages/i18n', {recursive:true});
+await cp('packages/portal', '.output/public/packages/portal', {recursive:true});
+await cp('packages/recovery', '.output/public/packages/recovery', {recursive:true});
+await build({entryPoints:['scripts/recovery-kdf-worker.mjs'],outfile:'.output/public/recovery-kdf-worker.mjs',bundle:true,format:'esm',platform:'browser',target:'es2022',minify:true});
+await cp('modules/publications', '.output/public/modules/publications', {recursive:true});
+await cp('docs/artefacts', '.output/public/artefacts', {recursive:true});
+await cp('docs/walkthrough-assets', '.output/public/docs/walkthrough-assets', {recursive:true});
+await import('./build-docs.mjs');
+console.log('Worker public assets assembled.');

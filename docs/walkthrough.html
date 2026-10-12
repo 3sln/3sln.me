@@ -1,0 +1,42 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>3sln.me local walkthrough</title><style>body{background:#f6f7f2;color:#193c32;font:17px/1.65 system-ui;margin:0}main{max-width:1040px;margin:auto;padding:32px 20px}h1,h2{line-height:1.2}h2{margin-top:64px}a{color:#16624d}img{display:block;max-width:100%;height:auto;margin:24px auto;border:1px solid #d8e0d1;border-radius:12px}img[src*=mobile]{max-width:390px}p{max-width:900px}</style><main><h1>Local app walkthrough</h1>
+<p>Captured from the actual local Wrangler app and real Chrome, 2026-10-11. These are test accounts; no live recovery credentials, contact capabilities or private answers appear in the images. <strong>Production release remains disabled.</strong> External-provider setup, notification delivery, full federation and account-retention/deletion still require the work recorded in <a href="../DEVLOG.md">DEVLOG</a>.</p>
+<p>The new encrypted recovery flow passed real passkey and password signup, restoration, file rotation and replay rejection, with independent adversarial checks. Personal information remains vulnerable to offline guessing; the UI recommends an extra private passphrase.</p>
+<h2>1. Start with an identity</h2>
+<p>Public documentation, self-hosting links and language selection remain accessible without an account. Local signup offers passkeys or a password, terms acknowledgement, then mandatory recovery setup.</p>
+<p><img src="walkthrough-assets/landing.png" alt="Start with an identity"></p>
+<h2>2. Choose how to unlock the recovery file</h2>
+<p>Select one to twelve questions, choose a type and add optional public hints. Every answer contributes to encryption. A private passphrase is recommended because personal information can be guessed offline. Demo question names intentionally resemble navigation labels to check that user content remains unchanged.</p>
+<p><img src="walkthrough-assets/recovery-questions.png" alt="Choose how to unlock the recovery file"></p>
+<h2>3. Download only the encrypted file</h2>
+<p>The random server recovery credential is inside the encrypted payload. Questions, types and hints are readable; answers and credentials are absent from the downloaded public fields.</p>
+<p><img src="walkthrough-assets/recovery-download.png" alt="Download only the encrypted file"></p>
+<h2>4. Test every answer before activation</h2>
+<p>A successful local round-trip is required before account confirmation. It tests the in-memory encrypted envelope; the user must still keep the downloaded copy safe.</p>
+<p><img src="walkthrough-assets/recovery-verify.png" alt="Test every answer before activation"></p>
+<h2>5. Confirm the file is saved</h2>
+<p>Account activation follows a tested unlock and explicit saved-file acknowledgement. Wrong answers do not reset the account or reveal which answer was wrong.</p>
+<p><img src="walkthrough-assets/recovery-confirm.png" alt="Confirm the file is saved"></p>
+<h2>6. Recovery on a narrow phone screen</h2>
+<p>The question editor fits 320-pixel and 390-pixel viewports. Reordering questions preserves native answer controls; no answer is projected into application state.</p>
+<p><img src="walkthrough-assets/recovery-mobile.png" alt="Recovery on a narrow phone screen"></p>
+<h2>7. Localized controls, unchanged personal content</h2>
+<p>Spanish restoration uses the same encrypted format and normalization. Public prompts and hints from the file remain user content and are never translated.</p>
+<p><img src="walkthrough-assets/recovery-spanish.png" alt="Localized controls, unchanged personal content"></p>
+<h2>8. A private inbox</h2>
+<p>Signed invitations deliver bounded messages into allowed collections. Owner read status, collection moves, rules and quarantine are separate from untrusted sender annotations.</p>
+<p><img src="walkthrough-assets/inbox.png" alt="A private inbox"></p>
+<h2>9. Control each invitation</h2>
+<p>Each contact endpoint has its own scope, expiry and limits. Quarantine or revoke it independently. Opening the signed URL does not deliver a message or consume its message quota.</p>
+<p><img src="walkthrough-assets/contacts.png" alt="Control each invitation"></p>
+<h2>10. Manage access to the account</h2>
+<p>Enroll multiple passkeys, review signed-in devices and revoke sessions. Email linking and optional email sign-in remain disabled until the outbound service is configured.</p>
+<p><img src="walkthrough-assets/security.png" alt="Manage access to the account"></p>
+<h2>11. Choose resources with clear availability</h2>
+<p>S3-compatible and WebDAV setup are available behind reviewed endpoint rules. OAuth providers are visibly unavailable until their applications, flows and conformance are configured; this screenshot does not establish working external-provider delivery.</p>
+<p><img src="walkthrough-assets/resources.png" alt="Choose resources with clear availability"></p>
+<h2>12. Choose notification channels</h2>
+<p>Preferences include channels, delays, repeat limits and collections. Hosted push/reminder delivery is still a release gate; storing preferences is not evidence of real delivery.</p>
+<p><img src="walkthrough-assets/notifications.png" alt="Choose notification channels"></p>
+<h2>What these checks establish</h2>
+<p>The isolated browser suite exercises maintained Argon2id in a dedicated worker, Node/browser interoperability and the archived seven-type vector, malicious public metadata, wrong answers, wrong-provider files, duplicate submits, cancellation, real virtual-authenticator WebAuthn and full recovery rotation. Mobile layout and Spanish/user-content checks run separately. Production CAPTCHA, physical devices, low-memory performance, inbox delivery and all external storage providers remain separate verification.</p>
+</main></html>

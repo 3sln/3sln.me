@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "3sln-me",
+  "main": "apps/worker/index.mjs",
+  "account_id": "160b9c59cb80a1a5a4f391dfc5be9aca",
+  "compatibility_date": "2026-10-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{"pattern":"3sln.me","custom_domain":true}],
+  "assets": {"directory":".output/public","binding":"ASSETS","run_worker_first":true},
+  "durable_objects": {"bindings":[
+    {"name":"IDENTITIES","class_name":"IdentityDirectory"},
+    {"name":"ACCOUNTS","class_name":"AccountObject"},
+    {"name":"ABUSE","class_name":"AbuseGuard"}
+  ]},
+  "migrations": [{"tag":"v1","new_sqlite_classes":["IdentityDirectory","AccountObject","AbuseGuard"]}],
+  "r2_buckets": [
+    {"binding":"BLOBS","bucket_name":"3sln-me-blobs"},
+    {"binding":"ARCHIVES","bucket_name":"3sln-me-account-archives"}
+  ],
+  "triggers": {"crons":["17 */6 * * *"]},
+  "send_email": [{
+    "name":"EMAIL",
+    "allowed_sender_addresses":["verify@3sln.me","login@3sln.me","notify@3sln.me","accounts@3sln.me","security@3sln.me"]
+  }],
+  "vars": {
+    "APP_ORIGIN":"https://3sln.me",
+    "BRAND_NAME":"3sln.me",
+    "RP_ID":"3sln.me",
+    "TERMS_VERSION":"2026-10-11",
+    "RELEASE_READY":"false",
+    "MAIL_ENABLED":"false",
+    "TURNSTILE_SITE_KEY":"",
+    "ALLOWED_CONNECTOR_HOSTS":"",
+    "VAPID_PUBLIC_KEY":""
+  },
+  "observability":{"enabled":false},
+  "limits":{"cpu_ms":100}
+}

@@ -1,0 +1,15 @@
+/* Only public application assets are cached. Account data and credentials never enter Cache Storage. */
+const CACHE='3sln-shell-v5';
+const ASSETS=["/", "/styles.css", "/manifest.webmanifest", "/icon.svg", "/src/main.mjs", "/src/release.mjs", "/src/shared/stack.mjs", "/src/bl/release.mjs", "/src/bl/browser-codecs.mjs", "/src/providers/api.mjs", "/src/providers/browser.mjs", "/src/providers/browser-state.mjs", "/src/ui/release-app.mjs", "/src/ui/release-auth.mjs", "/src/ui/release-inbox.mjs", "/src/ui/release-security.mjs", "/src/ui/release-dialogs.mjs", "/src/ui/release-public.mjs", "/src/ui/release-views.mjs", "/src/ui/release-primitives.mjs", "/src/ui/release-settings.mjs", "/src/ui/localize.mjs", "/src/ui/interface-text.mjs", "/src/shared/i18n.mjs", "/src/shared/portal-modules.mjs", "/src/shared/portal-bindings.mjs", "/src/providers/portal-access.mjs", "/src/providers/recovery-file.mjs", "/src/ui/release-recovery.mjs", "/src/ui/recovery-questions.mjs", "/packages/recovery/index.mjs", "/packages/recovery/normalization.mjs", "/recovery-kdf-worker.mjs", "/packages/portal/index.mjs", "/packages/portal/keybindings.mjs", "/packages/i18n/index.mjs", "/packages/i18n/catalogues.mjs", "/packages/i18n/vendor/bab/index.js", "/vendor/dodo/index.js", "/vendor/dodo/reactive.js", "/vendor/dodo/src/reactive.js", "/vendor/dodo/src/settings.js", "/vendor/dodo/src/vdom.js", "/vendor/dodo/src/html.js", "/vendor/dodo/src/scheduler.js", "/vendor/ngin/index.js", "/vendor/ngin/src/index.js", "/vendor/ngin/src/engine.js", "/vendor/ngin/src/providers.js", "/vendor/ngin/src/actions.js", "/vendor/ngin/src/queries.js", "/vendor/ngin/src/interceptors.js", "/vendor/ngin/src/internal.js"];
+self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
+self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
+self.addEventListener('fetch',event=>{
+  const request=event.request,url=new URL(request.url);
+  if(request.method!=='GET'||url.origin!==self.location.origin||url.pathname.startsWith('/api/')||url.pathname.startsWith('/.well-known/')||url.pathname.startsWith('/contact/')||url.pathname.startsWith('/c/')||url.pathname.startsWith('/unsubscribe')||url.search) return;
+  const asset=ASSETS.includes(url.pathname);
+  if(!asset) return;
+  event.respondWith(fetch(request).then(response=>{
+    if(response.ok&&!response.headers.has('set-cookie')&&!response.headers.get('cache-control')?.includes('no-store')){const copy=response.clone();event.waitUntil(caches.open(CACHE).then(cache=>cache.put(request,copy)));}
+    return response;
+  }).catch(()=>caches.match(request).then(response=>response??Response.error())));
+});

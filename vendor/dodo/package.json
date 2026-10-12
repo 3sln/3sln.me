@@ -1,0 +1,57 @@
+{
+  "name": "@3sln/dodo",
+  "version": "0.1.0",
+  "description": "A minimal, configurable virtual DOM library.",
+  "main": "index.js",
+  "type": "module",
+  "author": "Ray Stubbs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/3sln/dodo.git"
+  },
+  "license": "MIT",
+  "keywords": [
+    "vdom",
+    "virtual dom",
+    "ui",
+    "declarative",
+    "reactive",
+    "context"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./reactive": "./reactive.js",
+    "./context": "./context.js",
+    "./observe": "./observe.js",
+    "./animate": "./animate.js",
+    "./style": "./style.js",
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "reactive.js",
+    "context.js",
+    "observe.js",
+    "animate.js",
+    "style.js",
+    "src/"
+  ],
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@web/test-runner": "^1.0.0",
+    "@web/test-runner-playwright": "^1.0.0",
+    "chai": "^6.2.2",
+    "playwright": "^1.62.1",
+    "prettier": "^3.6.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "web-test-runner",
+    "format": "prettier -w \"**/*.js\"",
+    "test:watch": "web-test-runner --watch",
+    "test:coverage": "web-test-runner --coverage"
+  }
+}

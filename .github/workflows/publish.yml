@@ -1,0 +1,44 @@
+name: Publish
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: 3sln-me-production
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Require completed release gates
+        run: node scripts/check-release.mjs
+      - run: npm audit --audit-level=high
+      - run: npm test
+      - run: npm run test:worker
+      - run: npm run test:dom
+      - run: npm run test:ui-state
+      - run: npm run check:worker
+      - run: npx playwright install --with-deps chromium
+      - name: Exercise actual Worker in headless browser
+        run: node scripts/run-browser-checks.mjs
+      - name: Publish verified app
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+      - name: Preserve browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-browser-evidence
+          path: artifacts/browser/
+          if-no-files-found: ignore
+          retention-days: 7

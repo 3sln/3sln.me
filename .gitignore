@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.*
+!.env.example
+coverage/
+dist/
+.DS_Store
+.wrangler/
+.output/
+.dev.vars
+artifacts/browser/
+.data/

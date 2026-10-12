@@ -1,0 +1,36 @@
+{
+  "name": "bindle-reference",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run dev:worker",
+    "test": "node --test tests/*.test.mjs packages/sdk/test/*.test.mjs",
+    "test:worker": "node --test tests/worker/*.test.mjs",
+    "test:dom": "node --experimental-loader ./tests/browser/loader.mjs tests/browser/smoke.mjs",
+    "dev:demo": "node apps/server/server.mjs",
+    "build:assets": "node scripts/build-assets.mjs",
+    "dev:worker": "npm run build:assets && wrangler dev --config wrangler.local.jsonc --port 8787",
+    "check:worker": "npm run build:assets && wrangler deploy --dry-run --outdir .output/worker",
+    "dev:node": "npm run build:assets && node apps/node/server.mjs",
+    "test:e2e": "node scripts/run-browser-checks.mjs",
+    "test:ui-state": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/release-state.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "chrome-devtools-mcp": "1.10.1",
+    "esbuild": "0.28.2",
+    "happy-dom": "21.0.1",
+    "marked": "18.1.0",
+    "playwright": "1.64.0",
+    "wrangler": "4.149.0"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "14.0.3",
+    "aws4fetch": "1.0.20",
+    "hash-wasm": "4.12.0",
+    "qrcode": "1.5.4",
+    "web-push": "3.6.7"
+  }
+}

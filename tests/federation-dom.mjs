@@ -1,0 +1,15 @@
+import {Window} from 'happy-dom';
+import assert from 'node:assert/strict';
+const win=new Window({url:`https://provider.example/oauth/authorize?request_id=${'r'.repeat(43)}`});
+for(const name of['document','HTMLElement','CustomEvent','Event','EventTarget','ErrorEvent','Node','Element','FormData'])globalThis[name]=win[name];
+globalThis.window=win;let redirected=null;globalThis.location={search:win.location.search,assign:value=>redirected=value};
+const fragment='https://schema.example/theme/v1',requests=[{fragment,required:false,purpose:'<script>unverified purpose</script>',fields:['theme'],schema:{title:'Theme',description:'Shared appearance',publisher:'https://schema.example',fields:{theme:{title:'Theme',type:'enum',values:['dark','light']}}},values:{theme:'dark'},revision:'revision-1',methods:{},resources:[],affectedApps:[{client:'https://other.example/client',fields:['theme']}]}];
+let authenticated=false;const calls=[];globalThis.fetch=async(path,options={})=>{calls.push({path,options});const value=path==='/api/session'?{csrfToken:'csrf'}:path.endsWith('/decision')?{redirectUri:'https://app.example/callback?error=access_denied'}:{requestId:'r'.repeat(43),authenticated,client:{name:'App',origin:'https://app.example'},requests};return{ok:true,json:async()=>value};};
+document.body.innerHTML='<div id="app"></div>';
+await import('../apps/web/src/authorize.mjs');await new Promise(resolve=>setTimeout(resolve,25));
+assert.match(document.body.textContent,/Sign in to your provider/);assert.equal(calls.some(c=>c.options.method==='POST'),false);assert.match(document.querySelector('a.button').href,/request_id/);
+authenticated=true;[...document.querySelectorAll('button')].find(b=>b.textContent==='Check sign-in status').click();await new Promise(resolve=>setTimeout(resolve,25));
+assert.match(document.body.textContent,/Registered application origin: https:\/\/app.example/);assert.match(document.body.textContent,/Already shared with: https:\/\/other.example\/client/);assert.equal(document.querySelector('script'),null);assert.match(document.body.textContent,/<script>unverified purpose<\/script>/);
+const optional=[...document.querySelectorAll('label')].find(n=>n.textContent==='Share this fragment').querySelector('input');optional.checked=false;optional.dispatchEvent(new Event('change'));assert.equal(document.querySelector('form'),null);
+[...document.querySelectorAll('button')].find(b=>b.textContent==='Cancel connection').click();await new Promise(resolve=>setTimeout(resolve,25));const decision=calls.find(c=>c.path.endsWith('/decision'));assert.equal(JSON.parse(decision.options.body).denied,true);assert.equal(decision.options.headers['X-CSRF-Token'],'csrf');assert.match(redirected,/^https:\/\/app.example\/callback/);
+win.dispatchEvent(new Event('pagehide'));await win.happyDOM.close();console.log('Federation consent DOM: sign-in gate, optional decline, plain text, affected apps, explicit CSRF decision pass.');

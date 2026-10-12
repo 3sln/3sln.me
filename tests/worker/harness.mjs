@@ -1,0 +1,64 @@
+import assert from 'node:assert/strict';
+import { build } from 'esbuild';
+import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from 'miniflare';
+import { mkdtemp, rm, copyFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+const harness = `
+import worker, { IdentityDirectory, AccountObject, AbuseGuard } from './apps/worker/index.mjs';
+import {createWorkerArgon2Hasher}from'./apps/worker/password.mjs';
+export class TestDirectory extends IdentityDirectory {
+  async rows(){return [...await this.ctx.storage.list()];}
+  async passwordVector(password, encoded){const hasher=createWorkerArgon2Hasher();return {match:await hasher.verify(password,encoded),wrong:await hasher.verify(password+'wrong',encoded)};}
+}
+export class TestAccount extends AccountObject {
+  async seed(owner, records){await this.warm(owner);for(const [key,value]of records)await this.ctx.storage.put(key,value);}
+  async rows(){return [...await this.ctx.storage.list()];}
+  async blobReadCounter(){this.blobReads=0;const original=this.controller.blobs.get.bind(this.controller.blobs);this.controller.blobs.get=(...args)=>{this.blobReads++;return original(...args);};}
+  async readCount(){return this.blobReads||0;}
+  async evictCold(){await this.ctx.storage.put('lastOwnerActiveAt',0);await super.alarm();}
+  async restoreCold(owner){await this.warm(owner);return [...await this.ctx.storage.list()];}
+  async alarmAt(){return this.ctx.storage.getAlarm();}
+}
+export class TestAbuse extends AbuseGuard {async rows(){return [...await this.ctx.storage.list()];} }
+export default worker;`;
+export async function createHarness(){
+let mf, directory, accounts, abuse, archives, temporary;
+const origin='http://localhost:8787';
+  temporary = await mkdtemp(path.join(tmpdir(), '3sln-worker-contact-'));
+  const out = path.join(temporary, 'worker.mjs');
+  await build({ stdin: { contents: harness, resolveDir: process.cwd(), sourcefile: 'test-harness.mjs' }, outfile: out,
+    bundle: true, format: 'esm', platform: 'browser', mainFields: ['browser', 'module', 'main'], conditions: ['workerd', 'worker', 'browser'],
+    external: ['cloudflare:workers', 'node:*'], target: 'es2022', logLevel: 'silent',
+    banner: { js: "import * as util from 'node:util'; import * as fs from 'node:fs'; import * as stream from 'node:stream'; import * as buffer from 'node:buffer'; import * as assert from 'node:assert'; import * as zlib from 'node:zlib'; const nodeModules={'node:util':util,'node:fs':fs,'node:stream':stream,'node:buffer':buffer,'node:assert':assert,'node:zlib':zlib}; const require=name=>{if(!nodeModules[name])throw new Error('Unexpected builtin '+name);return nodeModules[name];};" },
+    plugins: [{ name: 'worker-test-imports', setup(build) {
+      build.onResolve({ filter: /^(?:util|fs|stream|buffer|assert|zlib)$/ }, args => ({ path: `node:${args.path}`, external: true }));
+      build.onResolve({ filter: /\.wasm$/ }, args => ({ path: `./${path.basename(args.path)}`, external: true }));
+    } }] });
+  for (const name of ['argon2', 'blake2b']) await copyFile(path.resolve(`vendor/hash-wasm/${name}.wasm`), path.join(temporary, `${name}.wasm`));
+  mf = new Miniflare(convertV4MiniflareOptions({ name: 'contact-integration-test', modulesRoot: temporary, modules: [{ type: 'ESModule', path: out }, ...['argon2', 'blake2b'].map(name => ({ type: 'CompiledWasm', path: path.join(temporary, `${name}.wasm`) }))],
+    compatibilityDate: '2026-10-11', compatibilityFlags: ['nodejs_compat'], log: new Log(LogLevel.ERROR),
+    bindings: { APP_ORIGIN: origin, RP_ID: 'localhost', TERMS_VERSION: '2026-10-11', LOCAL_DEVELOPMENT: 'true',
+      KEY_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'), ABUSE_HASH_KEY: 'isolated-test-rate-limit-key' },
+    durableObjects: { IDENTITIES: { className: 'TestDirectory', useSQLite: true }, ACCOUNTS: { className: 'TestAccount', useSQLite: true }, ABUSE: { className: 'TestAbuse', useSQLite: true } },
+    r2Buckets: ['BLOBS', 'ARCHIVES'], serviceBindings: { ASSETS: async () => new Response('<!doctype html><title>Test</title>', { headers: { 'Content-Type': 'text/html' } }) } }));
+  const identities = await mf.getDurableObjectNamespace('IDENTITIES'); directory = identities.get(identities.idFromName('directory-v1'));
+  accounts = await mf.getDurableObjectNamespace('ACCOUNTS'); abuse = await mf.getDurableObjectNamespace('ABUSE'); archives = await mf.getR2Bucket('ARCHIVES');
+
+async function request(route, { method = 'GET', value, headers = {}, raw, form } = {}) {
+  return mf.dispatchFetch(`${origin}${route}`, { method, headers: { ...(value !== undefined || raw !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers },
+    ...(form ? { body:form } : value !== undefined || raw !== undefined ? { body: raw ?? JSON.stringify(value) } : {}) });
+}
+async function signup(handle = `test_${crypto.randomUUID().slice(0, 8)}`) {
+  const start = await request('/api/auth/signup', { method: 'POST', value: { handle, method: 'password', password: 'isolated test account password', termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'local-browser-test-token' }, headers: { Origin: origin } });
+  assert.equal(start.status, 200); const pending = await start.json();
+  const download = await request('/api/auth/recovery/download', { method: 'POST', value: { pendingToken: pending.pendingToken }, headers: { Origin: origin } });
+  assert.equal(download.status, 200); const file = await download.json();
+  const activation = await request('/api/auth/recovery/confirm', { method: 'POST', value: { pendingToken: pending.pendingToken, recoveryToken: file.recoveryToken, downloadConfirmed: true }, headers: { Origin: origin } });
+  assert.equal(activation.status, 200); const result = await activation.json();
+  return { result, pending, file, cookie: activation.headers.get('Set-Cookie').split(';')[0] };
+}
+
+return {mf,origin,directory,accounts,abuse,archives,request,signup,close:async()=>{await mf?.dispose();if(temporary)await rm(temporary,{recursive:true,force:true});}};
+}

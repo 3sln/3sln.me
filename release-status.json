@@ -1,0 +1,18 @@
+{
+  "releaseReady": false,
+  "gates": {
+    "cloudflareTurnstileProductionConfigured": false,
+    "cloudflareBotProtectionVerified": false,
+    "realBrowserFlowsPassing": false,
+    "durableStorageAndArchiveRecoveryVerified": false,
+    "notificationTransportsVerified": false,
+    "emailLifecycleVerified": false,
+    "storageProviderConformanceVerified": false,
+    "federatedOAuthConformanceVerified": false,
+    "generalPreferenceConsentComplete": false,
+    "webArchiveRenderingComplete": false,
+    "lifecycleNoticesAndDeletionVerified": false,
+    "securityRedTeamFindingsResolved": false,
+    "termsAndPrivacyApproved": false
+  }
+}

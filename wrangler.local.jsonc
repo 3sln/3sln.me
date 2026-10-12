@@ -1,0 +1,16 @@
+{
+  "$schema":"node_modules/wrangler/config-schema.json",
+  "name":"3sln-me-local",
+  "main":"apps/worker/index.mjs",
+  "compatibility_date":"2026-10-11",
+  "compatibility_flags":["nodejs_compat"],
+  "assets":{"directory":".output/public","binding":"ASSETS","run_worker_first":true},
+  "durable_objects":{"bindings":[
+    {"name":"IDENTITIES","class_name":"IdentityDirectory"},
+    {"name":"ACCOUNTS","class_name":"AccountObject"},
+    {"name":"ABUSE","class_name":"AbuseGuard"}
+  ]},
+  "migrations":[{"tag":"v1","new_sqlite_classes":["IdentityDirectory","AccountObject","AbuseGuard"]}],
+  "r2_buckets":[{"binding":"BLOBS","bucket_name":"3sln-me-blobs-local"},{"binding":"ARCHIVES","bucket_name":"3sln-me-account-archives-local"}],
+  "vars":{"APP_ORIGIN":"http://localhost:8787","RP_ID":"localhost","TERMS_VERSION":"2026-10-11","LOCAL_DEVELOPMENT":"true","TURNSTILE_SITE_KEY":"1x00000000000000000000AA","TURNSTILE_SECRET_KEY":"1x0000000000000000000000000000000AA","RELEASE_READY":"false","VAPID_PUBLIC_KEY":"","ALLOWED_CONNECTOR_HOSTS":""}
+}
