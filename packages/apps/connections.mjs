@@ -7,7 +7,8 @@ export class AppConnections{
  constructor({metadata,origin,clock=()=>Date.now()}){Object.assign(this,{metadata,origin,clock});}
  async id(owner,clientId){const encoded=await digest(globalThis.crypto,`app-connection/v1\0${owner}\0${clientId}`);const hex=[...atob(encoded.replace(/-/g,'+').replace(/_/g,'/'))].slice(0,16).map(c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('');return `${hex.slice(0,8)}-${hex.slice(8,12)}-8${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;}
  async binding(owner,clientId){const id=await this.id(owner,clientId);const r=await this.metadata.get(prefix+id);if(r&&!valid(r))fail('unavailable','Invalid connection record.',503);return {id,generation:r?.generation??0};}
- async register(owner,client,expected){
+ async registerBrowser(owner){return this.register(owner,{id:`${this.origin}/automation/browser`,name:'Browser automation'},undefined,{transport:'browser',provenance:{kind:'owner-browser-consent'}});}
+ async register(owner,client,expected,trusted={}){
   if(typeof owner!=='string'||typeof client?.id!=='string'||!client.id||client.id.length>200||typeof client.name!=='string'||!client.name||client.name.length>100)fail('invalid_request','Invalid app connection.');
   const id=await this.id(owner,client.id);
   return this.metadata.transaction(async tx=>{
@@ -16,7 +17,7 @@ export class AppConnections{
    const generation=prior?.status==='active'?prior.generation:(prior?.generation??0)+1;
    if(!Number.isSafeInteger(generation)||generation<1)fail('unavailable','Connection generation unavailable.',503);
    if(!prior&&[...(await tx.list({prefix,limit:201})).values()].filter(r=>r.kind==='app-connection').length>=100)fail('connection_limit','This account has reached its new-app connection limit. Previously connected apps can still reconnect.',429);
-   const record={id,owner,clientId:client.id,name:client.name,status:'active',generation,connectedAt:prior?.status==='active'?prior.connectedAt:this.clock(),kind:'app-connection',provider:'app',transport:'mcp',resourceURI:`${this.origin}/entities/${encodeURIComponent(owner)}/resources/${id}`,contracts:[],...client.metadata?{metadata:structuredClone(client.metadata)}:{},provenance:{kind:'oauth-consent',issuer:`${this.origin}/mcp/oauth`}};
+   const record={id,owner,clientId:client.id,name:client.name,status:'active',generation,connectedAt:prior?.status==='active'?prior.connectedAt:this.clock(),kind:'app-connection',provider:'app',transport:trusted.transport??'mcp',resourceURI:`${this.origin}/entities/${encodeURIComponent(owner)}/resources/${id}`,contracts:[],...client.metadata?{metadata:structuredClone(client.metadata)}:{},provenance:trusted.provenance??{kind:'oauth-consent',issuer:`${this.origin}/mcp/oauth`}};
    await tx.put(prefix+id,record);return this.view(record);
   });
  }

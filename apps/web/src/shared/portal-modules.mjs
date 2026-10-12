@@ -1,3 +1,4 @@
+import automationView from '../ui/release-automation.mjs';
 import conversationsView from '../ui/release-conversations.mjs';
 import connectedAppsView from '../ui/release-mcp.mjs';
 import beamingView from '../ui/release-beaming.mjs';
@@ -14,6 +15,7 @@ const command=(id,title,intent,capability='navigation')=>({id,title,capability,d
 // Built-ins use the same deterministic module contributions as future trusted
 // modules. Factories receive only UI capabilities; commands lease authority.
 export const builtInModules=Object.freeze([
+ {id:'browser-automation',dependencies:['workspace'],contributions:{navigation:[navigation('automation','Automation hub','rules',63)],views:[view('automation',automationView)],commands:[command('automation.open','Open automation hub',{kind:'navigate',view:'automation'})],keybindings:[{command:'automation.open',key:'g h',when:'authenticated && !textInputFocus && !dialogOpen'}]}},
  {id:'conversations',dependencies:['workspace'],contributions:{navigation:[navigation('conversations','Conversations','inbox',18)],views:[view('conversations',conversationsView)],commands:[command('conversations.open','Open conversations',{kind:'navigate',view:'conversations'}),command('conversations.refresh','Refresh conversations',{kind:'load-conversations'})],keybindings:[{command:'conversations.open',key:'g t',when:'authenticated && !textInputFocus && !dialogOpen'},{command:'conversations.refresh',key:'shift+r',when:'authenticated && view == "conversations" && !textInputFocus && !dialogOpen'}]}},
  {id:'mcp-apps',dependencies:['workspace'],contributions:{navigation:[navigation('connected-apps','Connected apps','link',62)],views:[view('connected-apps',connectedAppsView)],commands:[command('mcp.apps','Open connected apps',{kind:'navigate',view:'connected-apps'})],keybindings:[{command:'mcp.apps',key:'g a',when:'authenticated && !textInputFocus && !dialogOpen'}]}},
  {id:'file-beaming',dependencies:['workspace'],contributions:{navigation:[navigation('beaming','Beam files','arrow',25)],views:[view('beaming',beamingView)],commands:[command('beaming.open','Open file beaming',{kind:'navigate',view:'beaming'})],keybindings:[{command:'beaming.open',key:'g f',when:'authenticated && !textInputFocus && !dialogOpen'}],contracts:[{id:'beaming.peer-transfer',version:1,description:'Accepted manifest, bounded streaming RTC file transport; configured paid service gates.'}]}},

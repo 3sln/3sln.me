@@ -1,3 +1,4 @@
+import {automationRoutes,automationAllowedMethods} from '../automation/http.mjs';
 import {publicConversationRoutes,ownerConversationRoutes,conversationAllowedMethods} from '../conversations/http.mjs';
 import {CONTACT_PROFILE_MIME,selectContactRepresentation} from '../beaming/profile.mjs';
 import {beamRoutes,beamAllowedMethods} from '../beaming/http.mjs';
@@ -10,7 +11,7 @@ import {verifyPolarWebhook} from '../billing/index.mjs';
 import {handleMcpPublic,handleMcpOwner,mcpPublicPath,mcpOwnerPath} from '../mcp/http.mjs';
 
 const encoder=new TextEncoder();
-const privateHeaders={ 'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Permissions-Policy':'camera=(), microphone=(), geolocation=()' };
+const privateHeaders={ 'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Permissions-Policy':'camera=(), microphone=(), geolocation=(), tools=(self)' };
 const json=(data,status=200,extra={})=>new Response(JSON.stringify(data),{status,headers:{...privateHeaders,'Content-Type':'application/json',...extra}});
 const cookie=(token,local,maxAge=86400)=>`${local?'bindle_session':'__Host-bindle_session'}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${local?'':'; Secure'}`;
 function sessionToken(request,local){const name=local?'bindle_session':'__Host-bindle_session';for(const piece of (request.headers.get('Cookie')||'').split(';')){const [key,...rest]=piece.trim().split('=');if(key===name)return decodeURIComponent(rest.join('='));}return undefined;}
@@ -138,6 +139,7 @@ export default {
     const id=owner.account.id;const object=accountHandle(env,id);
     // Owner mutations independently require session CSRF, even when not an identity action.
     if(mutation&&context.csrfToken!==owner.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
+    const automationResponse=await automationRoutes({path,request,owner,object,body,json});if(automationResponse)return automationResponse;
     if(mcpOwnerPath(path))return handleMcpOwner({request,env,owner,body});
     if(path==='/api/apps'&&request.method==='GET')return json({apps:await object.appConnections(id)});
     const appDisconnect=/^\/api\/apps\/([a-f0-9-]{36})$/.exec(path);if(appDisconnect&&request.method==='DELETE')return json(await object.appDisconnect(id,appDisconnect[1]));
@@ -193,6 +195,7 @@ export default {
 function securePage(response,isolatedRecovery=false){const headers=new Headers(response.headers);for(const [k,v]of Object.entries(privateHeaders))headers.set(k,v);headers.set('Content-Security-Policy',isolatedRecovery?"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; worker-src 'self'":"default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com blob:; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self'");return new Response(response.body,{status:response.status,headers});}
 async function brandPage(response,env){if(!env.BRAND_NAME||env.BRAND_NAME==='3sln.me'||!response.headers.get('Content-Type')?.includes('text/html'))return response;const name=env.BRAND_NAME.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');let html=await response.text();html=html.replace(/<title>3sln\.me[^<]*<\/title>/,`<title>${name}</title>`).replaceAll('<span>3sln.me</span>',`<span>${name}</span>`);return new Response(html,{status:response.status,headers:response.headers});}
 function allowedMethods(path){
+ const automation=automationAllowedMethods(path);if(automation)return automation;
  const conversation=conversationAllowedMethods(path);if(conversation)return conversation;
  const beam=beamAllowedMethods(path);if(beam)return beam;
  if(path.startsWith('/api/auth/'))return ['POST'];

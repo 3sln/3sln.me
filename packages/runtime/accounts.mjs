@@ -1,3 +1,4 @@
+import {automationMethods} from '../automation/account.mjs';
 import {AppConnections} from '../apps/connections.mjs';
 import {mcpCollections as accountMcpCollections,mcpOperation as accountMcpOperation} from '../mcp/account.mjs';
 import {conversationMethods} from '../conversations/runtime.mjs';
@@ -94,7 +95,7 @@ export class AccountController {
     this.beams=new BeamService({metadata,config,entitlement:owner=>this.billing.entitlement(owner)});this.beamContacts=new BeamContacts({metadata,endpoints:this.endpoints});
   }
   async invoke({method,args}){
-    const allowed=[...Object.keys(conversationMethods).filter(m=>m!=='conversationIdentity'),'appConnectionBinding','appConnections','appConnect','appDisconnect','appConnectionCheck','mcpCollections','mcpOperation','admitWork','touch','snapshot','collections','contacts','createContact','contactURL','revokeContact','quarantineContact','inspectContact','mintContact','deliverContact','receive','message','messageBytes','updateMessage','deleteMessage','rules','notificationPreferences','subscribe','removeSubscription','unsubscribe','unsubscribeLink','resources','addResource','verifyResource','deleteResource','federationRPC','storageUsage','messagePage','billingStatus','billingCheckout','billingPortal','billingWebhookVerified','omniSearch','searchRebuild','searchDrain','searchPreferences','updateSearchPreferences','beamInviteURL','beamOutbox','beamStatus','beamCreate','beamRaw','beamAction','beamMailbox','beamNotify','beamIce','beamProfile','beamContactEnable','beamContactRedeem','beamContactRemember','beamDirectory','beamContactForget','beamPermission','beamDisclosed','beamContactInfo','contactProfile','beamInviteCreate','beamInviteGet','beamInviteJoin','beamPair'];
+    const allowed=[...Object.keys(automationMethods),...Object.keys(conversationMethods).filter(m=>m!=='conversationIdentity'),'appConnectionBinding','appConnections','appConnect','appDisconnect','appConnectionCheck','mcpCollections','mcpOperation','admitWork','touch','snapshot','collections','contacts','createContact','contactURL','revokeContact','quarantineContact','inspectContact','mintContact','deliverContact','receive','message','messageBytes','updateMessage','deleteMessage','rules','notificationPreferences','subscribe','removeSubscription','unsubscribe','unsubscribeLink','resources','addResource','verifyResource','deleteResource','federationRPC','storageUsage','messagePage','billingStatus','billingCheckout','billingPortal','billingWebhookVerified','omniSearch','searchRebuild','searchDrain','searchPreferences','updateSearchPreferences','beamInviteURL','beamOutbox','beamStatus','beamCreate','beamRaw','beamAction','beamMailbox','beamNotify','beamIce','beamProfile','beamContactEnable','beamContactRedeem','beamContactRemember','beamDirectory','beamContactForget','beamPermission','beamDisclosed','beamContactInfo','contactProfile','beamInviteCreate','beamInviteGet','beamInviteJoin','beamPair'];
     if(!allowed.includes(method))return {$fault:{code:'unsupported_method',message:'Unsupported account operation.',status:400}};
     // Fanout runs outside the account gate: a recipient may concurrently submit
     // to this source while its own account gate is held. Receiver writes retain
@@ -439,3 +440,5 @@ for(const [method,implementation]of Object.entries(conversationMethods))Object.d
 async function archiveDigest(text){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(b=>b.toString(16).padStart(2,'0')).join('');}
 function base64(bytes){let text='';for(const byte of bytes)text+=String.fromCharCode(byte);return btoa(text);}
 function escapeRegex(value){return value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
+
+Object.assign(AccountController.prototype,automationMethods);

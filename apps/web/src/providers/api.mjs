@@ -9,8 +9,8 @@ export default class APIProvider extends Provider {
 export function createAPI(){return {
   csrf:null,
   async get(path){return this.request(path,undefined,'GET');},
-  async request(path,body,method='POST'){
-    const response=await fetch(path,{method,credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json',...(body?{'Content-Type':'application/json'}:{}),...(this.csrf?{'X-CSRF-Token':this.csrf}:{})},...(body?{body:JSON.stringify(body)}:{})});
+  async request(path,body,method='POST',{signal}={}){
+    const response=await fetch(path,{method,signal,credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json',...(body?{'Content-Type':'application/json'}:{}),...(this.csrf?{'X-CSRF-Token':this.csrf}:{})},...(body?{body:JSON.stringify(body)}:{})});
     return this.parse(response);
   },
   async contactClaims(endpoint){const response=await fetch(endpoint,{headers:{Accept:'application/vnd.bindle.contact-token+jwt'},credentials:'omit',cache:'no-store'});if(!response.ok)throw new Error('This contact invitation is expired, revoked, or invalid.');const token=await response.text();if(!response.headers.get('content-type')?.includes('application/vnd.bindle.contact-token+jwt')||token.length>16384)throw new Error('The contact endpoint did not return a bounded capability.');try{return JSON.parse(new TextDecoder().decode(decode64(token.split('.')[1])));}catch{throw new Error('The contact endpoint returned an invalid capability.');}},

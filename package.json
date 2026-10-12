@@ -13,7 +13,7 @@
     "check:worker": "npm run build:assets && wrangler deploy --dry-run --outdir .output/worker",
     "dev:node": "npm run build:assets && node apps/node/server.mjs",
     "test:e2e": "node scripts/run-browser-checks.mjs",
-    "test:ui-state": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/release-state.mjs tests/browser/plans-search.mjs tests/browser/beaming.mjs tests/browser/beaming-security.mjs tests/browser/mcp-conversations.mjs tests/browser/owner-flow-audit.mjs tests/browser/app-connections.mjs"
+    "test:ui-state": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/release-state.mjs tests/browser/plans-search.mjs tests/browser/beaming.mjs tests/browser/beaming-security.mjs tests/browser/mcp-conversations.mjs tests/browser/owner-flow-audit.mjs tests/browser/app-connections.mjs tests/browser/browser-automation.mjs"
   },
   "engines": {
     "node": ">=24"

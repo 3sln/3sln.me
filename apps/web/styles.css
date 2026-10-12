@@ -43,3 +43,7 @@
 .app-branding{display:flex;align-items:center;gap:12px;min-width:0}.app-branding h2{min-width:0;margin:0}.app-avatar{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;flex:0 0 44px;border-radius:12px;background:#e5eee8;color:#365a48;font-weight:700;font-size:.95rem}.app-description{line-height:1.6;white-space:pre-wrap}.app-metadata{padding-top:6px}.app-metadata .connection-details{margin:12px 0}
 
 .app-connections-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));max-width:960px;align-items:start}.app-connection .app-grant{max-width:680px}.app-connection .app-description,.app-connection details p{max-width:65ch}
+
+.automation-review{max-height:28rem;overflow:auto;white-space:normal;overflow-wrap:anywhere;font-size:inherit}.automation-review pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.85rem}.automation-review details{margin-top:1rem}.permission-group{min-width:0}.permission-group legend{overflow-wrap:anywhere}
+
+.automation-hub>.panel{margin-top:1rem}.automation-connection-links{display:flex;gap:.8rem;flex-wrap:wrap;align-items:center}.automation-connection-links code{overflow-wrap:anywhere;max-width:100%}.automation-hub .field-help{margin-top:.8rem}

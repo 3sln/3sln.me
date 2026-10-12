@@ -150,3 +150,18 @@ Connected apps now tracks the app connection independently of its individual age
 These screenshots use explicitly mocked app/manifest/grant records. Separate real Worker tests verify listing, CSRF-protected disconnection, token and refresh denial, and storage preservation. Independent durable tests cover reconnect generations, pending consent, corrupt records and final dispatch checks. A failed grant listing leaves healthy app disconnect controls available.
 
 Names/descriptions may come from Bindle app metadata or linked/discovered web app manifests. The UI keeps the registered identity and source visible, uses initials, and never loads external icons automatically. Optional Node discovery has a verified DNS-pinned adapter and passed a read-only public MDN example check. Cloudflare external discovery and a raster icon cache remain unconfigured release work.
+
+
+## 22. Browser tools and assistant connections
+
+Automation hub separates OAuth assistant connections from explicitly enabled tools in the current browser session. Collection/action choices start unchecked. Browser tools have no verified assistant identity; writes and deletions require review. Disabling tools removes native registration and backend access. Unsupported browsers retain assistant connection management.
+
+The desktop and review images below come from real Chrome WebMCP using experimental flags against the actual local Wrangler app: exact collection listing, confirmed file creation, byte readback and revocation passed without mocked browser or owner APIs. This does not establish production browser availability or integrations with third-party app tools. The 320-pixel mobile image uses clearly labeled simulated browser/HTTP fixtures for layout and interaction checks.
+
+![Actual native browser tools with scoped access](walkthrough-assets/browser-automation-native-desktop.png)
+
+![Review an actual native tool's file creation](walkthrough-assets/browser-automation-native-review.png)
+
+![Browser automation on a narrow phone — simulated API fixture](walkthrough-assets/browser-automation-mobile-fixture.png)
+
+The shared callable design also allows apps to request human command presentation independently of a palette or automation transport. General external app commands, cooperative frame import and closed-browser execution remain proposed rather than implemented.

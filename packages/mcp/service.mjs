@@ -2,7 +2,8 @@ import {collectAppMetadata,validateAppMetadataConfig} from '../apps/metadata.mjs
 import {base64url,digest,boundedString} from '../messaging/store.mjs';
 export const MCP_LAYOUT='mcp-auth-v1-64';
 export const MCP_SHARDS=64;
-export const TOOLS=[{name:'collections_list',label:'See selected collection names',readOnly:true,destructive:false},{name:'items_list',label:'List items',readOnly:true,destructive:false},{name:'item_read',label:'Read item contents',readOnly:true,destructive:false},{name:'item_write',label:'Create files or edit message metadata',readOnly:false,destructive:false},{name:'item_delete',label:'Delete items',readOnly:false,destructive:true}];
+import {TOOLS} from '../automation/catalog.mjs';
+export {TOOLS} from '../automation/catalog.mjs';
 export class McpFault extends Error{constructor(code,message=code,status=400){super(message);Object.assign(this,{code,status});}}
 const fail=(...args)=>{throw new McpFault(...args);};
 const exact=(value,fields)=>{if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(k=>!fields.includes(k)))fail('invalid_request');};
@@ -20,7 +21,7 @@ export class McpAuthorization {
  constructor({metadata,config,shard='00',clock=()=>Date.now(),crypto=globalThis.crypto}){
   Object.assign(this,{metadata,config,shard,clock,crypto});this.origin=config.APP_ORIGIN;const origin=redirect(this.origin+'/',{local:config.LOCAL_DEVELOPMENT==='true'});if(origin.origin!==this.origin)fail('invalid_config');
   this.issuer=`${this.origin}/mcp/oauth`;this.resource=`${this.origin}/mcp`;this.clients=new Map();this.metadataLoads=new Map();
-  for(const c of parseClients(config)){exact(c,['id','name','redirectUris','origins','application','metadataSources']);if(!boundedString(c.id,200)||!boundedString(c.name,100)||!Array.isArray(c.redirectUris)||!c.redirectUris.length||c.redirectUris.length>16||this.clients.has(c.id))fail('invalid_config');for(const uri of c.redirectUris)redirect(uri,{local:config.LOCAL_DEVELOPMENT==='true'});if(c.origins!==undefined&&(!Array.isArray(c.origins)||c.origins.some(o=>redirect(o+'/',{local:config.LOCAL_DEVELOPMENT==='true'}).origin!==o)))fail('invalid_config');try{validateAppMetadataConfig(c,{local:config.LOCAL_DEVELOPMENT==='true'});}catch{fail('invalid_config','Invalid application metadata configuration.');}this.clients.set(c.id,structuredClone(c));}
+  for(const c of parseClients(config)){exact(c,['id','name','redirectUris','origins','application','metadataSources']);if(!boundedString(c.id,200)||c.id===`${this.origin}/automation/browser`||!boundedString(c.name,100)||!Array.isArray(c.redirectUris)||!c.redirectUris.length||c.redirectUris.length>16||this.clients.has(c.id))fail('invalid_config');for(const uri of c.redirectUris)redirect(uri,{local:config.LOCAL_DEVELOPMENT==='true'});if(c.origins!==undefined&&(!Array.isArray(c.origins)||c.origins.some(o=>redirect(o+'/',{local:config.LOCAL_DEVELOPMENT==='true'}).origin!==o)))fail('invalid_config');try{validateAppMetadataConfig(c,{local:config.LOCAL_DEVELOPMENT==='true'});}catch{fail('invalid_config','Invalid application metadata configuration.');}this.clients.set(c.id,structuredClone(c));}
  }
  random(){return `${this.shard}.${base64url(this.crypto.getRandomValues(new Uint8Array(32)))}`;}
  live(value){return value&&Number.isSafeInteger(value.expiresAt)&&value.expiresAt>this.clock();}
