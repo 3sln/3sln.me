@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://3sln.me/artefacts/contracts/preferences/v1",
+  "title": "Read approved preference fields",
+  "description": "Validates the contract method/args projection of a Bindle RPC envelope. The RPC transport and live authority are defined separately. Initial runtime profile; publish changes under a new URL.",
+  "type": "object",
+  "required": [
+    "method",
+    "args"
+  ],
+  "properties": {
+    "method": {
+      "const": "read"
+    },
+    "args": {
+      "type": "object",
+      "required": [
+        "fragment"
+      ],
+      "properties": {
+        "fragment": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": [
+        "fragment",
+        "revision",
+        "values"
+      ],
+      "properties": {
+        "fragment": {
+          "type": "string",
+          "format": "uri"
+        },
+        "revision": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "values": {
+          "type": "object"
+        },
+        "requiresConsent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "x-methods": {
+    "read": {
+      "request": "#",
+      "result": "#/$defs/result",
+      "effect": "read",
+      "permission": "Approved fields and live resource assignment for this exact contract/method."
+    }
+  }
+}

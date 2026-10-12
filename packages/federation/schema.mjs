@@ -1,3 +1,4 @@
+import {objectKey} from '../storage/policy.mjs';
 import { canonical, digest, boundedString } from '../messaging/store.mjs';
 export class FederationFault extends Error { constructor(code,message=code){super(message);this.name='FederationFault';this.code=code;} }
 export const fail=(code,message)=>{throw new FederationFault(code,message);};
@@ -25,12 +26,12 @@ export function validateSchema(schema,url){
 export function validateValue(field,value,validateURL=https){
   const {min,max}=field.cardinality??{min:1,max:1};const values=max===1?[value]:value;if(!Array.isArray(values)||values.length<min||values.length>max)fail('invalid_preferences');
   for(const item of values){const type=field.type;
-    if(type==='resource'||type==='url')validateURL(item);
+    if(type==='url')validateURL(item);if(type==='resource'){if(object(item)){exact(item,['resource','scope']);validateURL(item.resource);if(!object(item.scope))fail('invalid_preferences');exact(item.scope,['prefix','readOnly','maxObjectBytes']);if(item.scope.prefix!==undefined&&(typeof item.scope.prefix!=='string'||item.scope.prefix.length>1024||item.scope.prefix.startsWith('/')||item.scope.prefix.includes('\\')||item.scope.prefix.includes('//')||item.scope.prefix.split('/').some(part=>part==='.'||part==='..')||/[\u0000-\u001f\u007f]/.test(item.scope.prefix)))fail('invalid_preferences');if(item.scope.prefix){try{objectKey(item.scope.prefix.replace(/\/$/,''));}catch{fail('invalid_preferences');}}if(item.scope.readOnly!==undefined&&typeof item.scope.readOnly!=='boolean'||item.scope.maxObjectBytes!==undefined&&(!Number.isSafeInteger(item.scope.maxObjectBytes)||item.scope.maxObjectBytes<1||item.scope.maxObjectBytes>1048576))fail('invalid_preferences');}else validateURL(item);}
     if(type==='string'||type==='url'){if(typeof item!=='string'||item.length<(field.minLength??0)||item.length>field.maxLength||/[\u0000-\u001f\u007f]/.test(item))fail('invalid_preferences');}
     if(type==='boolean'&&typeof item!=='boolean'||type==='enum'&&!field.values.includes(item))fail('invalid_preferences');
     if(['integer','number'].includes(type)&&(!Number.isFinite(item)||Math.abs(item)>Number.MAX_SAFE_INTEGER||item<field.minimum||item>field.maximum||type==='integer'&&!Number.isSafeInteger(item)))fail('invalid_preferences');
   }
-  if(typeResource(field)&&new Set(values).size!==values.length)fail('invalid_preferences');return values;
+  if(typeResource(field)&&new Set(values.map(value=>object(value)?value.resource:value)).size!==values.length)fail('invalid_preferences');return values;
 }
 const typeResource=field=>field.type==='resource';
 export async function pinSchema({store,crypto,schemaFetcher,schemaHosts},url){

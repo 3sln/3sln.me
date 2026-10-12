@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://3sln.me/artefacts/contracts/resource-scoping/v1",
+  "title": "Describe constraints supported by a resource assignment",
+  "description": "Validates the contract method/args projection of a Bindle RPC envelope. The RPC transport and live authority are defined separately. Initial runtime profile; publish changes under a new URL.",
+  "type": "object",
+  "required": [
+    "method",
+    "args"
+  ],
+  "properties": {
+    "method": {
+      "const": "describe"
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": [
+        "contract",
+        "fields"
+      ],
+      "properties": {
+        "contract": {
+          "const": "https://3sln.me/artefacts/contracts/resource-scoping/v1"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "prefix": {
+              "type": "object"
+            },
+            "readOnly": {
+              "type": "object"
+            },
+            "maxObjectBytes": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "x-methods": {
+    "describe": {
+      "request": "#",
+      "result": "#/$defs/result",
+      "effect": "read",
+      "permission": "Approved fields and live resource assignment for this exact contract/method."
+    }
+  }
+}

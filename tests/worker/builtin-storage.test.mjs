@@ -1,0 +1,6 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createHarness} from './harness.mjs';
+test('actual Worker signup exposes stable built-in storage and cold restore does not duplicate it',async t=>{
+ const h=await createHarness();t.after(()=>h.close());const signup=await h.signup(),owner=signup.result.account.id,headers={Cookie:signup.cookie,Origin:h.origin,'X-CSRF-Token':signup.result.csrfToken};const initial=await h.request('/api/resources',{headers});assert.equal(initial.status,200);const resources=await initial.json();assert.equal(resources.length,1);const builtin=resources[0];assert.equal(builtin.builtin,true);assert.equal(builtin.provider,'hosted');assert.equal(builtin.secret,undefined);const deleted=await h.request('/api/resources/'+builtin.id,{method:'DELETE',headers});assert.equal(deleted.status,409);assert.equal((await deleted.json()).error,'builtin_resource');const object=h.accounts.get(h.accounts.idFromName(owner));await object.evictCold();assert.equal(new Map(await object.rows()).get('shelved'),true);const restored=new Map(await object.restoreCold(owner));const rows=[...restored].filter(([key,value])=>key.startsWith('resource/')&&value.builtin);assert.equal(rows.length,1);assert.equal(rows[0][1].id,builtin.id);assert.equal(restored.get('builtin/hosted-resource-v1').id,builtin.id);
+});

@@ -8,7 +8,7 @@ A handle is a discovery hint, not the durable account key. The durable subject i
 
 The login custom element presents the framework brand, an editable handle, and a visual `@3sln.me` suffix until an `@` is entered. The suffix is presentation only; submission resolves the complete handle. Explain the chosen provider before navigating. Preserve local-part spelling; trim surrounding whitespace, normalize domain through IDNA, and reject control characters, URL credentials, paths, fragments, IP literals, and unsupported ports. v0 handles contain one separator and a nonempty local part and DNS host. Email fallback supports ordinary ASCII mailbox forms; unsupported email syntax receives a clear error, not guessed normalization. Never strip dots or plus-tags or lowercase local parts.
 
-Discover `https://<host>/.well-known/bindle/manifest.json`. `https://<user>@<host>/...` is forbidden: the user segment is URL userinfo and is not account routing. The manifest describes a provider, not whether a particular person exists. Pass the complete account hint to the authorization endpoint as `login_hint`; its interpretation belongs to that provider. Manifest discovery MUST use HTTPS, bounded responses, schema validation, and an exact issuer origin match. v0 requires authorization, token, and RPC endpoints on that origin, disallows redirects during manifest fetch, and requires CORS for browser discovery. Advanced delegated hosting needs a future explicit trust profile.
+Discover `https://<host>/.well-known/bindle/manifest.json`. `https://<user>@<host>/...` is forbidden: the user segment is URL userinfo and is not account routing. The manifest describes a provider, not whether a particular person exists. Pass the complete account hint to the authorization endpoint as `identity` in the bounded authorization-request POST; its interpretation belongs to that provider. Manifest discovery MUST use HTTPS, bounded responses, schema validation, and an exact issuer origin match. v0 requires authorization, token, and RPC endpoints on that origin, disallows redirects during manifest fetch, and requires CORS for browser discovery. Advanced delegated hosting needs a future explicit trust profile.
 
 Discovery outcomes:
 
@@ -20,7 +20,7 @@ Discovery outcomes:
 | Malformed JSON, invalid issuer, unsupported version, unsafe endpoint | Fail closed with actionable unsupported-provider message. |
 | User intentionally chooses email login despite unavailable provider | Separate explicit 3sln login action; explain that it creates/uses a 3sln identity, distinct from any hosted identity. |
 
-Whether a manifest exists is public provider metadata; individual account lookup MUST avoid enumeration. A host manifest cannot prove that a submitted mailbox belongs to the user.
+Whether a manifest exists is public provider metadata; the host-level discovery endpoint MUST NOT enumerate individual accounts. The current targeted authorization-request profile resolves an explicitly supplied handle and exposes availability and its public UUID locator; this is a documented product/privacy tradeoff with restrictive admission limits, not an enumeration-proof claim. A host manifest cannot prove that a submitted mailbox belongs to the user.
 
 ## Application authorization
 
@@ -30,7 +30,7 @@ The SDK generates cryptographically random `state`, a PKCE verifier, and a trans
 
 The manifest may advertise an iframe preference, but v0 SDKs treat it as an unsupported hint and use redirect. Providers MUST deny framing of login, account management and consent. Third-party cookie blocking, clickjacking, and passkey origin restrictions make embedded authentication unsuitable as the baseline. Future iframe support needs an explicit security profile. Popup completion, if later supported, sends only a completion reference through `postMessage` with exact origin and source checks; tokens never traverse wildcard messaging.
 
-v0 browser access tokens expire after at most five minutes, stay in memory, and target only the provider RPC audience. No refresh token in localStorage. Provider login sessions use Secure, HttpOnly cookies with SameSite=Lax and CSRF checks on every mutation. Production browser apps needing persistent background access should use a backend session/token vault; broader token lifecycle is a subsequent profile. Log out closes the current provider session and client memory state; grant revocation is a separate explicit action. Revocation MUST block RPC immediately, regardless of unexpired tokens.
+v0 browser access tokens expire after at most five minutes, stay in memory, and target only the provider RPC audience. No refresh token in localStorage. Provider login sessions use Secure, HttpOnly cookies with SameSite=Strict and CSRF checks on every mutation. Production browser apps needing persistent background access should use a backend session/token vault; broader token lifecycle is a subsequent profile. Log out closes the current provider session and client memory state; grant revocation is a separate explicit action. Revocation MUST block RPC immediately, regardless of unexpired tokens.
 
 ## 3sln email materialization
 

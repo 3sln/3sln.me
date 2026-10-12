@@ -10,6 +10,8 @@ import { StorageError } from '../storage/policy.mjs';
 import QRCode from 'qrcode';
 import {verifyPolarWebhook} from '../billing/index.mjs';
 import {handleMcpPublic,handleMcpOwner,mcpPublicPath,mcpOwnerPath} from '../mcp/http.mjs';
+import {handleFederation} from '../federation/http.mjs';
+import {handleObjectURL} from '../storage/object-http.mjs';
 
 const encoder=new TextEncoder();
 const privateHeaders={ 'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Permissions-Policy':'camera=(), microphone=(), geolocation=(), tools=(self)' };
@@ -42,7 +44,7 @@ const authMethods={
 };
 async function body(request,max=100000){const content=request.headers.get('Content-Type')||'';if(!content.startsWith('application/json'))throw Object.assign(new Error('Use JSON for this request.'),{code:'json_required',status:415});const reader=request.body?.getReader();if(!reader)throw Object.assign(new Error('Request body required'),{status:400});let size=0;const chunks=[];while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>max){await reader.cancel();throw Object.assign(new Error('Request is too large.'),{code:'body_too_large',status:413});}chunks.push(value);}const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}try{const result=JSON.parse(new TextDecoder().decode(bytes));if(!result||typeof result!=='object'||Array.isArray(result))throw new Error();return result;}catch{throw Object.assign(new Error('Request JSON must be an object.'),{code:'invalid_json',status:400});}}
 function status(error){if(error.status)return error.status;return {unauthorized:401,csrf:403,forbidden:403,not_found:404,conflict:409,handle_unavailable:409,idempotency_conflict:409,quota_exceeded:429,account_quota_exceeded:429,rate_limited:429,email_unavailable:503,challenge_failed:403}[error.code]||400;}
-function providerConfig(env){return {google: {enabled:Boolean(env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET&&env.KEY_ENCRYPTION_KEY),configured:Boolean(env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET),...env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET?{}:{reason:'Google Drive credentials are not configured on this service.'}},s3:{enabled:Boolean(env.KEY_ENCRYPTION_KEY)},webdav:{enabled:Boolean(env.KEY_ENCRYPTION_KEY),reason:'For your security, this service must approve the server you connect to.'},dropbox:{enabled:false,reason:'Dropbox is not available on this service yet.'},onedrive:{enabled:false,reason:'Microsoft OneDrive is not available on this service yet.'}};}
+function providerConfig(env){return {hosted:{enabled:Boolean(env.ACCOUNTS)},google: {enabled:Boolean(env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET&&env.KEY_ENCRYPTION_KEY),configured:Boolean(env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET),...env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET?{}:{reason:'Google Drive credentials are not configured on this service.'}},s3:{enabled:Boolean(env.KEY_ENCRYPTION_KEY)},webdav:{enabled:Boolean(env.KEY_ENCRYPTION_KEY),reason:'For your security, this service must approve the server you connect to.'},dropbox:{enabled:false,reason:'Dropbox is not available on this service yet.'},onedrive:{enabled:false,reason:'Microsoft OneDrive is not available on this service yet.'}};}
 
 export default {
  turnstile, rateLimit:limit,
@@ -52,6 +54,20 @@ export default {
    const url=new URL(request.url);const local=env.LOCAL_DEVELOPMENT==='true';
    if(url.origin!==env.APP_ORIGIN)return json({error:'invalid_origin',message:'Use the configured account domain.'},403);
    const path=url.pathname;const mutation=!['GET','HEAD','OPTIONS'].includes(request.method);
+   if(path==='/.well-known/bindle/manifest.json'||path.startsWith('/oauth/')||path==='/bindle/rpc'||path.startsWith('/bindle/objects/')||path.startsWith('/api/oauth/')||path==='/api/preferences'||path==='/api/grants'||path.startsWith('/api/grants/')){
+    if(env.FEDERATION_ENABLED==='true'&&request.method!=='OPTIONS'){
+     const remote=request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown'),secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY;
+     if(!secret)return json({error:'temporarily_unavailable',message:'Application connections are not configured.'},503);
+     const ip=await pseudonym(remote,secret),network=await pseudonym(subnet(remote),secret),lane=parseInt(ip.slice(0,2),16)%16;
+     const readOnly=request.method==='GET'||request.method==='HEAD',rpc=path==='/bindle/rpc'||path.startsWith('/bindle/objects/');
+     const rateClass=rpc?'rpc':readOnly?'read':'mutation';
+     if(!await env.ABUSE.consume(`bindle/${rateClass}/ip/${ip}`,{windowMs:60000,limit:rpc?120:readOnly?120:30})||!await env.ABUSE.consume(`bindle/${rateClass}/subnet/${network}`,{windowMs:60000,limit:rpc?400:200})||!await env.ABUSE.consume(`bindle/${rateClass}/service-v1-${lane}`,{windowMs:60000,limit:rpc?400:200})){const appOrigin=request.headers.get('Origin');const cors=path.startsWith('/bindle/objects/')?{'Access-Control-Allow-Origin':'*'}:appOrigin&&env.FEDERATION_AUTHORITY?.clients?.some(client=>client.origin===appOrigin)?{'Access-Control-Allow-Origin':appOrigin,Vary:'Origin'}:{};return json({error:'rate_limited',message:'Please wait before continuing this application connection.'},429,{'Retry-After':'60',...cors});}
+    }
+    if(path.startsWith('/bindle/objects/'))return handleObjectURL(request,{controller:env.FEDERATION_AUTHORITY,enabled:env.FEDERATION_ENABLED==='true'});
+    const response=await handleFederation(request,{controller:env.FEDERATION_AUTHORITY,issuer:env.APP_ORIGIN,allowInsecureLocalhost:local,assets:env.ASSETS,enabled:env.FEDERATION_ENABLED==='true'});
+    if(response)return path==='/oauth/authorize'&&response.headers.get('Content-Type')?.includes('text/html')?securePage(await brandPage(response,env)):response;
+    return json({error:'not_found'},404);
+   }
    if(mcpPublicPath(path)){
     if(env.MCP_ENABLED!=='true')return handleMcpPublic(request,env);
     if(path==='/mcp/oauth/authorize'||path==='/mcp/oauth/token'){
@@ -188,9 +204,10 @@ export default {
     const resource=/^\/api\/resources\/([a-f0-9-]{36})(?:\/(verify))?$/.exec(path);if(resource){if(request.method==='DELETE')return json(await object.deleteResource(id,resource[1]));if(resource[2]&&request.method==='POST')return json(await object.verifyResource(id,resource[1],await body(request)));}
     return json({error:'not_found'},404);
    }
-   if(path==='/.well-known/bindle/manifest.json')return json({error:'not_yet_conformant',message:'Federated OAuth service is not enabled.'},503);
    if(path==='/artefacts/contracts/object-storage/v1'){const target=new URL(request.headers.get('Accept')?.includes('text/html')?'/docs/spec/storage.html':'/artefacts/contracts/object-storage/v1.json',url);const asset=await env.ASSETS.fetch(new Request(target,request));const headers=new Headers(asset.headers);headers.set('Vary','Accept');if(!target.pathname.endsWith('.html'))headers.set('Content-Type','application/schema+json');return new Response(asset.body,{status:asset.status,headers});}
+   if(/^\/artefacts\/contracts\/(preferences|profile|resource-descriptor|resource-scoping)\/v1$/.test(path)){const human=request.headers.get('Accept')?.includes('text/html');const target=new URL(human?'/docs/spec/federation-implementation.html':path+'.json',url),asset=await env.ASSETS.fetch(new Request(target,request)),headers=new Headers(asset.headers);headers.set('Vary','Accept');if(!human)headers.set('Content-Type','application/schema+json');return new Response(asset.body,{status:asset.status,headers});}
    if(path==='/recovery/setup'||path==='/recovery/restore'){const page=await env.ASSETS.fetch(new Request(new URL('/',url),request));return securePage(await brandPage(page,env),true);}
+   if(path==='/preferences'&&request.method==='GET'){const page=await env.ASSETS.fetch(new Request(new URL('/authorize.html',url),request));return securePage(await brandPage(page,env));}
    if(path.startsWith('/users/')||path==='/integrations/google/complete'||path==='/mcp/consent'||path==='/unsubscribe'||path==='/email/confirm'||path==='/email/login'||path==='/device'||path==='/device/approve'||path.startsWith('/artefacts/')){
      if(path.startsWith('/artefacts/'))return env.ASSETS.fetch(request);
      const page=await env.ASSETS.fetch(new Request(new URL('/',url),request));return securePage(await brandPage(page,env));
@@ -200,7 +217,7 @@ export default {
    const secured=await securePage(immutable?asset:await brandPage(asset,env),path==='/recovery-kdf-worker.mjs'||/^\/assets\/scripts\/recovery-kdf-worker\.[a-f0-9]{10}\.js$/.test(path),immutable);
    if(/^\/packages\/sdk\/src\/(?:login-element|identity)\.mjs$/.test(path)||/^\/assets\/packages\/sdk\/src\/(?:login-element|identity)\.[a-f0-9]{10}\.js$/.test(path)){const headers=new Headers(secured.headers);headers.set('Access-Control-Allow-Origin','*');if(!immutable)headers.set('Cache-Control','no-cache');return new Response(secured.body,{status:secured.status,headers});}
    return secured;
-  }catch(error){const pathname=new URL(request.url).pathname;const cap=/^\/users\/[^/]+\/contact\/[^/]+$/.test(pathname)||pathname==='/api/messages'&&request.headers.get('Authorization')?.startsWith('Bearer ');const headers=cap?{'Access-Control-Allow-Origin':'*','X-Robots-Tag':'noindex, nofollow, nosnippet'}:{};if(error instanceof IdentityFault||error instanceof MessagingFault||error instanceof StorageError||error.status)return json({error:error.code||'invalid_request',message:error.message},status(error),headers);if(env.LOCAL_DEVELOPMENT==='true')console.error('Local runtime exception:',error.name,error.message);return json({error:'internal_error',message:'We could not complete this request. Please try again.'},500,headers);}
+  }catch(error){const pathname=new URL(request.url).pathname;const cap=/^\/users\/[^/]+\/contact\/[^/]+$/.test(pathname)||pathname==='/api/messages'&&request.headers.get('Authorization')?.startsWith('Bearer ');const headers=cap?{'Access-Control-Allow-Origin':'*','X-Robots-Tag':'noindex, nofollow, nosnippet'}:{};if(Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0)headers['Retry-After']=String(error.retryAfter);if(error instanceof IdentityFault||error instanceof MessagingFault||error instanceof StorageError||error.status)return json({error:error.code||'invalid_request',message:error.message},status(error),headers);if(env.LOCAL_DEVELOPMENT==='true')console.error('Local runtime exception:',error.name,error.message);return json({error:'internal_error',message:'We could not complete this request. Please try again.'},500,headers);}
   finally{engine?.dispose();}
  },
  async scheduled(controller,env,ctx){
@@ -248,7 +265,7 @@ function allowedMethods(path){
  if(/^\/api\/(rules|notifications\/devices)\/[^/]+$/.test(path))return ['DELETE'];
  return null;
 }
-function accountHandle(env,id){const stub=env.ACCOUNTS.get(id);return new Proxy({}, {get:(_,method)=>async(...args)=>{const result=await stub.invoke({method,args});if(result?.$fault){const error=new Error(result.$fault.message);Object.assign(error,{code:result.$fault.code,status:result.$fault.status||status(result.$fault)});throw error;}return result;}});}
+function accountHandle(env,id){const stub=env.ACCOUNTS.get(id);return new Proxy({}, {get:(_,method)=>async(...args)=>{const result=await stub.invoke({method,args});if(result?.$fault){const error=new Error(result.$fault.message);Object.assign(error,{code:result.$fault.code,status:result.$fault.status||status(result.$fault),retryAfter:result.$fault.retryAfter});throw error;}return result;}});}
 async function multipartMessage(request){
  if(!request.headers.get('Content-Type')?.startsWith('multipart/form-data'))throw Object.assign(new Error('Send a multipart form with a message field.'),{code:'multipart_required',status:415});
  const reader=request.body?.getReader();if(!reader)throw Object.assign(new Error('Message body required.'),{status:400});const chunks=[];let size=0;

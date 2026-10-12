@@ -12,6 +12,11 @@ function createBrowser(){
   const link=new URLSearchParams(location.hash.slice(1)),query=new URLSearchParams(location.search),signedEndpoint=query.has('sig')?location.pathname+location.search:null;
   // Capabilities are captured once, before rendering, and removed from history.
   const submissions=new Map();
+  const continuationKey='bindle.provider-continuation';
+  const validContinuation=value=>typeof value==='string'&&/^\/oauth\/authorize\?request_id=(?:[0-9a-f-]{36}\.)?[A-Za-z0-9_-]{43}$/.test(value);
+  const requestedReturn=query.get('return_to');
+  if(query.has('return_to')){try{sessionStorage.removeItem(continuationKey);if(query.getAll('return_to').length===1&&validContinuation(requestedReturn))sessionStorage.setItem(continuationKey,JSON.stringify({url:requestedReturn,expiresAt:Date.now()+600000}));}catch{}}
+
   const googleReturn=location.pathname==='/integrations/google/complete';
   const googleDriveCallback=googleReturn?Object.fromEntries(['state','code','error'].filter(key=>link.has(key)).map(key=>[key,link.get(key)])):null;
   const secret={googleDriveCallback,beamInvite:link.get('beam-invite'),token:link.get('token'),owner:link.get('owner'),requestId:link.get('request'),userCode:googleReturn?null:link.get('code'),pending:null,recovery:null,deviceCode:null,contactEndpoint:signedEndpoint,encryptedRecovery:null,restoreFile:null};
@@ -19,7 +24,7 @@ function createBrowser(){
   let returnFocus,returnFocusText,captchaToken='',disposed=false,captchaAction='signup',observer=null,captchaConfig={};
   const cleanups=[];
   const path=location.pathname,purpose=new URLSearchParams(location.search).get('purpose');
-  const route={googleDriveCallback:googleReturn,auth:googleReturn||new URLSearchParams(location.search).has('signin')?'login':undefined,kind:path==='/mcp/consent'?'mcp-consent':/^\/users\/[^/]+\/contact\/[a-f0-9-]{36}$/.test(path)?'contact':path==='/unsubscribe'?'unsubscribe':['/email/confirm','/email/login'].includes(path)?'email':['/device','/device/approve'].includes(path)?'device':path==='/recovery/setup'?'recovery-setup':path==='/recovery/restore'?'recovery-restore':'home',recipient:path.split('/')[2],emailLogin:path==='/email/login'||purpose==='login',requestId:secret.requestId,userCode:secret.userCode};
+  const route={googleDriveCallback:googleReturn,auth:googleReturn||validContinuation(requestedReturn)||new URLSearchParams(location.search).has('signin')?'login':undefined,kind:path==='/mcp/consent'?'mcp-consent':/^\/users\/[^/]+\/contact\/[a-f0-9-]{36}$/.test(path)?'contact':path==='/unsubscribe'?'unsubscribe':['/email/confirm','/email/login'].includes(path)?'email':['/device','/device/approve'].includes(path)?'device':path==='/recovery/setup'?'recovery-setup':path==='/recovery/restore'?'recovery-restore':'home',recipient:path.split('/')[2],emailLogin:path==='/email/login'||purpose==='login',requestId:secret.requestId,userCode:secret.userCode};
   try{const pending=JSON.parse(sessionStorage.getItem('3sln-setup'));if(pending?.token&&typeof pending.token==='string'){secret.pending=pending.token;route.pendingStage=pending.stage;}}catch{}
   const resource={
     applyLocale(locale){document.documentElement.lang=locale;},
@@ -50,6 +55,7 @@ function createBrowser(){
     download(name,content,type='application/json'){const url=URL.createObjectURL(new Blob([content],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);},
     copy:text=>navigator.clipboard.writeText(text),
     navigate:url=>location.assign(url),
+    continueAuthorization(){let pending;try{pending=JSON.parse(sessionStorage.getItem(continuationKey));sessionStorage.removeItem(continuationKey);}catch{}if(validContinuation(pending?.url)&&Number.isFinite(pending.expiresAt)&&pending.expiresAt>Date.now()){location.assign(pending.url);return true;}return false;},
     pushPermission:()=>typeof Notification==='undefined'?'unsupported':Notification.permission,
     async subscribePush(key){if(!key)throw new Error('Push delivery is not configured on this service.');if(!('serviceWorker'in navigator)||typeof Notification==='undefined')throw new Error('Push is unsupported in this browser.');if(await Notification.requestPermission()!=='granted')throw new Error('Allow browser notifications to enable push.');const registration=await navigator.serviceWorker.ready;return (await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:decode64(key)})).toJSON();},
     captureFocus(){returnFocus=document.activeElement;returnFocusText=returnFocus?.textContent;},

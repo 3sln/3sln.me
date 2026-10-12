@@ -249,13 +249,126 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 300
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "contentType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "condition": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "absent": {
+                  "const": true
+                }
+              },
+              "required": [
+                "absent"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "version"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "range": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "additionalProperties": false
+        },
+        "ifVersion": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
         "key",
         "operation"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "write"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "size",
+              "condition"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "range"
+                  ]
+                },
+                {
+                  "required": [
+                    "ifVersion"
+                  ]
+                }
+              ]
+            }
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "size"
+                  ]
+                },
+                {
+                  "required": [
+                    "condition"
+                  ]
+                },
+                {
+                  "required": [
+                    "contentType"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
     },
     "capabilitiesResult": {
       "type": "object",
@@ -392,12 +505,6 @@
             "PUT"
           ]
         },
-        "headers": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        },
         "expiresAt": {
           "type": "integer"
         },
@@ -406,13 +513,27 @@
             "expires-only",
             "live"
           ]
+        },
+        "requiredHeaders": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "mode": {
+          "enum": [
+            "native",
+            "proxy"
+          ]
         }
       },
       "required": [
         "url",
         "method",
         "expiresAt",
-        "revocation"
+        "revocation",
+        "requiredHeaders",
+        "mode"
       ],
       "additionalProperties": false
     }
@@ -422,7 +543,7 @@
     "get": "read",
     "put": "write",
     "delete": "delete",
-    "presign": "presign:read or presign:write"
+    "presign": "presign AND get (read URL) or presign AND put (write URL), on the same granted resource field"
   },
-  "x-status": "draft-unpublished"
+  "x-status": "implemented-local-production-gated"
 }

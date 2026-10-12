@@ -1,3 +1,4 @@
+import {RESOURCE_SCOPING,storageScopeOptions} from '../storage/scoping.mjs';
 import {encodeFreeHandleNumber,normalizeHandle,validatePaidHandle} from '../identity/handles.mjs';
 import {GoogleDriveService} from '../storage/google-drive.mjs';
 import {automationMethods} from '../automation/account.mjs';
@@ -16,6 +17,8 @@ import { S3Adapter, WebDAVAdapter } from '../../packages/storage/adapters.mjs';
 import { objectKey,StorageError } from '../storage/policy.mjs';
 import {StorageQuota,storageState} from './storage-quota.mjs';
 import {AccountWorkBudget} from './work-budget.mjs';
+import {AccountStorageWriteBudget} from './storage-write-budget.mjs';
+import {guardedBucket} from './guarded-bucket.mjs';
 import {AccountItemIndex} from './item-index.mjs';
 import {BillingService} from '../billing/index.mjs';
 import {validateContent} from '../messaging/content.mjs';
@@ -107,9 +110,20 @@ export class IdentityRepository {
 
 export class FixedWindowGuard {
   constructor({metadata}){this.metadata=metadata;}
-  async consume({windowMs,limit,lifetime=false,units=1}) {
+  async consume({windowMs,limit,lifetime=false,units=1,storageWrite}) {
     if(!Number.isSafeInteger(units)||units<1||units>16||!Number.isSafeInteger(limit)||limit<1||typeof lifetime!=='boolean'||!lifetime&&(!Number.isSafeInteger(windowMs)||windowMs<1000))return false;
-    if(lifetime)return this.metadata.transaction(async tx=>{const count=await tx.get('lifetime')??0;if(!Number.isSafeInteger(count)||count<0||count+units>limit)return false;await tx.put('lifetime',count+units);return true;});
+    if(storageWrite!==undefined){
+      if(!lifetime||!storageWrite||typeof storageWrite!=='object'||!['foreground','maintenance'].includes(storageWrite.pool))return false;
+      const {pool,totalLimit,foregroundLimit,maintenanceLimit}=storageWrite,limits={total:totalLimit,foreground:foregroundLimit,maintenance:maintenanceLimit};
+      if(!Object.values(limits).every(value=>Number.isSafeInteger(value)&&value>=0)||totalLimit!==foregroundLimit+maintenanceLimit||limit!==limits[pool])return false;
+      return this.metadata.transaction(async tx=>{
+        const stored=await tx.get('storage-write'),record=stored===undefined?{version:1,limits,total:0,foreground:0,maintenance:0}:stored;
+        if(!record||record.version!==1||!['total','foreground','maintenance'].every(kind=>Number.isSafeInteger(record[kind])&&record[kind]>=0&&record[kind]<=limits[kind]&&record.limits?.[kind]===limits[kind])||record.total!==record.foreground+record.maintenance)return false;
+        if(record.total+units>totalLimit||record[pool]+units>limits[pool])return false;
+        await tx.put('storage-write',{...record,total:record.total+units,[pool]:record[pool]+units});return true;
+      });
+    }
+    if(lifetime)return this.metadata.transaction(async tx=>{const stored=await tx.get('lifetime'),count=stored===undefined?0:stored;if(!Number.isSafeInteger(count)||count<0||count+units>limit)return false;await tx.put('lifetime',count+units);return true;});
     return this.metadata.transaction(async tx=>{
       const now=Date.now();let value=await tx.get('window');if(!value||value.end<=now)value={count:0,end:now+windowMs};
       if(!Number.isSafeInteger(value.count)||value.count<0||value.count+units>limit)return false;value.count+=units;await tx.put('window',value);await tx.setAlarm(value.end);return true;
@@ -123,6 +137,9 @@ function restore(value){if(value&&Object.hasOwn(value,'$bytes'))return Uint8Arra
 
 export class AccountController {
   constructor({metadata,gate,blobs,archives,config,sql,sqlTransaction}){
+    if(config.STORAGE_WRITE_ENABLED!==undefined&&!['true','false',true,false].includes(config.STORAGE_WRITE_ENABLED))throw new TypeError('Invalid storage write admission configuration.');
+    this.storageWriteBudget=config.STORAGE_WRITE_ENABLED==='true'||config.STORAGE_WRITE_ENABLED===true?new AccountStorageWriteBudget({metadata,authority:config.STORAGE_WRITE_AUTHORITY??config.WORK_AUTHORITY,config}):null;
+    const wrap=(bucket,maintenance)=>guardedBucket(bucket,{admit:async clientId=>{if(this.storageWriteBudget){if(!maintenance&&(await metadata.get('storage/garbage-retry'))?.paused===true||!maintenance&&(await metadata.get('storage/cleanup-retry'))?.paused===true)throw new StorageError('storage_write_unavailable','Storage writes are paused while retained uploads are cleaned up.',503);await this.storageWriteBudget.admit(await metadata.get('owner'),{clientId,maintenance});}}});blobs=wrap(blobs,false);archives=wrap(archives,true);
     this.metadata=metadata;this.googleDrive=new GoogleDriveService({metadata,config,fetcher:config.GOOGLE_DRIVE_FETCH??fetch});this.apps=new AppConnections({metadata,origin:config.APP_ORIGIN});this.gate=gate;this.workBudget=config.WORK_LIMITS_ENABLED!=='false'&&config.WORK_AUTHORITY?new AccountWorkBudget({metadata,authority:config.WORK_AUTHORITY,config}):null;this.blobs=blobs;this.archives=archives;this.config=config;this.quota=new StorageQuota({metadata,blobs});this.itemIndex=sql?new AccountItemIndex(sql):null;this.billing=new BillingService({config,metadata});this.searchIndex=sql?new SqliteSearchIndex({sql,transaction:sqlTransaction||sql.transaction?.bind(sql)}):null;this.searchOutbox=new MetadataSearchOutbox(metadata);this.semanticBudget=new DurableSemanticBudget({state:metadata,configured:config.SEMANTIC_SEARCH_ENABLED==='true'&&Boolean(config.AI?.run&&(config.SEARCH_VECTORS?.query||[0,1,2,3].every(shard=>config[`SEARCH_VECTORS_${shard}`]?.query))),globalSpend:config.SEMANTIC_SPEND});this.vectorGate=new SearchMutationGate();this.search=this.searchIndex?new SearchService({index:this.searchIndex,outbox:this.searchOutbox,semanticPolicy:this.semanticBudget,onSemanticError:(event,error)=>this.deferSemanticSearch(event,error),authority:{get:(owner,id,options)=>this.searchDocument(owner,id,options),scan:(owner,options)=>this.scanSearchDocuments(owner,options)}}):null;
     const store={transaction:async operation=>{
       const garbage=[];
@@ -142,17 +159,18 @@ export class AccountController {
     this.beams=new BeamService({metadata,config,entitlement:owner=>this.billing.entitlement(owner)});this.beamContacts=new BeamContacts({metadata,endpoints:this.endpoints});
   }
   async invoke({method,args}){
-    const allowed=['paidHandleEligibility','identityKeychain','googleDriveStart','googleDriveComplete',...Object.keys(automationMethods),...Object.keys(conversationMethods).filter(m=>m!=='conversationIdentity'),'appConnectionBinding','appConnections','appConnect','appDisconnect','appConnectionCheck','mcpCollections','mcpOperation','admitWork','touch','snapshot','collections','contacts','createContact','contactURL','revokeContact','quarantineContact','inspectContact','mintContact','deliverContact','receive','message','messageBytes','updateMessage','deleteMessage','rules','notificationPreferences','subscribe','removeSubscription','unsubscribe','unsubscribeLink','resources','addResource','verifyResource','deleteResource','federationRPC','storageUsage','messagePage','billingStatus','billingCheckout','billingPortal','billingWebhookVerified','omniSearch','searchRebuild','searchDrain','searchPreferences','updateSearchPreferences','beamInviteURL','beamOutbox','beamStatus','beamCreate','beamRaw','beamAction','beamMailbox','beamNotify','beamIce','beamProfile','beamContactEnable','beamContactRedeem','beamContactRemember','beamDirectory','beamContactForget','beamPermission','beamDisclosed','beamContactInfo','contactProfile','beamInviteCreate','beamInviteGet','beamInviteJoin','beamPair'];
+    const allowed=['paidHandleEligibility','identityKeychain','googleDriveStart','googleDriveComplete',...Object.keys(automationMethods),...Object.keys(conversationMethods).filter(m=>m!=='conversationIdentity'),'appConnectionBinding','appConnections','appConnect','appBindleConnect','appDisconnect','appConnectionCheck','mcpCollections','mcpOperation','admitWork','touch','snapshot','collections','contacts','createContact','contactURL','revokeContact','quarantineContact','inspectContact','mintContact','deliverContact','receive','message','messageBytes','updateMessage','deleteMessage','rules','notificationPreferences','subscribe','removeSubscription','unsubscribe','unsubscribeLink','resources','addResource','verifyResource','deleteResource','federationRPC','storageUsage','messagePage','billingStatus','billingCheckout','billingPortal','billingWebhookVerified','omniSearch','searchRebuild','searchDrain','searchPreferences','updateSearchPreferences','beamInviteURL','beamOutbox','beamStatus','beamCreate','beamRaw','beamAction','beamMailbox','beamNotify','beamIce','beamProfile','beamContactEnable','beamContactRedeem','beamContactRemember','beamDirectory','beamContactForget','beamPermission','beamDisclosed','beamContactInfo','contactProfile','beamInviteCreate','beamInviteGet','beamInviteJoin','beamPair'];
     if(!allowed.includes(method))return {$fault:{code:'unsupported_method',message:'Unsupported account operation.',status:400}};
     // Fanout runs outside the account gate: a recipient may concurrently submit
     // to this source while its own account gate is held. Receiver writes retain
     // their own serialization, including the source's local inbox.
-    if(method==='conversationDrain'||method==='conversationPublicIdentity'&&await this.metadata.get('signing-key')){try{return await this[method](...args);}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'Conversation delivery could not be completed.',status:error.status}};}}
-    return this.gate.run(async()=>{try{if(['mcpOperation','appConnectionBinding','appConnections','appConnect','appDisconnect','appConnectionCheck','message','messageBytes','updateMessage','deleteMessage','resources','addResource','verifyResource','deleteResource'].includes(method))await this.warm(args[0]);return await this[method](...args);}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status}};}});
+    if(method==='conversationDrain'||method==='conversationPublicIdentity'&&await this.metadata.get('signing-key')){try{return await this[method](...args);}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'Conversation delivery could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}}
+    return this.gate.run(async()=>{try{if(['mcpOperation','appConnectionBinding','appConnections','appConnect','appBindleConnect','appDisconnect','appConnectionCheck','message','messageBytes','updateMessage','deleteMessage','resources','addResource','verifyResource','deleteResource'].includes(method))await this.warm(args[0]);return await this[method](...args);}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}});
   }
   async appConnections(owner){return this.apps.list(owner);}
   async appConnectionBinding(owner,clientId){return this.apps.binding(owner,clientId);}
   async appConnect(owner,client,expected){return this.apps.register(owner,client,expected);}
+  async appBindleConnect(owner,client,expected){return this.apps.register(owner,client,expected,{transport:'bindle',provenance:{kind:'oauth-consent',issuer:this.config.APP_ORIGIN}});}
   async appDisconnect(owner,id){return this.apps.disconnect(owner,id);}
   async appConnectionCheck(owner,id,generation,clientId){return this.apps.check(owner,id,generation,clientId);}
   async mcpCollections(owner){return accountMcpCollections(this,owner);}
@@ -190,20 +208,42 @@ export class AccountController {
     const adapter=new CloudflareTurnAdapter({keyId:this.config.CLOUDFLARE_TURN_KEY_ID,apiToken:this.config.CLOUDFLARE_TURN_API_TOKEN}),issued=await adapter.issue({ttl:300});
     try{await this.config.BEAM_RELAY_BUDGET.commit(reservation);await this.metadata.transaction(async tx=>{const current=await tx.get('beam/offer/'+id);if(!current)throw new BeamError('beam_expired','This transfer has expired.',410);this.beams.authorize(current,actor);if(current.state!=='accepted')throw new BeamError('beam_not_accepted','This transfer is no longer accepted.',409);current.iceIssued[role]=true;await tx.put('beam/offer/'+id,current);});}catch(error){for(const username of new Set(issued.iceServers.map(s=>s.username).filter(Boolean)))try{await adapter.revoke(username);}catch{}throw error;}return {...issued,relayEnabled:true};
   }
+  async ensureBuiltinStorage(owner){
+    const pointerKey='builtin/hosted-resource-v1',contract='https://3sln.me/artefacts/contracts/object-storage/v1',uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+    const unavailable=()=>{throw new StorageError('storage_unavailable','The built-in storage binding needs repair.',503);};
+    const valid=resource=>resource&&uuid.test(resource.id)&&resource.owner===owner&&resource.provider==='hosted'&&resource.builtin===true&&resource.status==='connected'&&resource.kind===undefined&&!Object.hasOwn(resource,'secret')&&resource.contracts?.includes(contract)&&resource.capabilities?.read===true&&resource.capabilities?.write===true;
+    return this.metadata.transaction(async tx=>{
+      const boundOwner=await tx.get('owner');if(boundOwner!==undefined&&boundOwner!==owner)throw new StorageError('forbidden','Account owner mismatch.',403);
+      const existingBuiltins=async()=>{
+        const rows=await tx.list({prefix:'resource/',limit:201});if(rows.size>200||[...rows.values()].some(resource=>resource.owner!==owner))unavailable();
+        const entries=[...rows].filter(([,resource])=>resource.builtin===true);
+        if(entries.length>1||entries.some(([key,resource])=>!valid(resource)||key!==`resource/${resource.id}`))unavailable();return entries.map(([,resource])=>resource);
+      };
+      const pointer=await tx.get(pointerKey);let id,resource;
+      if(pointer!==undefined){
+        if(pointer?.version!==1||pointer.owner!==owner||typeof pointer.id!=='string'||!uuid.test(pointer.id))unavailable();id=pointer.id;resource=await tx.get(`resource/${id}`);
+        if(resource&&(!valid(resource)||resource.id!==id))unavailable();
+        if(!resource){const existing=await existingBuiltins();if(existing.length&&existing[0].id!==id)unavailable();}
+      }else {const existing=await existingBuiltins();resource=existing[0];id=resource?.id??crypto.randomUUID();}
+      if(!resource){resource={id,owner,name:'Account storage',provider:'hosted',builtin:true,status:'connected',contracts:[contract],capabilities:{read:true,write:true,range:true,conditionalWrites:true,presigned:{read:false,write:false},maxObjectBytes:1048576},verifiedAt:Date.now()};await tx.put(`resource/${id}`,resource);}
+      if(pointer===undefined)await tx.put(pointerKey,{version:1,owner,id});if(boundOwner===undefined)await tx.put('owner',owner);return resource;
+    });
+  }
   async warm(owner) {
     // A committed R2 snapshot survives eviction. Only clear warm records after
     // snapshot success; restores are serialized before any account operation.
     {
+      const priorOwner=await this.metadata.get('owner');if(priorOwner!==undefined&&priorOwner!==owner)throw new StorageError('forbidden','Account owner mismatch.',403);
       if(await this.metadata.get('shelved')){
         const snapshot=await this.archives.get(`accounts/${owner}.json`);
         if(!snapshot)throw new Error('Account archive unavailable');
         if(snapshot.size>8388608)throw new Error('Account archive exceeds bounds');
         const envelope=await snapshot.json();
-        if(envelope.version!==1||envelope.owner!==owner||!Array.isArray(envelope.rows)||envelope.rows.length>2000||envelope.digest!==await archiveDigest(JSON.stringify(envelope.rows)))throw new Error('Account archive integrity check failed');
-        const rows=restore(envelope.rows);if(rows.some(row=>!Array.isArray(row)||row.length!==2||typeof row[0]!=='string'||!row[0].startsWith('message/')&&!row[0].startsWith('resource/')))throw new Error('Account archive record invalid');
+        if(envelope.version!==1||envelope.owner!==owner||!Array.isArray(envelope.rows)||envelope.rows.length>2200||envelope.digest!==await archiveDigest(JSON.stringify(envelope.rows)))throw new Error('Account archive integrity check failed');
+        const rows=restore(envelope.rows);if(rows.some(row=>!Array.isArray(row)||row.length!==2||typeof row[0]!=='string'||!row[0].startsWith('message/')&&!row[0].startsWith('resource/')||!row[1]||row[1].owner!==owner))throw new Error('Account archive record invalid');
         await this.metadata.transaction(async tx=>{for(const [k,v]of rows)await tx.put(k,v);await tx.delete('shelved');});
       }
-      const storedOwner=await this.metadata.get('owner');if(storedOwner&&storedOwner!==owner)throw new StorageError('forbidden','Account owner mismatch.',403);if(!storedOwner)await this.metadata.put('owner',owner);await this.migrateItemIndex(owner);
+      const storedOwner=await this.metadata.get('owner');if(storedOwner!==undefined&&storedOwner!==owner)throw new StorageError('forbidden','Account owner mismatch.',403);await this.ensureBuiltinStorage(owner);await this.migrateItemIndex(owner);
       if(!(await this.messages.collections(owner)).length)await this.messages.createCollection(owner,'Inbox');
       await this.scheduleAlarm(Date.now()+7*86400000);
     }
@@ -325,7 +365,7 @@ export class AccountController {
     });
   }
   async messagePage(owner,options={}){await this.warm(owner);if(!this.itemIndex)return {items:await this.messages.list(owner,options),cursor:null};if(!await this.metadata.get('item-index-ready'))throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options);}
-  async storageUsage(owner){return this.quota.usage(owner);}
+  async storageUsage(owner){await this.warm(owner);const usage=await this.quota.usage(owner);return {...usage,...this.storageWriteBudget?{writeOperations:await this.storageWriteBudget.status(owner)}:{}};}
   async scheduleAlarm(time){
     const now=Date.now(),cleanup=await this.quota.nextCleanup(),owner=await this.metadata.get('owner'),pending=owner&&((await this.metadata.get(key('search-queue-usage',owner)))?.count||!await this.metadata.get('item-index-ready')||!await this.metadata.get('search-backfill-ready')),garbage=await this.metadata.list({prefix:'blob-garbage/',limit:1});
     const semantic=await this.metadata.get('search-semantic-backfill'),purge=await this.metadata.get('search-vector-purge');
@@ -377,7 +417,7 @@ export class AccountController {
     await this.quota.check(owner,{bytes:bytes.length});await this.admitWork(owner);
     const id=crypto.randomUUID(),reservation=await this.quota.reserve(owner,{id,bytes:bytes.length,blobRef:`messages/${owner}/${id}`,kind:'message'});
     this.messageReservation=reservation;
-    try{await this.blobs.put(reservation.blobRef,bytes,{httpMetadata:{contentType:'application/octet-stream'}});return await this.messages.receive(token,{...input,bytes});}finally{this.messageReservation=null;await this.quota.release(id);}
+    try{await this.blobs.put(reservation.blobRef,bytes,{httpMetadata:{contentType:'application/octet-stream'},storageAdmission:{clientId:'contact:'+grant.id}});return await this.messages.receive(token,{...input,bytes});}finally{this.messageReservation=null;await this.quota.release(id);}
   }
   async content(owner,id){const record=await this.messages.read(owner,id);if(record.blobRef){const blob=await this.blobs.get(record.blobRef);if(!blob)throw Object.assign(new Error('Message content is temporarily unavailable.'),{code:'temporarily_unavailable',status:503});return {...record,bytes:new Uint8Array(await blob.arrayBuffer())};}return record;}
   async message(owner,id){const record=await this.content(owner,id);const {bytes,blobRef,...message}=record;return {message,render:renderMessage(record)};}
@@ -404,30 +444,43 @@ export class AccountController {
   async googleDriveStart(owner,sessionId,input){await this.warm(owner);if(!input?.resourceId&&(await this.resources(owner)).length>=100)throw new StorageError('resource_limit','This account has reached its resource limit.',429);if(!input||Object.keys(input).some(k=>!['name','resourceId'].includes(k)))throw new StorageError('invalid_args','Choose a connection name.');await this.admitWork(owner);const result=await this.googleDrive.begin(owner,sessionId,input.name,{resourceId:input.resourceId});await this.touch(owner);return {authorizationUrl:result.url,expiresAt:result.expiresAt};}
   async googleDriveComplete(owner,sessionId,input){await this.warm(owner);if(!input||Object.keys(input).some(k=>!['state','code','error'].includes(k)))throw new StorageError('invalid_args','Invalid Google connection callback.');await this.admitWork(owner);const result=await this.googleDrive.complete(owner,sessionId,input);await this.touch(owner);return result;}
   async verifyResource(owner,id,input={}){objectKey(input.key);const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner||resource.kind==='app-connection')throw new Error('Resource not found');const options={allowedHosts:(this.config.ALLOWED_CONNECTOR_HOSTS||'').split(',').filter(Boolean)};const config=resource.provider==='google-drive'?null:await decryptSecret(resource.secret,this.config.KEY_ENCRYPTION_KEY);const adapter=resource.provider==='google-drive'?await this.googleDrive.adapter(owner,id):resource.provider==='s3'?new S3Adapter(config,options):new WebDAVAdapter(config,options);await adapter.get({key:input.key});const updated=await this.metadata.transaction(async tx=>{const current=await tx.get(`resource/${id}`);if(!current||current.owner!==owner||current.generation!==resource.generation)throw new StorageError('forbidden','The connection changed during verification.',403);const next={...current,capabilities:adapter.describe(),status:'connected',verifiedAt:Date.now()};await tx.put(`resource/${id}`,next);return next;});const {secret,...result}=updated;return result;}
-  async deleteResource(owner,id){const app=await this.metadata.get(`resource/${id}`);if(app?.kind==='app-connection')return this.apps.disconnect(owner,id);const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner)throw new Error('Resource not found');if(resource.provider==='google-drive')return this.googleDrive.disconnect(owner,id);if(resource.provider==='hosted'&&(await this.metadata.list({prefix:`hosted/${id}/`,limit:1})).size)throw new StorageError('resource_not_empty','Delete the files in this hosted resource before removing it.',409);await this.metadata.delete(`resource/${id}`);return {deleted:true};}
+  async deleteResource(owner,id){const builtin=await this.metadata.get('builtin/hosted-resource-v1');if(builtin?.owner===owner&&builtin.id===id)throw new StorageError('builtin_resource','Account storage is always available and cannot be disconnected.',409);const app=await this.metadata.get(`resource/${id}`);if(app?.kind==='app-connection')return this.apps.disconnect(owner,id);const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner)throw new Error('Resource not found');if(resource.builtin===true)throw new StorageError('builtin_resource','Account storage is always available and cannot be disconnected.',409);if(resource.provider==='google-drive')return this.googleDrive.disconnect(owner,id);if(resource.provider==='hosted'&&(await this.metadata.list({prefix:`hosted/${id}/`,limit:1})).size)throw new StorageError('resource_not_empty','Delete the files in this hosted resource before removing it.',409);await this.metadata.delete(`resource/${id}`);return {deleted:true};}
   async federationRPC(context){
     const owner=/\/entities\/([a-f0-9-]{36})$/.exec(context.subject)?.[1];if(!owner||context.subject!==`${this.config.APP_ORIGIN}/entities/${owner}`)throw new StorageError('forbidden','Resource access denied.',403);
     if(context.method==='list')throw new StorageError('unsupported_method','Object storage has no listing operation; use application-managed directory objects.');
     await this.warm(owner);
+    if(context.authority==='bindle'&&(!context.epoch||!context.connection||!this.config.FEDERATION_IDENTITY_CHECK||await this.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true))throw new StorageError('unauthorized','Application authorization is no longer active.',401);
+    if(context.connection)await this.apps.check(owner,context.connection.id,context.connection.generation,context.clientId);
     const resourceId=new RegExp(`^${escapeRegex(this.config.APP_ORIGIN)}/entities/${owner}/resources/([a-f0-9-]{36})$`).exec(context.resource)?.[1];
     const resource=resourceId&&await this.metadata.get(`resource/${resourceId}`);
-    if(!resource||resource.owner!==owner||resource.kind==='app-connection'||resource.status!=='connected'||context.contract!=='https://3sln.me/artefacts/contracts/object-storage/v1')throw new StorageError('forbidden','Resource access denied.',403);
+    if(!resource||resource.owner!==owner||resource.kind==='app-connection'||resource.status!=='connected'||!['https://3sln.me/artefacts/contracts/object-storage/v1',RESOURCE_SCOPING].includes(context.contract))throw new StorageError('forbidden','Resource access denied.',403);
+    if(context.resourceGeneration!==undefined&&context.resourceGeneration!==String(resource.generation??resource.id))throw new StorageError('forbidden','The resource connection changed. Review access again.',403);
+    if(context.contract===RESOURCE_SCOPING){if(context.method!=='describe'||Object.keys(context.args).length)throw new StorageError('unsupported_method','Scoping options use describe with no arguments.');return storageScopeOptions(resource.capabilities);}
+    const assignedScope=context.scope??{};
+    if(assignedScope.prefix&&context.args.key!==undefined){const prefix=assignedScope.prefix.replace(/\/$/,'');if(typeof context.args.key!=='string'||context.args.key!==prefix&&!context.args.key.startsWith(prefix+'/'))throw new StorageError('forbidden','The object is outside the assigned scope.',403);}
+    if(assignedScope.readOnly&&(['put','delete'].includes(context.method)||context.method==='presign'&&context.args.operation==='write'))throw new StorageError('forbidden','This assignment is read only.',403);
+    if(assignedScope.maxObjectBytes&&context.method==='presign')throw new StorageError('unsupported_method','Presigned URLs cannot enforce this assignment byte limit.');
+    if(assignedScope.prefix&&context.method==='presign')throw new StorageError('unsupported_method','Presigned URLs cannot conceal this assignment namespace.');
+    if(assignedScope.maxObjectBytes&&context.args.range&&resource.provider!=='hosted')throw new StorageError('unsupported_method','This connector cannot verify the full object size for a bounded range read.');
+    if(assignedScope.maxObjectBytes&&context.method==='put'&&typeof context.args.dataBase64==='string'&&Math.floor(context.args.dataBase64.length*3/4)-(context.args.dataBase64.endsWith('==')?2:context.args.dataBase64.endsWith('=')?1:0)>assignedScope.maxObjectBytes)throw new StorageError('forbidden','The object exceeds the assigned byte limit.',403);
     if(!/^[a-f0-9-]{36}$/.test(context.tx)||typeof context.clientId!=='string')throw new StorageError('invalid_args','A transaction UUID is required.');
-    const fingerprint=await archiveDigest(canonical({resource:context.resource,contract:context.contract,method:context.method,args:context.args}));
-    const journalKey=`rpc-journal/${encodeURIComponent(context.clientId)}/${context.tx}`;const prior=await this.metadata.get(journalKey);
-    if(prior){if(prior.fingerprint!==fingerprint)throw new StorageError('tx_conflict','Transaction identifier was reused with different arguments.',409);if(prior.state!=='done')throw new StorageError('indeterminate','The earlier operation must be reconciled before retrying.',503);if(prior.error)throw new StorageError(prior.error.code,prior.error.message,prior.error.status);if(prior.resultRef){const blob=await this.blobs.get(prior.resultRef);if(!blob)throw new StorageError('temporarily_unavailable','Stored outcome is temporarily unavailable.',503);return blob.json();}return prior.result;}
+    const fingerprint=await archiveDigest(canonical({resource:context.resource,contract:context.contract,method:context.method,args:context.args,...context.authority==='bindle'?{addressedResource:context.addressedResource,epoch:context.epoch,resourceGeneration:context.resourceGeneration,scope:assignedScope,connection:context.connection}: {}}));
+    const journalKey=`rpc-journal/${encodeURIComponent(context.clientId)}/${context.tx}`;let prior=await this.metadata.get(journalKey);if(prior&&prior.createdAt+86400000<=Date.now()){await this.metadata.delete(journalKey);prior=null;}
+    if(prior){if(prior.fingerprint!==fingerprint)throw new StorageError('tx_conflict','Transaction identifier was reused with different arguments.',409);if(prior.state!=='done')throw new StorageError('indeterminate','The earlier operation must be reconciled before retrying.',503);if(prior.error)throw Object.assign(new StorageError(prior.error.code,prior.error.message,prior.error.status),prior.error.retryAfter?{retryAfter:prior.error.retryAfter}:{});if(prior.resultRef){const blob=await this.blobs.get(prior.resultRef);if(!blob)throw new StorageError('temporarily_unavailable','Stored outcome is temporarily unavailable.',503);return blob.json();}return prior.result;}
     const mutating=['put','delete'].includes(context.method);
     // A durable reservation precedes effects. Recovery never repeats a write
     // whose effect may have happened before the completed journal was stored.
-    let journalReserved=false;const reserveJournal=async()=>{await this.metadata.put(journalKey,{fingerprint,state:'reserved',createdAt:Date.now()});journalReserved=true;};
+    let journalReserved=false;const reserveJournal=async()=>{let live=0;for(const [record,value]of await this.metadata.list({prefix:'rpc-journal/',limit:257})){if(value.createdAt+86400000<=Date.now())await this.metadata.delete(record);else live++;}if(live>=256)throw new StorageError('rate_limited','This account has reached its retained write-operation limit.',429);await this.metadata.put(journalKey,{fingerprint,state:'reserved',createdAt:Date.now()});journalReserved=true;};
     try{
       let result;
-      if(resource.provider==='hosted')result=await this.hostedOperation(resource,context.method,context.args,reserveJournal);
+      if(resource.provider==='hosted')result=await this.hostedOperation(resource,context.method,context.args,reserveJournal,context.clientId);
       else if(resource.provider==='google-drive'){const adapter=await this.googleDrive.adapter(owner,resource.id);if(context.method==='capabilities')result=adapter.describe();else if(context.method==='get'){const value=await adapter.get(context.args);result={dataBase64:base64(value.bytes),object:{key:context.args.key,version:value.version,size:value.size??value.bytes.byteLength,contentType:value.contentType}};}else if(context.method==='put'){if(typeof context.args.dataBase64!=='string'||context.args.dataBase64.length>1398104||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(context.args.dataBase64))throw new StorageError('invalid_args','Canonical base64 data is required.');let bytes;try{bytes=Uint8Array.from(atob(context.args.dataBase64),c=>c.charCodeAt(0));}catch{throw new StorageError('invalid_args','Use a valid base64 byte payload.');}if(base64(bytes)!==context.args.dataBase64)throw new StorageError('invalid_args','Canonical base64 data is required.');if(bytes.length>1048576)throw new StorageError('body_too_large','This resource accepts files up to 1 MiB.',413);await this.admitWork(owner);await reserveJournal();const value=await adapter.put({...context.args,bytes});result={object:{key:context.args.key,...value}};}else if(context.method==='delete'){await reserveJournal();result=await adapter.delete(context.args);}else throw new StorageError('unsupported_method','Google Drive does not support this operation.');}
       else {const config=await decryptSecret(resource.secret,this.config.KEY_ENCRYPTION_KEY);const options={allowedHosts:(this.config.ALLOWED_CONNECTOR_HOSTS||'').split(',').filter(Boolean)};const adapter=resource.provider==='s3'?new S3Adapter(config,options):new WebDAVAdapter(config,options);if(context.method==='capabilities')result=adapter.describe();else if(context.method==='get'){const value=await adapter.get(context.args);result={dataBase64:base64(value.bytes),object:{key:context.args.key,version:value.version,size:value.size??value.bytes.byteLength,contentType:value.contentType}};}else if(context.method==='presign')result=await adapter[context.method](context.args);else throw new StorageError('unsupported_method','This connector does not support that operation.');}
+      if(assignedScope.maxObjectBytes&&context.method==='get'&&result.object?.size>assignedScope.maxObjectBytes)throw new StorageError('forbidden','The object exceeds the assigned byte limit.',403);
+      if(context.method==='capabilities'&&Object.keys(assignedScope).length){result={...result,...assignedScope.readOnly?{write:false,delete:false,presigned:{...result.presigned,write:false}}:{},...assignedScope.prefix?{presigned:{read:false,write:false}}:{},...assignedScope.maxObjectBytes?{maxObjectBytes:Math.min(result.maxObjectBytes??1048576,assignedScope.maxObjectBytes),presigned:{read:false,write:false},...resource.provider!=='hosted'?{range:false}:{}}:{}};}
       if(!mutating)return result;
-      const encoded=JSON.stringify(result);let saved={result};if(new TextEncoder().encode(encoded).byteLength>65536){const resultRef=`rpc-results/${owner}/${await archiveDigest(context.clientId)}/${context.tx}`;await this.blobs.put(resultRef,encoded);saved={resultRef};}await this.metadata.put(journalKey,{fingerprint,state:'done',...saved,createdAt:Date.now()});await this.metadata.put('lastResourceActiveAt',Date.now());return result;
-    }catch(error){if(mutating&&journalReserved){const safe=error instanceof StorageError?{code:error.code,message:error.message,status:error.status}:{code:'indeterminate',message:'Storage outcome is unknown; reconcile before retrying.',status:503};await this.metadata.put(journalKey,{fingerprint,state:'done',error:safe,createdAt:Date.now()});throw new StorageError(safe.code,safe.message,safe.status);}throw error;}
+      const encoded=JSON.stringify(result);let saved={result};if(new TextEncoder().encode(encoded).byteLength>65536){const resultRef=`rpc-results/${owner}/${await archiveDigest(context.clientId)}/${context.tx}`;await this.blobs.put(resultRef,encoded,{storageAdmission:{clientId:context.clientId}});saved={resultRef};}await this.metadata.put(journalKey,{fingerprint,state:'done',...saved,createdAt:Date.now()});await this.metadata.put('lastResourceActiveAt',Date.now());return result;
+    }catch(error){if(mutating&&journalReserved){const safe=error instanceof StorageError?{code:error.code,message:error.message,status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}:{code:'indeterminate',message:'Storage outcome is unknown; reconcile before retrying.',status:503};await this.metadata.put(journalKey,{fingerprint,state:'done',error:safe,createdAt:Date.now()});throw Object.assign(new StorageError(safe.code,safe.message,safe.status),safe.retryAfter?{retryAfter:safe.retryAfter}:{});}throw error;}
   }
   async migrateHostedIndex(resource){
     if(!this.itemIndex||await this.metadata.get(`hosted-index-ready/${resource.id}`))return;
@@ -435,7 +488,7 @@ export class AccountController {
     const rows=await this.metadata.list({prefix,...cursor?{startAfter:cursor}:{},limit:200});
     await this.metadata.transaction(async tx=>{for(const [,object]of rows)this.itemIndex.upsertObject(resource.id,object);if(rows.size<200){await tx.put(`hosted-index-ready/${resource.id}`,true);await tx.delete(`hosted-index-cursor/${resource.id}`);}else await tx.put(`hosted-index-cursor/${resource.id}`,[...rows.keys()].at(-1));});
   }
-  async hostedOperation(resource,method,args={},beforeEffect=async()=>{}){
+  async hostedOperation(resource,method,args={},beforeEffect=async()=>{},clientId='@system'){
     if(method==='capabilities'){const {list:legacyList,...capabilities}=resource.capabilities;return capabilities;}
     if(method==='list')throw new StorageError('unsupported_method','Object storage has no listing operation; use application-managed directory objects.');
     objectKey(args.key);const path=`hosted/${resource.id}/${encodeURIComponent(args.key)}`,current=await this.metadata.get(path);
@@ -455,7 +508,7 @@ export class AccountController {
       const reservation=await this.quota.reserve(resource.owner,{id:version,bytes:bytes.length,replacedBytes:current?.size||0,blobRef,kind:'object'});
       try{
         await beforeEffect();
-        await this.blobs.put(blobRef,bytes);
+        await this.blobs.put(blobRef,bytes,{storageAdmission:{clientId}});
         const object={key:args.key,version,size:bytes.length,contentType:args.contentType||'application/octet-stream',modifiedAt:Date.now(),blobRef};
         await this.metadata.transaction(async tx=>{await tx.put(path,object);await tx.put('hosted-usage',{bytes:usage.bytes-(current?.size||0)+bytes.length,objects:usage.objects+(!current?1:0)});this.itemIndex?.upsertObject(resource.id,object);await this.quota.commit(tx,reservation.id);if(current)await tx.put(`blob-garbage/${crypto.randomUUID()}`,current.blobRef);});
         const {blobRef:privateRef,...publicObject}=object;return {object:publicObject};

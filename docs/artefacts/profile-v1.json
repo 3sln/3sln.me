@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://3sln.me/artefacts/contracts/profile/v1",
+  "title": "Read an explicitly granted identity profile",
+  "description": "Validates the contract method/args projection of a Bindle RPC envelope. The RPC transport and live authority are defined separately. Initial runtime profile; publish changes under a new URL.",
+  "type": "object",
+  "required": [
+    "method",
+    "args"
+  ],
+  "properties": {
+    "method": {
+      "const": "read"
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": [
+        "entity",
+        "handle",
+        "name",
+        "avatar"
+      ],
+      "properties": {
+        "entity": {
+          "type": "string",
+          "format": "uri"
+        },
+        "handle": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "avatar": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "x-methods": {
+    "read": {
+      "request": "#",
+      "result": "#/$defs/result",
+      "effect": "read",
+      "permission": "Approved fields and live resource assignment for this exact contract/method."
+    }
+  }
+}

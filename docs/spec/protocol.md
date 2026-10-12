@@ -1,6 +1,6 @@
 # Bindle protocol v0 — normative draft
 
-Status: proposed, not a deployed interoperability standard. **Bindle** is a provisional name; the brief also says Bridle. Publication authority and final branding need owner sign-off. Example canonical URLs under `https://spec.bindle.example/` are placeholders, not live authorities. MUST/SHOULD/MAY express draft requirements. These documents distinguish a contract from a conforming production service; the initial UI can demonstrate these flows without issuing real credentials.
+Status: proposed, not a deployed interoperability standard. **Bindle** is a provisional name; the brief also says Bridle. Publication authority and final branding need owner sign-off. Example canonical URLs under `https://spec.bindle.example/` are placeholders, not live authorities. MUST/SHOULD/MAY express draft requirements. These documents distinguish a contract from a conforming production service; the actual current wire profile and runtime evidence are in [federation implementation](federation-implementation.md). Canonical contract candidates are under https://3sln.me/artefacts/contracts/; publication and external-provider verification are separate gates.
 
 ## 1. Model and custody
 
@@ -14,24 +14,26 @@ Self-hosting means implementing the public protocol without depending on 3sln.me
 
 The framework login custom element defaults an unqualified handle to `@3sln.me`, rendering the suffix as a suggestion until `@` is typed. Other hosts receive identical protocol treatment. The SDK MUST parse a single nonempty local part and DNS host, reject URI userinfo, paths, ports and control characters, and display the resolved host before continuing. Domain names use platform IDNA normalization; local parts are preserved and interpreted by the provider. Email case folding MUST NOT be generalized to arbitrary providers.
 
-For `alice@example.org`, fetch `https://example.org/.well-known/bindle/manifest.json`; send `alice@example.org` later as `login_hint`. **Do not fetch `https://alice@example.org/...`: this is URL userinfo, not a user-scoped host.** Discovery is host-level and MUST NOT enumerate individual existence. Manifest fetches use no cookies or bearer tokens, require HTTPS and JSON, enforce bounded size/time, and reject cross-origin redirects. Server-side fetching additionally blocks private, loopback and link-local targets and revalidates every DNS resolution and redirect. Development localhost is an explicit development-only exception.
+For `alice@example.org`, fetch `https://example.org/.well-known/bindle/manifest.json`; send `alice@example.org` later as `identity` in the bounded authorization-request POST. **Do not fetch `https://alice@example.org/...`: this is URL userinfo, not a user-scoped host.** Discovery is host-level and MUST NOT enumerate individual existence. Manifest fetches use no cookies or bearer tokens, require HTTPS and JSON, enforce bounded size/time, and reject cross-origin redirects. Server-side fetching additionally blocks private, loopback and link-local targets and revalidates every DNS resolution and redirect. Development localhost is an explicit development-only exception.
 
 ```json
 {
   "version": "0",
   "issuer": "https://example.org",
+  "authorization_request_endpoint": "https://example.org/api/oauth/requests",
+  "preferences_contract": "https://3sln.me/artefacts/contracts/preferences/v1",
   "authorization_endpoint": "https://example.org/oauth/authorize",
   "token_endpoint": "https://example.org/oauth/token",
   "rpc_endpoint": "https://example.org/bindle/rpc",
   "jwks_uri": "https://example.org/oauth/jwks",
   "login_presentation": ["redirect"],
-  "contracts": ["https://spec.bindle.example/contracts/profile/v1"]
+  "contracts": ["https://3sln.me/artefacts/contracts/profile/v1"]
 }
 ```
 
 V0 requires endpoint URLs on the issuer origin and issuer equality with the requested HTTPS origin. Third-party endpoint delegation needs a later trust specification. Providers SHOULD also publish standard OAuth authorization server and protected resource metadata. Clients MUST reject unsupported manifest versions and inconsistent issuer/endpoint metadata.
 
-Successful discovery proceeds with OAuth authorization code plus PKCE S256, exact preregistered redirect URI, cryptographically random state, issuer binding and short-lived single-use codes. Public clients have no embedded secret. The authorization request carries `login_hint` and a provider-stored request identifier referencing fragment grants; large grant descriptions MUST NOT be encoded unbounded in URLs. App registration requires verified control of its HTTPS origin and redirect URI. Dynamic registration/client metadata interoperability is a later extension, not assumed by v0.
+Successful discovery proceeds with OAuth authorization code plus PKCE S256, exact preregistered redirect URI, cryptographically random state, issuer binding and short-lived single-use codes. Public clients have no embedded secret. The app POSTs the complete handle as `identity` together with PKCE, registered client/redirect and fragment requests to `authorization_request_endpoint`, then redirects with only the returned `request_id`; [exact wire sequence](federation-implementation.md). The provider-stored request identifier references fragment grants; large grant descriptions MUST NOT be encoded unbounded in URLs. App registration requires verified control of its HTTPS origin and redirect URI. Dynamic registration/client metadata interoperability is a later extension, not assumed by v0.
 
 Redirect is mandatory in v0. `iframe` may be advertised as a future capability but MUST NOT carry credentials in the initial implementation: embedding invites clickjacking and depends on browser cookie behavior. A future iframe profile needs explicit frame-ancestor allowlisting and a strictly origin-checked postMessage handshake; provider hints never force embedding.
 
@@ -52,14 +54,14 @@ A fragment URL identifies an immutable schema version. Public metadata includes 
       "title": "Storage locations",
       "type": "resource",
       "cardinality": {"min": 1, "max": 8},
-      "contracts": ["https://spec.bindle.example/contracts/object-store/v1"]
+      "contracts": ["https://3sln.me/artefacts/contracts/object-storage/v1"]
     },
     "theme": {"title": "Theme", "type": "enum", "values": ["system", "light", "dark"]}
   }
 }
 ```
 
-Atomic field types are string, boolean, integer, number, enum and HTTPS URL, with explicit length/range validation. Number precision is restricted to JSON-safe values; integers fit the safe integer range. Resource fields carry references, never adapter credentials. Resource constraints are an AND of required contracts; multiple alternative contract sets require a future explicit `anyOf`, not ambiguous interpretation. Cardinality applies equally to atomic/resource values; default is exactly one. Missing optional fields and an empty list are distinct. Fragments are configured per entity and immutable fragment version. Applications cannot write preference values in v0; only the user's authenticated provider UI can.
+Atomic field types are string, boolean, integer, number, enum and HTTPS URL, with explicit length/range validation. Number precision is restricted to JSON-safe values; integers fit the safe integer range. Resource fields carry references, never adapter credentials. The optional scoping contract allows a shared `{resource,scope}` assignment; resource reads return independently attenuated tokens. See the [runtime scope rules](federation-implementation.md#authority-scoping-and-revocation). Resource constraints are an AND of required contracts; multiple alternative contract sets require a future explicit `anyOf`, not ambiguous interpretation. Cardinality applies equally to atomic/resource values; default is exactly one. Missing optional fields and an empty list are distinct. Fragments are configured per entity and immutable fragment version. Applications cannot write preference values in v0; only the user's authenticated provider UI can.
 
 Apps request each fragment with `required`, a plain-text purpose, an explicit field set, and per-resource-field contract/method permissions. Fragment configuration does not imply application permission. A required grant is an application prerequisite, not forced user consent: declining cancels that application's connection with a clear explanation. Optional grants can be declined before configuration. Unconfigured required fragments show the request before the setup UI and receive final approval after values are chosen.
 
@@ -84,9 +86,9 @@ POST the issuer RPC endpoint with `Authorization: Bearer …` and JSON. Transpor
   "version": "0",
   "tx": "2f17cceb-7cae-49cd-ae13-1aad1ceab264",
   "resource": "https://example.org/entities/e_123/resources/r_456",
-  "contract": "https://spec.bindle.example/contracts/object-store/v1",
-  "method": "list",
-  "args": {"prefix": "", "limit": 100}
+  "contract": "https://3sln.me/artefacts/contracts/object-storage/v1",
+  "method": "get",
+  "args": {"key": "app/directory.json"}
 }
 ```
 

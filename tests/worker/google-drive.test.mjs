@@ -42,7 +42,7 @@ test('actual Worker Drive denial is session-bound, consumes matching state and p
  assert.equal((await read(await h.request(complete,{method:'POST',headers,value:{state:'wrong',error:'access_denied'}}),403)).error,'oauth_state');
  assert.equal((await read(await h.request(complete,{method:'POST',headers,value:{state,error:'access_denied'}}),400)).error,'oauth_denied');
  assert.equal((await read(await h.request(complete,{method:'POST',headers,value:{state,error:'access_denied'}}),409)).error,'oauth_expired');
- const rows=await h.accounts.get(h.accounts.idFromName(owner.account.id)).rows();assert(!rows.some(([key])=>key.startsWith('drive/oauth/')||key.startsWith('drive/folder-pending/')||key.startsWith('resource/')));
+ const rows=await h.accounts.get(h.accounts.idFromName(owner.account.id)).rows();assert(!rows.some(([key])=>key.startsWith('drive/oauth/')||key.startsWith('drive/folder-pending/')));const resources=rows.filter(([key])=>key.startsWith('resource/')).map(([,value])=>value);assert.equal(resources.length,1);assert.equal(resources[0].builtin,true);assert.equal(resources[0].provider,'hosted');
 });
 
 test('actual Worker advertises unconfigured Drive disabled and rejects starting OAuth',async t=>{

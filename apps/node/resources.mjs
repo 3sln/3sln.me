@@ -5,6 +5,8 @@ import { resolve, join, extname } from 'node:path';
 import {nodeSqlPort} from '../../packages/search/index.mjs';
 import { IdentityRepository, FixedWindowGuard, AccountController } from '../../packages/runtime/accounts.mjs';
 import {McpShardController,mcpAuthorities} from '../../packages/mcp/runtime.mjs';
+import {FederationController,federationMetadata} from '../../packages/federation/runtime.mjs';
+import {federationAuthority,federationControllerOptions,FEDERATION_LAYOUT,federationEpoch} from '../../packages/runtime/federation.mjs';
 
 export class SerialGate {
  constructor(){this.tail=Promise.resolve();}
@@ -46,7 +48,7 @@ export async function nodeResources({directory,config}){
  const abuse={consume:async(name,limits)=>{const file=createHash('sha256').update(name).digest('hex');if(!guardMap.has(file)){const metadata=new SqliteMetadata(join(directory,'abuse',file+'.sqlite'));const guard=new FixedWindowGuard({metadata});metadata.onAlarm=()=>guard.alarm();guardMap.set(file,{metadata,guard});}return guardMap.get(file).guard.consume(limits);}};
  const accounts={get:id=>{
    if(!/^[a-f0-9-]{36}$/.test(id))throw new Error('Invalid account identifier');
-   if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner)},sql:metadata.sql});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
+   if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,FEDERATION_IDENTITY_CHECK:async(owner,epoch)=>{const account=await repository.get(owner);return account?.status==='active'&&await federationEpoch(account)===epoch;},WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner)},sql:metadata.sql});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
  }};
 
  const assets={fetch:async request=>{
@@ -55,5 +57,7 @@ export async function nodeResources({directory,config}){
  }};
  await mkdir(join(directory,'mcp'),{recursive:true,mode:0o700});const mcpMap=new Map();
  const mcp=mcpAuthorities(shard=>{if(!mcpMap.has(shard)){const metadata=new SqliteMetadata(join(directory,'mcp',`mcp-auth-v1-64-${shard}.sqlite`));const controller=new McpShardController({metadata,config,shard,accounts,repository});metadata.onAlarm=()=>controller.cleanup();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});mcpMap.set(shard,{metadata,controller});}return mcpMap.get(shard).controller;});
- return {repository,deviceRequests,accounts,abuse,assets,mcp,close(){identities.close();deviceDb.close();for(const {metadata}of accountMap.values())metadata.close();for(const {metadata}of guardMap.values())metadata.close();for(const {metadata}of mcpMap.values())metadata.close();}};
+ await mkdir(join(directory,'federation'),{recursive:true,mode:0o700});const federationMap=new Map();
+ const federation=federationAuthority({config,repository,shard:owner=>{if(!federationMap.has(owner)){const metadata=new SqliteMetadata(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`));const implementation=new FederationController({...federationControllerOptions({config,repository,accounts,owner}),metadata:federationMetadata(metadata)});metadata.onAlarm=async()=>{const result=await implementation.cleanup();if(result.remaining)await metadata.setAlarm(result.nextAlarmAt);};metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});const controller=new Proxy(implementation,{get:(target,method)=>typeof target[method]==='function'?async(...args)=>{const result=await target[method](...args);if(!['ready','manifest','cleanup'].includes(method)&&!await metadata.getAlarm())await metadata.setAlarm(Date.now()+600000);return result;}:target[method]});federationMap.set(owner,{metadata,controller});}return federationMap.get(owner).controller;}});
+ return {repository,deviceRequests,accounts,abuse,assets,mcp,federation,close(){identities.close();deviceDb.close();for(const {metadata}of accountMap.values())metadata.close();for(const {metadata}of guardMap.values())metadata.close();for(const {metadata}of mcpMap.values())metadata.close();for(const {metadata}of federationMap.values())metadata.close();}};
 }

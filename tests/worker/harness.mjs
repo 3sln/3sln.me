@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const harness = `
-import worker, { IdentityDirectory, AccountObject, AbuseGuard, McpAuthorizationObject } from './apps/worker/index.mjs';
+import worker, { IdentityDirectory, AccountObject, AbuseGuard, McpAuthorizationObject, FederationObject } from './apps/worker/index.mjs';
 import {createWorkerArgon2Hasher}from'./apps/worker/password.mjs';
 export {McpAuthorizationObject};
 export class TestDirectory extends IdentityDirectory {
@@ -24,6 +24,12 @@ export class TestAccount extends AccountObject {
   async alarmAt(){return this.ctx.storage.getAlarm();}
 }
 export class TestAbuse extends AbuseGuard {async rows(){return [...await this.ctx.storage.list()];} }
+export class TestFederation extends FederationObject {
+ async rows(){return [...await this.ctx.storage.list()];}
+ async alarmAt(){return this.ctx.storage.getAlarm();}
+ async expireEphemeral(){for(const [key,value]of await this.ctx.storage.list({prefix:'federation/'}))if(value.expiresAt){value.expiresAt=Date.now()-1;await this.ctx.storage.put(key,value);}}
+ async fireAlarm(){await this.ctx.storage.deleteAlarm();await super.alarm();}
+}
 export default worker;`;
 export async function createHarness(options={}){
 let mf, directory, accounts, abuse, archives, temporary;
@@ -43,9 +49,9 @@ const recoverySigningKey=JSON.stringify({kid:crypto.randomUUID(),privateJWK:awai
   for (const name of ['argon2', 'blake2b']) await copyFile(path.resolve(`vendor/hash-wasm/${name}.wasm`), path.join(temporary, `${name}.wasm`));
   mf = new Miniflare(convertV4MiniflareOptions({ name: 'contact-integration-test', modulesRoot: temporary, modules: [{ type: 'ESModule', path: out }, ...['argon2', 'blake2b'].map(name => ({ type: 'CompiledWasm', path: path.join(temporary, `${name}.wasm`) }))],
     compatibilityDate: '2026-10-11', compatibilityFlags: ['nodejs_compat'], log: new Log(LogLevel.ERROR),
-    bindings: { APP_ORIGIN: origin, RP_ID: 'localhost', TERMS_VERSION: '2026-10-11', LOCAL_DEVELOPMENT: 'true', IDENTITY_LAYOUT:'v1-64-fresh', MCP_ENABLED:'true',MCP_LAYOUT:'mcp-auth-v1-64',MCP_CLIENTS:JSON.stringify([{id:'agent.example',name:'Example agent',redirectUris:['https://agent.example/callback']}]), SIGNUP_IP_WINDOW_MS:'1000', SIGNUP_IP_DAILY_LIMIT:'20',
+    bindings: { APP_ORIGIN: origin, RP_ID: 'localhost', TERMS_VERSION: '2026-10-11', LOCAL_DEVELOPMENT: 'true', IDENTITY_LAYOUT:'v1-64-fresh', STORAGE_WRITE_ENABLED:'true', MCP_ENABLED:'true',MCP_LAYOUT:'mcp-auth-v1-64',MCP_CLIENTS:JSON.stringify([{id:'agent.example',name:'Example agent',redirectUris:['https://agent.example/callback']}]), SIGNUP_IP_WINDOW_MS:'1000', SIGNUP_IP_DAILY_LIMIT:'20',
       RECOVERY_SIGNING_KEY:recoverySigningKey, KEY_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'), ABUSE_HASH_KEY: 'isolated-test-rate-limit-key',...options.bindings },
-    durableObjects: { MCP_AUTH:{className:'McpAuthorizationObject',useSQLite:true}, IDENTITIES: { className: 'TestDirectory', useSQLite: true }, ACCOUNTS: { className: 'TestAccount', useSQLite: true }, ABUSE: { className: 'TestAbuse', useSQLite: true } },
+    durableObjects: { FEDERATION:{className:'TestFederation',useSQLite:true}, MCP_AUTH:{className:'McpAuthorizationObject',useSQLite:true}, IDENTITIES: { className: 'TestDirectory', useSQLite: true }, ACCOUNTS: { className: 'TestAccount', useSQLite: true }, ABUSE: { className: 'TestAbuse', useSQLite: true } },
     r2Buckets: ['BLOBS', 'ARCHIVES'], serviceBindings: { ASSETS: options.assets ?? (async () => new Response('<!doctype html><title>Test</title>', { headers: { 'Content-Type': 'text/html' } })) } }));
   const identities = await mf.getDurableObjectNamespace('IDENTITIES'); directory = new ShardedIdentityRepository({shard:name=>identities.get(identities.idFromName(name)),layout:'v1-64-fresh'});directory.passwordVector=(...args)=>identities.get(identities.idFromName('password-vector-test')).passwordVector(...args);
   accounts = await mf.getDurableObjectNamespace('ACCOUNTS'); abuse = await mf.getDurableObjectNamespace('ABUSE'); archives = await mf.getR2Bucket('ARCHIVES');

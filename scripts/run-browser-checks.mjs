@@ -18,6 +18,15 @@ const configPath=resolve(configDirectory,'wrangler.json');
 const config=JSON.parse(await readFile('wrangler.local.jsonc','utf8'));
 config.main=resolve(config.main);config.assets.directory=resolve(config.assets.directory);delete config.$schema;
 config.vars.APP_ORIGIN=origin;
+// Only the app document is a fixture; OAuth, consent, token and RPC requests
+// use real browser networking against the local Worker.
+config.vars.FEDERATION_ENABLED='true';
+config.vars.FEDERATION_CLIENTS=JSON.stringify([{id:'https://bindle-client.example/client',name:'Independent fixture app',origin:'https://bindle-client.example',redirectUris:['https://bindle-client.example/callback']}]);
+const storageContract='https://3sln.me/artefacts/contracts/object-storage/v1';
+config.vars.FEDERATION_SCHEMAS=JSON.stringify({
+ 'https://schema.example/sync/v1':{id:'https://schema.example/sync/v1',title:'Sync preferences',description:'Choose the values and storage used to keep your files in sync.',publisher:'https://schema.example',fields:{displayName:{title:'Display name',type:'string',maxLength:100},files:{title:'Storage resources',type:'resource',contracts:[storageContract],cardinality:{min:1,max:2}}}},
+ 'https://schema.example/optional/v1':{id:'https://schema.example/optional/v1',title:'Optional personalization',description:'An optional preference.',publisher:'https://schema.example',fields:{value:{title:'Optional value',type:'string',maxLength:100}}}
+});
 await writeFile(configPath,JSON.stringify(config));
 const recoveryAuthority=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
 const recoverySigningKey=JSON.stringify({kid:crypto.randomUUID(),privateJWK:await crypto.subtle.exportKey('jwk',recoveryAuthority.privateKey)});
@@ -34,3 +43,11 @@ try{
   const suite=spawn(process.execPath,['--test','--test-concurrency=1',...(process.argv.length>2?process.argv.slice(2):defaultTests)],{stdio:'inherit',env:{...process.env,E2E_BASE_URL:origin,E2E_ARTIFACTS:'artifacts/browser'}});
   const code=await new Promise(resolve=>suite.once('exit',resolve));if(code!==0)process.exitCode=code||1;
 }finally{worker.kill('SIGTERM');await new Promise(resolve=>{if(worker.exitCode!==null)return resolve();worker.once('exit',resolve);setTimeout(resolve,5000).unref();});await writeFile('artifacts/browser/wrangler.log',logs.replace(/([?&]sig=)[^\s]*/g,'$1[redacted]'));await rm(persistence,{recursive:true,force:true});await rm(configDirectory,{recursive:true,force:true});}
+
+// Keep real signup admission policy intact. The original portal suite already
+// uses the regional allowance; federation gets its own fresh durable state.
+if(process.argv.length===2){
+ const federationSuite=spawn(process.execPath,[process.argv[1],'tests/e2e/federation.test.mjs'],{stdio:'inherit',env:process.env});
+ const code=await new Promise((resolve,reject)=>{federationSuite.once('error',reject);federationSuite.once('exit',resolve);});
+ if(code!==0)process.exitCode=process.exitCode||code||1;
+}

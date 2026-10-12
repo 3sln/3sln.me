@@ -205,3 +205,33 @@ These screenshots show the real local Wrangler app and a real passkey account, w
 ![Actual local identity and permanent-alias controls](walkthrough-assets/identity-names-desktop.png)
 
 ![Identity controls on a narrow phone](walkthrough-assets/identity-names-mobile.png)
+
+## 27. Bindle login, consent and shared resource scopes
+
+These images show the real local Wrangler provider and real Chrome. The separate `bindle-client.example` integrating app is a controlled document fixture; discovery, cross-origin API requests, PKCE code exchange, durable account authentication, preference consent, resource RPC and revocation use the actual Worker. No OAuth/provider responses are mocked. Chrome's explicit local-network permission lets this HTTPS fixture reach the loopback provider during testing.
+
+The review shows the signed-in account, registered app origin, requested values, exact resource methods, shared field scope and existing consumers. Optional fragments can be declined before configuration. Scope controls apply to every consumer of the preference field; the app receives an opaque resource reference and an attenuated bearer, without the owner's underlying resource ID or private scope prefix.
+
+![Actual local Bindle consent](walkthrough-assets/bindle-consent-desktop.png)
+
+![Bindle consent on a phone](walkthrough-assets/bindle-consent-mobile.png)
+
+Owners can reopen Shared preferences from Connected apps. Editing a shared field shows its original values, new controls and the exact affected apps and their existing methods. A deliberate confirmation and revision/consumer checks protect against stale review. Browser verification changed a private storage prefix, rejected the old resource token, obtained a replacement reference, and wrote/read a relative filename without exposing that prefix. Revoking the app's preference grant subsequently denied access. A separate test completed password sign-in back into the pending consent page; identity-only login provided no resource access.
+
+![Reviewing an update to shared preferences](walkthrough-assets/bindle-shared-preferences.png)
+
+Active apps renew five-minute access tokens through rotating credentials held only in memory, within an absolute eight-hour session. The browser test triggered the SDK renewal threshold and verified one actual provider rotation for parallel calls, followed by fresh tokens for the same opaque resource. Provider expiry, refresh reuse and revocation have separate runtime coverage. Reloading the app requires a fresh login.
+
+Production federation and public release remain gated. This verifies the implemented local integration, not live external-provider interoperability or email account materialization.
+
+## 28. Included storage and temporary object links
+
+Every account has built-in storage ready to assign to apps. Resources shows its shared account storage meter and a separate monthly storage-write allowance, distinguishes it from external connections, and prevents disconnecting the built-in resource. These screenshots show the actual local Worker account on desktop and a narrow phone; no storage connector was added to make the example work.
+
+![Included account storage and quota](walkthrough-assets/built-in-storage-desktop.png)
+
+![Included storage on a phone](walkthrough-assets/built-in-storage-mobile.png)
+
+The browser test used an app's scoped resource token to mint a write-only URL for one object with a fixed size and create condition, uploaded raw bytes, then minted a read-only URL and downloaded the same bytes. Both used the required headers returned by the contract. Uploading through the read URL was denied; revoking the app grant immediately denied the provider-proxy download URL. Prefix confinement and the account quota remain enforced. Native provider URLs may remain usable until expiry, which is explained during consent.
+
+The write meter counts writes and replacements even when total stored bytes stay unchanged. Exhaustion explains that uploads and replacements pause while reading and deletion remain available. Separate browser fault fixtures verify Spanish labels and a 429 resource-save response: the form keeps its draft, displays a clear retry message, and sends no automatic second request.
