@@ -192,3 +192,8 @@ User corrected the intended/onboarded sender subdomain to `sys.3sln.me`. This su
 
 
 The corrected live test from `notify@sys.3sln.me` succeeded through the real remote Cloudflare `EMAIL` binding (HTTP200, accepted=true, provider messageId returned). This confirms authorization/acceptance for this sender, not inbox arrival or all five sender roles/end-to-end identity flows. No app deployment occurred. All nine focused adapter/config tests passed; production mail and broader release gates remain disabled pending recipient confirmation and outstanding implementation/verification. The temporary test authorization secret was removed after the attempt.
+
+
+## 2026-10-11 — Recipient confirmed test delivery
+
+User confirmed receiving the authorized test message sent from `notify@sys.3sln.me`. One live Cloudflare binding send is now verified through recipient receipt. This supersedes the earlier unconfirmed-arrival status for that attempt. Authentication mail flows, other sender roles, hosted reminder/security/lifecycle dispatch, suppression/bounce handling and email localization still require their own checks. Production mail and broader release gates remain disabled; no deployment occurred.

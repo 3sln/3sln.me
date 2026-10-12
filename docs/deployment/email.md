@@ -8,7 +8,7 @@ The checked-in production configuration declares `EMAIL` and sets `MAIL_ENABLED=
 
 ## Current live verification
 
-The account owner corrected the onboarded sender domain to `sys.3sln.me`. The previous test used `sys.3sln.com` and was rejected before acceptance; that result does not establish authorization for the corrected domain. The corrected test from `notify@sys.3sln.me` succeeded through a real remote Cloudflare `EMAIL` binding and returned a provider `messageId`. This verifies binding acceptance and sender authorization; recipient inbox arrival is not yet confirmed. Keep `MAIL_ENABLED="false"` pending delivery verification and completion of the relevant hosted flows.
+The account owner corrected the onboarded sender domain to `sys.3sln.me`. The previous test used `sys.3sln.com` and was rejected before acceptance; that result does not establish authorization for the corrected domain. The corrected test from `notify@sys.3sln.me` succeeded through a real remote Cloudflare `EMAIL` binding and returned a provider `messageId`. The recipient confirmed receipt. This verifies one real message end to end from `notify@sys.3sln.me` through the remote binding. It does not verify all sender roles, authentication-link flows, reminders, suppression handling or template localization. Keep `MAIL_ENABLED="false"` until the relevant hosted flows are ready.
 
 Email Sending onboards each subdomain separately; check the exact domain under **Compute → Email Service → Email Sending**. [Cloudflare subdomain onboarding](https://developers.cloudflare.com/email-service/configuration/subdomains/).
 
