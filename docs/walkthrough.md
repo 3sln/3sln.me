@@ -165,3 +165,24 @@ The desktop and review images below come from real Chrome WebMCP using experimen
 ![Browser automation on a narrow phone — simulated API fixture](walkthrough-assets/browser-automation-mobile-fixture.png)
 
 The shared callable design also allows apps to request human command presentation independently of a palette or automation transport. General external app commands, cooperative frame import and closed-browser execution remain proposed rather than implemented.
+
+
+## 23. Canonical 3sln branding
+
+The app now uses the canonical assets from the organization repository: outlined wordmark, gradient mark, 512px PWA/avatar image and inline email logo. The logo keeps its proportions on mobile. The landing screenshots are actual local Wrangler pages; the email image is a browser preview using a mocked send binding, not a delivered email or an inbox-provider avatar. Self-hosted branding remains generic.
+
+![Canonical 3sln.me landing page](walkthrough-assets/branding-desktop.png)
+
+![Canonical logo on a narrow phone](walkthrough-assets/branding-mobile.png)
+
+![Inline email branding — simulated send binding](walkthrough-assets/email-branding-fixture.png)
+
+## 24. Managed Google Drive setup and reconnect
+
+Google authorization creates a dedicated folder for this connection's files; arbitrary existing files are not imported or enumerated. Apps keep their own directory files. The review states the 1 MiB upload limit, managed-file/version bounds and physical retention in Drive. Reconnect requires the same Google account and preserves the original resource, folder and key map. Disconnect removes local credentials without revoking the whole Google OAuth project.
+
+These desktop/mobile images use explicit Google/OAuth fixtures. Actual Worker tests verify authentication, encrypted state, PKCE, callback cleanup and consent-denial handling; durable Node tests verify gateway write/read/range/replay and reconnect against simulated Google endpoints. Live Google-account verification still awaits credentials.
+
+![Google Drive setup — simulated provider](walkthrough-assets/google-drive-setup-fixture.png)
+
+![Google Drive setup on a phone — simulated provider](walkthrough-assets/google-drive-setup-mobile-fixture.png)

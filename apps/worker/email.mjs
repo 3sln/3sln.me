@@ -1,3 +1,5 @@
+import { emailLogoBase64 } from '../../packages/branding/email-logo.mjs';
+
 const SENDER_ROLES = Object.freeze({
   link: 'verify', login: 'login', reminder: 'notify',
   account: 'accounts', security: 'security'
@@ -43,6 +45,26 @@ function requireToken(value) {
   if (!safeHeader(value, 1024)) throw new Error('Invalid mail link.');
 }
 
+function escapeHtml(value) {
+  return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+}
+function emailPresentation({ subject, text, brand, origin }) {
+  const branded = origin === 'https://3sln.me' && brand === '3sln.me';
+  // Only trusted, generated HTTPS links are made clickable. Every text and
+  // attribute value is escaped; no remote image requests or tracking pixels.
+  const paragraphs = text.split('\n\n').map(paragraph => `<p style="margin:0 0 20px;line-height:1.6">${paragraph.split('\n').map(line => {
+    const match = line.match(/https:\/\/[^\s]+$/);
+    if (!match) return escapeHtml(line);
+    const url = match[0];
+    if (!url.startsWith(`${origin}/`)) return escapeHtml(line);
+    return `${escapeHtml(line.slice(0, match.index))}<a href="${escapeHtml(url)}" style="color:#3156c8;overflow-wrap:anywhere">${escapeHtml(url)}</a>`;
+  }).join('<br>')}</p>`).join('');
+  return {
+    html: `<!doctype html><html><body style="margin:0;background:#f4f5f7;color:#202532;font-family:Arial,sans-serif"><main style="max-width:560px;margin:24px auto;background:#fff;padding:32px;border-radius:16px">${branded ? '<img src="cid:3sln-logo" alt="3sln" width="56" height="56" style="display:block;margin-bottom:20px">' : ''}<div style="font-size:14px;color:#596170;margin-bottom:12px">${escapeHtml(brand)}</div><h1 style="font-size:23px;line-height:1.3;margin:0 0 24px">${escapeHtml(subject)}</h1>${paragraphs}</main></body></html>`,
+    ...(branded ? { attachments: [{ content: emailLogoBase64, filename: '3sln-avatar.png', type: 'image/png', disposition: 'inline', contentId: '3sln-logo' }] } : {})
+  };
+}
+
 /** Hosted Cloudflare resource; portable services receive this through injection.
  * EMAIL.send acknowledges acceptance with messageId, without a documented
  * idempotency facility. Retry keys are not forwarded as deduplication promises.
@@ -57,7 +79,7 @@ export function mailTransport(env = {}) {
   const send = async ({ from, to, subject, text, headers = {} }) => {
     if (!Object.values(senders).includes(from) || !validEmail(to) || !safeHeader(subject) || typeof text !== 'string' || !text || Object.entries(headers).some(([name, value]) => name !== 'List-Unsubscribe' || !safeHeader(value))) throw new Error('Invalid mail envelope.');
     try {
-      const result = await env.EMAIL.send({ from, to, subject, text, ...(Object.keys(headers).length ? { headers } : {}) });
+      const result = await env.EMAIL.send({ from, to, subject, text, ...emailPresentation({ subject, text, brand, origin }), ...(Object.keys(headers).length ? { headers } : {}) });
       if (!safeHeader(result?.messageId)) throw new Error('Invalid mail acceptance result.');
       return { messageId: result.messageId };
     } catch (error) {

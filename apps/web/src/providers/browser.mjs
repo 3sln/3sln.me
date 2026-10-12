@@ -12,12 +12,14 @@ function createBrowser(){
   const link=new URLSearchParams(location.hash.slice(1)),query=new URLSearchParams(location.search),signedEndpoint=query.has('sig')?location.pathname+location.search:null;
   // Capabilities are captured once, before rendering, and removed from history.
   const submissions=new Map();
-  const secret={beamInvite:link.get('beam-invite'),token:link.get('token'),owner:link.get('owner'),requestId:link.get('request'),userCode:link.get('code'),pending:null,recovery:null,deviceCode:null,contactEndpoint:signedEndpoint,encryptedRecovery:null,restoreFile:null};
-  if(query.has('sig'))query.delete('sig');if(signedEndpoint||[...link.keys()].some(key=>['token','owner','request','code','beam-invite'].includes(key)))history.replaceState(null,'',location.pathname+(query.size?'?'+query:''));
+  const googleReturn=location.pathname==='/integrations/google/complete';
+  const googleDriveCallback=googleReturn?Object.fromEntries(['state','code','error'].filter(key=>link.has(key)).map(key=>[key,link.get(key)])):null;
+  const secret={googleDriveCallback,beamInvite:link.get('beam-invite'),token:link.get('token'),owner:link.get('owner'),requestId:link.get('request'),userCode:googleReturn?null:link.get('code'),pending:null,recovery:null,deviceCode:null,contactEndpoint:signedEndpoint,encryptedRecovery:null,restoreFile:null};
+  if(query.has('sig'))query.delete('sig');if(googleReturn||signedEndpoint||[...link.keys()].some(key=>['token','owner','request','code','beam-invite'].includes(key)))history.replaceState(null,'',location.pathname+(query.size?'?'+query:''));
   let returnFocus,returnFocusText,captchaToken='',disposed=false,captchaAction='signup',observer=null,captchaConfig={};
   const cleanups=[];
   const path=location.pathname,purpose=new URLSearchParams(location.search).get('purpose');
-  const route={auth:new URLSearchParams(location.search).has('signin')?'login':undefined,kind:path==='/mcp/consent'?'mcp-consent':/^\/users\/[^/]+\/contact\/[a-f0-9-]{36}$/.test(path)?'contact':path==='/unsubscribe'?'unsubscribe':['/email/confirm','/email/login'].includes(path)?'email':['/device','/device/approve'].includes(path)?'device':path==='/recovery/setup'?'recovery-setup':path==='/recovery/restore'?'recovery-restore':'home',recipient:path.split('/')[2],emailLogin:path==='/email/login'||purpose==='login',requestId:secret.requestId,userCode:secret.userCode};
+  const route={googleDriveCallback:googleReturn,auth:googleReturn||new URLSearchParams(location.search).has('signin')?'login':undefined,kind:path==='/mcp/consent'?'mcp-consent':/^\/users\/[^/]+\/contact\/[a-f0-9-]{36}$/.test(path)?'contact':path==='/unsubscribe'?'unsubscribe':['/email/confirm','/email/login'].includes(path)?'email':['/device','/device/approve'].includes(path)?'device':path==='/recovery/setup'?'recovery-setup':path==='/recovery/restore'?'recovery-restore':'home',recipient:path.split('/')[2],emailLogin:path==='/email/login'||purpose==='login',requestId:secret.requestId,userCode:secret.userCode};
   try{const pending=JSON.parse(sessionStorage.getItem('3sln-setup'));if(pending?.token&&typeof pending.token==='string'){secret.pending=pending.token;route.pendingStage=pending.stage;}}catch{}
   const resource={
     applyLocale(locale){document.documentElement.lang=locale;},

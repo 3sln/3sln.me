@@ -40,7 +40,7 @@ const authMethods={
 };
 async function body(request,max=100000){const content=request.headers.get('Content-Type')||'';if(!content.startsWith('application/json'))throw Object.assign(new Error('Use JSON for this request.'),{code:'json_required',status:415});const reader=request.body?.getReader();if(!reader)throw Object.assign(new Error('Request body required'),{status:400});let size=0;const chunks=[];while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>max){await reader.cancel();throw Object.assign(new Error('Request is too large.'),{code:'body_too_large',status:413});}chunks.push(value);}const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}try{const result=JSON.parse(new TextDecoder().decode(bytes));if(!result||typeof result!=='object'||Array.isArray(result))throw new Error();return result;}catch{throw Object.assign(new Error('Request JSON must be an object.'),{code:'invalid_json',status:400});}}
 function status(error){if(error.status)return error.status;return {unauthorized:401,csrf:403,forbidden:403,not_found:404,conflict:409,handle_unavailable:409,idempotency_conflict:409,quota_exceeded:429,account_quota_exceeded:429,rate_limited:429,email_unavailable:503,challenge_failed:403}[error.code]||400;}
-function providerConfig(env){return {google: {enabled:false,configured:Boolean(env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET),reason:'Google Drive is not available on this service yet.'},s3:{enabled:Boolean(env.KEY_ENCRYPTION_KEY)},webdav:{enabled:Boolean(env.KEY_ENCRYPTION_KEY),reason:'For your security, this service must approve the server you connect to.'},dropbox:{enabled:false,reason:'Dropbox is not available on this service yet.'},onedrive:{enabled:false,reason:'Microsoft OneDrive is not available on this service yet.'}};}
+function providerConfig(env){return {google: {enabled:Boolean(env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET&&env.KEY_ENCRYPTION_KEY),configured:Boolean(env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET),...env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET?{}:{reason:'Google Drive credentials are not configured on this service.'}},s3:{enabled:Boolean(env.KEY_ENCRYPTION_KEY)},webdav:{enabled:Boolean(env.KEY_ENCRYPTION_KEY),reason:'For your security, this service must approve the server you connect to.'},dropbox:{enabled:false,reason:'Dropbox is not available on this service yet.'},onedrive:{enabled:false,reason:'Microsoft OneDrive is not available on this service yet.'}};}
 
 export default {
  turnstile, rateLimit:limit,
@@ -51,8 +51,10 @@ export default {
    if(url.origin!==env.APP_ORIGIN)return json({error:'invalid_origin',message:'Use the configured account domain.'},403);
    const path=url.pathname;const mutation=!['GET','HEAD','OPTIONS'].includes(request.method);
    if(mcpPublicPath(path)){
+    if(env.MCP_ENABLED!=='true')return handleMcpPublic(request,env);
     if(path==='/mcp/oauth/authorize'||path==='/mcp/oauth/token'){
      const remote=request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown'),secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY;
+     if(!secret)return json({error:'temporarily_unavailable',message:'Assistant connections are not configured.'},503);
      const ip=await pseudonym(remote,secret),network=await pseudonym(subnet(remote),secret),partition=parseInt(ip.slice(0,2),16)%16;
      if(!await env.ABUSE.consume(`mcp/oauth/ip/${ip}`,{windowMs:60000,limit:30})||!await env.ABUSE.consume(`mcp/oauth/subnet/${network}`,{windowMs:60000,limit:100})||!await env.ABUSE.consume(`mcp/oauth/service-v1-${partition}`,{windowMs:60000,limit:32}))return json({error:'rate_limited'},429);
     }
@@ -64,7 +66,7 @@ export default {
     const account=await env.IDENTITY_REPOSITORY.get(verified.owner);if(!account||account.status!=='active')return json({error:'billing_account_unavailable'},409);
     return json(await accountHandle(env,verified.owner).billingWebhookVerified(verified.owner,verified));
    }
-   if(path==='/manifest.webmanifest'&&request.method==='GET'){const asset=await env.ASSETS.fetch(request);const manifest=await asset.json();const name=env.BRAND_NAME||'3sln.me';return new Response(JSON.stringify({...manifest,name,short_name:name}),{headers:{'Content-Type':'application/manifest+json','Cache-Control':'no-cache'}});}
+   if(path==='/manifest.webmanifest'&&request.method==='GET'){const asset=await env.ASSETS.fetch(request);const manifest=await asset.json();const name=env.BRAND_NAME||'3sln.me';return new Response(JSON.stringify({...manifest,name,short_name:name,...name==='3sln.me'?{}:{icons:[{src:'/generic-icon.svg',sizes:'any',type:'image/svg+xml',purpose:'any'}]}}),{headers:{'Content-Type':'application/manifest+json','Cache-Control':'no-cache'}});}
    const signedContact=/^\/users\/([a-z][a-z0-9_-]{2,31})\/contact\/([a-f0-9-]{36})$/.exec(path);
    if(signedContact||path==='/api/messages'&&request.method==='OPTIONS'){
     const publicHeaders={Vary:'Accept','Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, HEAD, POST, OPTIONS','Access-Control-Allow-Headers':'Accept, Content-Type, Authorization, Idempotency-Key','X-Robots-Tag':'noindex, nofollow, nosnippet'};
@@ -87,6 +89,11 @@ export default {
      const input=await multipartMessage(request);const result=await handle.deliverContact(claims.sub,request.url,input);execution?.waitUntil?.(handle.searchDrain(claims.sub,{limit:10}).catch(()=>{}));return json(result,202,publicHeaders);
     }
    }
+   if(path==='/api/integrations/google/callback'){
+    if(request.method!=='GET')return json({error:'method_not_allowed'},405,{Allow:'GET'});
+    const fragment=new URLSearchParams();for(const key of ['state','code','error']){const values=url.searchParams.getAll(key);if(values.length>1||values.some(v=>v.length>(key==='code'?4096:200)||/[\u0000-\u001f\u007f]/.test(v)))return json({error:'invalid_callback'},400);if(values.length)fragment.set(key,values[0]);}
+    return new Response(null,{status:303,headers:{...privateHeaders,Location:'/integrations/google/complete#'+fragment}});
+   }
    const conversationPublic=await publicConversationRoutes(request,env,{account:accountHandle,body,json,limit,execution});if(conversationPublic)return conversationPublic;
    const allow=allowedMethods(path);if(allow&&!allow.includes(request.method))return json({error:'method_not_allowed',message:'This operation does not support that request method.'},405,{Allow:allow.join(', ')});
    if(path.startsWith('/api/demo'))return json({error:'not_found'},404);
@@ -94,6 +101,7 @@ export default {
    if(path==='/api/notifications/unsubscribe'&&request.method==='POST'){
      const input=await body(request);const pieces=typeof input.token==='string'?input.token.split('.'):[];const owner=pieces.length===2?pieces[0]:input.owner;const token=pieces.length===2?pieces[1]:input.token;
      if(typeof owner!=='string'||!/^[a-f0-9-]{36}$/.test(owner)||typeof token!=='string'||token.length!==43)return json({error:'invalid_unsubscribe',message:'This unsubscribe link is invalid.'},400);
+     const identity=await env.IDENTITY_REPOSITORY.get(owner);if(!identity||identity.status!=='active')return json({error:'invalid_unsubscribe',message:'This unsubscribe link is invalid.'},400);
      return json(await env.ACCOUNTS.get(owner).unsubscribe(owner,token));
    }
    // Public delivery uses the contact bearer token, not the owner's session or CSRF.
@@ -141,6 +149,7 @@ export default {
     if(mutation&&context.csrfToken!==owner.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
     const automationResponse=await automationRoutes({path,request,owner,object,body,json});if(automationResponse)return automationResponse;
     if(mcpOwnerPath(path))return handleMcpOwner({request,env,owner,body});
+    if(['/api/integrations/google/start','/api/integrations/google/complete'].includes(path)){const device=owner.devices?.find(d=>d.current);if(!device)return json({error:'unauthorized'},401);const input=await body(request);return json(await object[path.endsWith('/start')?'googleDriveStart':'googleDriveComplete'](id,device.id,input));}
     if(path==='/api/apps'&&request.method==='GET')return json({apps:await object.appConnections(id)});
     const appDisconnect=/^\/api\/apps\/([a-f0-9-]{36})$/.exec(path);if(appDisconnect&&request.method==='DELETE')return json(await object.appDisconnect(id,appDisconnect[1]));
     let protective=false;
@@ -179,7 +188,7 @@ export default {
    if(path==='/.well-known/bindle/manifest.json')return json({error:'not_yet_conformant',message:'Federated OAuth service is not enabled.'},503);
    if(path==='/artefacts/contracts/object-storage/v1'){const target=new URL(request.headers.get('Accept')?.includes('text/html')?'/docs/spec/storage.html':'/artefacts/contracts/object-storage/v1.json',url);const asset=await env.ASSETS.fetch(new Request(target,request));const headers=new Headers(asset.headers);headers.set('Vary','Accept');if(!target.pathname.endsWith('.html'))headers.set('Content-Type','application/schema+json');return new Response(asset.body,{status:asset.status,headers});}
    if(path==='/recovery/setup'||path==='/recovery/restore'){const page=await env.ASSETS.fetch(new Request(new URL('/',url),request));return securePage(await brandPage(page,env),true);}
-   if(path.startsWith('/users/')||path==='/mcp/consent'||path==='/unsubscribe'||path==='/email/confirm'||path==='/email/login'||path==='/device'||path==='/device/approve'||path.startsWith('/artefacts/')){
+   if(path.startsWith('/users/')||path==='/integrations/google/complete'||path==='/mcp/consent'||path==='/unsubscribe'||path==='/email/confirm'||path==='/email/login'||path==='/device'||path==='/device/approve'||path.startsWith('/artefacts/')){
      if(path.startsWith('/artefacts/'))return env.ASSETS.fetch(request);
      const page=await env.ASSETS.fetch(new Request(new URL('/',url),request));return securePage(await brandPage(page,env));
    }
@@ -193,8 +202,9 @@ export default {
  }
 };
 function securePage(response,isolatedRecovery=false){const headers=new Headers(response.headers);for(const [k,v]of Object.entries(privateHeaders))headers.set(k,v);headers.set('Content-Security-Policy',isolatedRecovery?"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; worker-src 'self'":"default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com blob:; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self'");return new Response(response.body,{status:response.status,headers});}
-async function brandPage(response,env){if(!env.BRAND_NAME||env.BRAND_NAME==='3sln.me'||!response.headers.get('Content-Type')?.includes('text/html'))return response;const name=env.BRAND_NAME.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');let html=await response.text();html=html.replace(/<title>3sln\.me[^<]*<\/title>/,`<title>${name}</title>`).replaceAll('<span>3sln.me</span>',`<span>${name}</span>`);return new Response(html,{status:response.status,headers:response.headers});}
+async function brandPage(response,env){if(!env.BRAND_NAME||env.BRAND_NAME==='3sln.me'||!response.headers.get('Content-Type')?.includes('text/html'))return response;const name=env.BRAND_NAME.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');let html=await response.text();html=html.replace(/<title>3sln\.me[^<]*<\/title>/,`<title>${name}</title>`).replaceAll('<span>3sln.me</span>',`<span>${name}</span>`).replace('<img src="/branding/3sln-lockup.svg" alt="3sln" width="91" height="34"><span class="logo-suffix">.me</span>',`<span>${name}</span>`).replaceAll('/icon.svg','/generic-icon.svg').replaceAll('/branding/3sln-avatar.png','/generic-icon.svg');return new Response(html,{status:response.status,headers:response.headers});}
 function allowedMethods(path){
+ if(['/api/integrations/google/start','/api/integrations/google/complete'].includes(path))return ['POST'];
  const automation=automationAllowedMethods(path);if(automation)return automation;
  const conversation=conversationAllowedMethods(path);if(conversation)return conversation;
  const beam=beamAllowedMethods(path);if(beam)return beam;

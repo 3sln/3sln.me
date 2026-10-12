@@ -1,0 +1,13 @@
+# Google Drive setup
+
+Create a Google OAuth web application and enable the Drive API. Register `https://3sln.me/api/integrations/google/callback` as its exact authorized redirect URI. Local testing must register the actual fixed localhost origin/port plus the same callback path; self-hosts use their own canonical `APP_ORIGIN`.
+
+Attach `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` as Worker secrets, alongside the existing private `KEY_ENCRYPTION_KEY`. Do not commit client secrets or encryption keys. The Node adapter reads the same environment names. Provider availability stays false until these values exist. No client ID is declared in production Wrangler vars, so a dashboard secret can supply it without conflict; local variables retain an empty placeholder. The client ID is public OAuth metadata, but storing it as a Worker secret also avoids a later deploy clearing a dashboard-only plain variable. Updating dashboard plain variables must also update the corresponding Wrangler values before a later deploy, which otherwise replaces them.
+
+The implementation requests only `https://www.googleapis.com/auth/drive.file`, offline access and explicit consent, with S256 PKCE. It creates a dedicated managed folder; it does not import arbitrary files or enumerate Drive. Same-account reconnect checks Google's permission identifier and the original folder binding before replacing credentials. See [architecture and security evidence](../architecture/google-drive-integration.md).
+
+Files are limited to 1 MiB each. Each resource has at most 10,000 live logical keys and 10,000 retained versions, with bounded pending operations. Physical old/deleted copies remain in Drive and continue using Google storage. The host's private key map is essential recovery data; preserve it and its encryption key. Interrupted upload/folder journals retain known identifiers for administrative reconciliation; automatic physical reclamation is not implemented. Logical deletion is not a promise of provider-byte erasure.
+
+Local service fixtures, independent concurrency/security tests, actual Worker state/session tests and browser OAuth fixtures are recorded separately from live Google verification. After attaching credentials, verify consent, upload/read/update/range/delete, token refresh and mapping-preserving reconnect using a designated test account before enabling public account creation. No live test is claimed yet.
+
+Disconnect deletes only this host’s selected connection and saved credentials. It does not revoke Google project permissions: Google revocation affects all clients in the project and can disrupt other connections. Project-wide revocation remains an explicit action in Google Account connection management.

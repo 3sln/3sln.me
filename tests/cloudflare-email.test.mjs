@@ -40,9 +40,40 @@ test('link and login use distinct approved senders and fragment confirmation rou
     assert.equal(url.search, '');
     assert.equal(new URLSearchParams(url.hash.slice(1)).get('token'), token);
     assert.equal(message.headers, undefined);
-    assert.equal(message.html, undefined);
+    assert.match(message.html, /<!doctype html>/);
+    assert.equal(message.attachments, undefined);
   }
   assert.match(sent[0].text, /browser session that requested/);
+});
+
+test('hosted mail embeds the unchanged canonical logo without remote image fetches', async () => {
+  const { env, sent } = fixture();
+  const hostedOrigin = 'https://3sln.me';
+  const transport = mailTransport({ ...env, APP_ORIGIN: hostedOrigin });
+  await transport.sendVerification({ email, token, purpose: 'login', issuer: hostedOrigin });
+  const message = sent[0];
+  assert.match(message.html, /src="cid:3sln-logo"/);
+  assert.doesNotMatch(message.html, /<img[^>]*src="https?:|<script|<iframe/);
+  assert.equal(message.attachments.length, 1);
+  const logo = message.attachments[0];
+  assert.deepEqual({ ...logo, content: undefined }, { content: undefined, filename: '3sln-avatar.png', type: 'image/png', disposition: 'inline', contentId: '3sln-logo' });
+  const source = await readFile(new URL('../apps/web/branding/3sln-avatar.png', import.meta.url));
+  assert.deepEqual(Buffer.from(logo.content, 'base64'), source);
+  assert.equal(logo.content.length < 26000, true);
+  assert.match(message.html, /href="https:\/\/3sln.me\/email\/login#token=/);
+  assert.match(message.text, /expires in ten minutes/);
+});
+
+test('HTML presentation escapes arbitrary operator brands and preserves fragment links', async () => {
+  const { env, sent } = fixture();
+  const brand = '<img src=x onerror="alert(1)"> & Own Space';
+  const transport = mailTransport({ ...env, BRAND_NAME: brand });
+  await transport.sendVerification({ email, token: 'opaque&<>"\'value', purpose: 'link', issuer: origin });
+  const message = sent[0];
+  assert.match(message.html, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt; &amp; Own Space/);
+  assert.doesNotMatch(message.html, /<img|cid:3sln-logo/);
+  assert.equal(message.attachments, undefined);
+  assert.equal(new URLSearchParams(new URL(message.text.split('\n').find(line => line.startsWith('https://'))).hash.slice(1)).get('token'), 'opaque&<>"\'value');
 });
 
 test('reminder uses notify sender, generic content and manual fragment unsubscribe', async () => {

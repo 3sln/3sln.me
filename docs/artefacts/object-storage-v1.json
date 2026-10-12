@@ -303,6 +303,25 @@
         },
         "downloadRequiresApprovedHost": {
           "type": "boolean"
+        },
+        "conditionalAuthority": {
+          "enum": [
+            "provider",
+            "bindle-host"
+          ],
+          "description": "Where exact-version conditional publication is enforced."
+        },
+        "physicalRetention": {
+          "type": "boolean",
+          "description": "Logical deletion or replacement can retain provider bytes."
+        },
+        "maxObjects": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "retainedVersionLimit": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "required": [
@@ -348,6 +367,10 @@
       "properties": {
         "deleted": {
           "type": "boolean"
+        },
+        "physicalRetention": {
+          "type": "boolean",
+          "description": "True means the logical key is removed but provider bytes remain."
         }
       },
       "required": [

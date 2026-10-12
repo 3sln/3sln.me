@@ -1,3 +1,4 @@
+import * as googleDriveActions from './bl/google-drive.mjs';
 import * as conversationActions from './bl/conversations.mjs';
 import * as mcpActions from './bl/mcp.mjs';
 import * as automationActions from './bl/automation.mjs';
@@ -29,6 +30,7 @@ const captureSubmission=await engine.container.use(['browser'],({browser})=>brow
 const readModel=await engine.container.use(['state'],({state})=>state.snapshot);
 const prepareBeamDestination=await engine.container.use(['beaming'],({beaming})=>beaming.prepareDestination);
 const constructors={
+ 'start-google-drive':googleDriveActions.StartGoogleDrive,
  'clear-automation-review':automationActions.ClearAutomationReview,'load-automation':automationActions.LoadAutomation,'enable-automation':automationActions.EnableAutomation,'disable-automation':automationActions.DisableAutomation,'confirm-automation':automationActions.ConfirmAutomation,
  'load-mcp-request':mcpActions.LoadMCPRequest,'decide-mcp':mcpActions.DecideMCP,'load-mcp-grants':mcpActions.LoadMCPGrants,'revoke-mcp-grant':mcpActions.RevokeMCPGrant,'disconnect-app':mcpActions.DisconnectApp,
  'load-conversations':conversationActions.LoadConversations,'open-conversation':conversationActions.OpenConversation,'create-conversation':conversationActions.CreateConversation,'conversation-action':conversationActions.ConversationAction,'conversation-reply':conversationActions.ConversationReply,'copy-conversation-access':conversationActions.CopyConversationAccess,
@@ -65,7 +67,7 @@ const constructors={
   'save-semantic-preferences':actions.SaveSemanticPreferences,'billing-portal':actions.BillingPortal,'search-space':actions.SearchSpace,
   'search-next-page':actions.SearchSpace,'read-search-message':actions.ReadSearchMessage
 };
-function dispatchIntent(input){if(['enable-automation','confirm-automation'].includes(input.kind)&&input.nativeEvent?.isTrusted!==true)return;let detail={...input};delete detail.nativeEvent;if(input.kind==='accept-beam'){if(!input.files?.length){engine.dispatch(new actions.ReportCommandError({message:'Select at least one file.'}));return;}detail={...input,destination:prepareBeamDestination(input.files,input.mode)};detail.destination.catch(()=>{});}if(input.form){detail={...detail,operationId:captureSubmission(input.form)};delete detail.form;}if(detail.kind==='run-command'){dispatchCommand(detail.id);return;}const Action=constructors[detail.kind]??actions.NavigateSpace;engine.dispatch(new Action(detail));if(detail.kind==='navigate'&&detail.view==='beaming')engine.dispatch(new beamActions.LoadBeaming());if(detail.kind==='navigate'&&detail.view==='conversations')engine.dispatch(new conversationActions.LoadConversations());if(detail.kind==='navigate'&&detail.view==='connected-apps')engine.dispatch(new mcpActions.LoadMCPGrants());if(detail.kind==='navigate'&&detail.view==='automation')engine.dispatch(new automationActions.LoadAutomation());}
+function dispatchIntent(input){if(input.kind==='save-resource'&&readModel().modal?.provider?.id==='google-drive'){if(input.nativeEvent?.isTrusted!==true)return;input={...input,kind:'start-google-drive'};}if(['enable-automation','confirm-automation'].includes(input.kind)&&input.nativeEvent?.isTrusted!==true)return;let detail={...input};delete detail.nativeEvent;if(input.kind==='accept-beam'){if(!input.files?.length){engine.dispatch(new actions.ReportCommandError({message:'Select at least one file.'}));return;}detail={...input,destination:prepareBeamDestination(input.files,input.mode)};detail.destination.catch(()=>{});}if(input.form){detail={...detail,operationId:captureSubmission(input.form)};delete detail.form;}if(detail.kind==='run-command'){dispatchCommand(detail.id);return;}const Action=constructors[detail.kind]??actions.NavigateSpace;engine.dispatch(new Action(detail));if(detail.kind==='navigate'&&detail.view==='beaming')engine.dispatch(new beamActions.LoadBeaming());if(detail.kind==='navigate'&&detail.view==='conversations')engine.dispatch(new conversationActions.LoadConversations());if(detail.kind==='navigate'&&detail.view==='connected-apps')engine.dispatch(new mcpActions.LoadMCPGrants());if(detail.kind==='navigate'&&detail.view==='automation')engine.dispatch(new automationActions.LoadAutomation());}
 function dispatchCommand(id){try{engine.dispatch(new RunPortalCommand(registry,id)).next('complete').catch(error=>engine.dispatch(new actions.ReportCommandError({message:error.message})));}catch(error){engine.dispatch(new actions.ReportCommandError({message:error.message}));}}
 root.addEventListener('3sln-intent',event=>{event.stopPropagation();dispatchIntent(event.detail);});
 engine.feed.addEventListener('portal-command-requested',event=>dispatchCommand(event.detail.id));
@@ -82,9 +84,11 @@ engine.feed.addEventListener('beam-poll-due',()=>engine.dispatch(new beamActions
 engine.feed.addEventListener('beam-progress',event=>engine.dispatch(new beamActions.BeamProgress(event.detail)));
 engine.feed.addEventListener('mcp-request-opened',()=>engine.dispatch(new mcpActions.LoadMCPRequest()));
 engine.feed.addEventListener('automation-call',event=>engine.dispatch(new automationActions.InvokeAutomation(event.detail)));
+engine.feed.addEventListener('google-drive-returned',()=>engine.dispatch(new googleDriveActions.CompleteGoogleDrive()));
+const googleDriveCell=queryCell(engine.query(new googleDriveActions.GoogleDriveReturn()));
 const automationCell=queryCell(engine.query(new automationActions.AutomationState()));
 const beamCell=queryCell(engine.query(new beamActions.BeamingState()));
 const stateCell=queryCell(engine.query(new actions.BrowserState())),contextCell=queryCell(engine.query(new actions.PortalContext()));
-dodo.reconcile(root,[watch(stateCell,state=>watch(contextCell,context=>{return watch(automationCell,enabled=>watch(beamCell,()=>surfaces[state.locale??'en']({...state,automation:{...state.automation,enabled},context})));} ))]);
+dodo.reconcile(root,[watch(stateCell,state=>watch(contextCell,context=>{return watch(googleDriveCell,()=>watch(automationCell,enabled=>watch(beamCell,()=>surfaces[state.locale??'en']({...state,notice:state.notice||(state.route.googleDriveCallback&&!state.session?'Sign in to finish Google Drive authorization. If this browser session changed, start a new connection from Resources.':state.notice),automation:{...state.automation,enabled},context}))));} ))]);
 engine.dispatch(new actions.InitializeSpace());
 window.addEventListener('pagehide',()=>{cancelRecovery();window.removeEventListener('keydown',keydown);dodo.reconcile(root,[]);engine.dispose();},{once:true});

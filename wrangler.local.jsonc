@@ -68,6 +68,7 @@
     }
   ],
   "vars": {
+    "GOOGLE_CLIENT_ID": "",
     "APP_ORIGIN": "http://localhost:8787",
     "RP_ID": "localhost",
     "TERMS_VERSION": "2026-10-11",

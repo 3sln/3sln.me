@@ -9,6 +9,7 @@ async function connectorFixture(){
   const resource={id:'resource',owner:'owner',provider:'webdav',status:'unverified',capabilities:{read:true,list:true},secret:await encryptSecret({endpoint:'https://dav.example/storage/',prefix:'selected',username:'probe-user',password:'probe-password'},key)};
   const writes=[];
   const account={config:{KEY_ENCRYPTION_KEY:key,ALLOWED_CONNECTOR_HOSTS:'dav.example'},metadata:{get:async()=>structuredClone(resource),put:async(k,v)=>writes.push([k,structuredClone(v)])}};
+  account.metadata.transaction=async operation=>operation(account.metadata);
   return {account,writes};
 }
 
