@@ -179,3 +179,8 @@ User changed the hosted sender domain to `sys.3sln.com`, reserving bare-domain a
 | D036 | Use `sys.3sln.com` for hosted system senders, keeping bare domains available for user email. Direction explicitly requested by user; configuration verification remains separate from deliverability. | Reviewer: ___ Date: ___ Outcome: ___ |
 
 Verification: all nine focused email adapter/configuration tests passed, including host-origin links with a separate sender domain. Production Wrangler dry run passed with the five `@sys.3sln.com` senders and `MAIL_ENABLED="false"`.
+
+
+## 2026-10-11 — Reported sender onboarding and live email test
+
+User reported `sys.3sln.com` onboarded and explicitly authorized a test message to their supplied recipient. Created an isolated ignored local Worker with a remote Cloudflare `EMAIL` binding, restricted to the exact test sender/destination and protected against unauthenticated or duplicate invocation. One test attempt from `notify@sys.3sln.com` returned `email sending not authorized for subdomain 'sys.3sln.com'`; no acceptance/message ID was returned. No successful delivery is claimed, and the app was not deployed. Public DNS queries for `cf-bounce.sys.3sln.com` and `_dmarc.sys.3sln.com` returned ENOTFOUND at test time; these alone do not prove dashboard configuration state. Cloudflare documentation confirms Email Sending onboards subdomains separately from routing/apex domains. Updated setup status; mail and release gates remain disabled pending actual authorization and delivery verification. Recipient address and temporary authorization secret are not recorded in public project files.

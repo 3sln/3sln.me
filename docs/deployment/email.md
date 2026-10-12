@@ -6,6 +6,12 @@ Hosted email uses the Cloudflare Email Sending beta `EMAIL.send({from,to,subject
 
 The checked-in production configuration declares `EMAIL` and sets `MAIL_ENABLED="false"`. The adapter also requires a working binding and an exact HTTPS `APP_ORIGIN`. The separate local configuration has no email binding. Tests use injected binding doubles; the dry run does not send mail. Do not add a remote email binding to local development for ordinary tests.
 
+## Current live verification
+
+The account owner reports that `sys.3sln.com` has been onboarded. A user-authorized test through an isolated local Worker with a real remote `EMAIL` binding was rejected before acceptance: `email sending not authorized for subdomain 'sys.3sln.com'`. No successful send/message ID was returned. Sender authorization or onboarding propagation still needs resolution; keep `MAIL_ENABLED="false"`.
+
+Email Sending onboards each subdomain separately; Email Routing activation or apex-domain onboarding does not establish sending authorization for `sys.3sln.com`. Check this exact domain under **Compute → Email Service → Email Sending** and wait for verified/ready status. [Cloudflare subdomain onboarding](https://developers.cloudflare.com/email-service/configuration/subdomains/).
+
 ## Sender policy and connected behavior
 
 | Sender | Resource | Current connection |
