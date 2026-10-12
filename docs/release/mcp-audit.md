@@ -1,0 +1,15 @@
+# Independent MCP service audit — 2026-10-12
+
+Reviewer: conversation runtime agent, cross-reviewing the separately implemented MCP service. Human reviewer: ___ Date: ___ Outcome: ___. This is local implementation evidence; production release approval remains unsigned.
+
+The independently authored [audit regressions](../../tests/mcp-audit.test.mjs) exercise durable Node adapters and the actual MCP HTTP handler. Exact collection and function consent rejects an unauthorized collection and a read-only token's write attempt before effects. The tool schema rejects arbitrary URL fields; callers cannot turn a selected storage key into an unrestricted network endpoint. This does not establish general external connector or DNS-rebinding conformance.
+
+Hosted writes and deletes reach existing account work and storage controls. A new successful hosted write consumes one work admission; an identical durable replay consumes none. Exhausted admission prevents a new object's creation and preserves the existing object when deletion is refused. Account-authorized source disconnection and grant revocation prevent later dispatch despite earlier consent. The existing implementation tests additionally cover PKCE, exact redirects, resource audience, authorization-code reuse, refresh rotation and concurrent refresh-token reuse revoking the token family, restart persistence, hashed durable credentials, SDK tools/resources/prompts and conditional storage replay.
+
+The audit reproduced a fail-closed defect: deleting a durable access-token `expiresAt` allowed verification because an undefined value did not satisfy the expiry comparison. The MCP implementation owner repaired token, grant, authorization request, code and refresh record validation. The regression now rejects that corrupted token. The implementation owner also added independent OAuth authorization-request ingress limits and bounded expiry cleanup with exponential backoff and a pause after eight failures. Its regressions verify refusal before another durable request is created and retention of outstanding records during cleanup failure.
+
+The service uses sixty-four fixed authorization shards. Normal token introspection routes to the credential's shard, avoiding a global authority lookup. Listing owner grants deliberately fans out to those fixed shards. The per-shard owner connection bound is not a global two-connection guarantee. All policy, schema and deployment claims must describe the actual fixed-shard behavior.
+
+The endpoint uses the installed official MCP HTTP SDK and stateless request handling. This audit does not claim third-party client certification, live external provider interoperability, dynamic client registration, upstream MCP import, arbitrary app contributions or callback delegation. Checked-in release and email gates remain disabled; no production deployment or email delivery was performed.
+
+Validation checkpoint: `npm test` passed 274/274 on 2026-10-12, including the four independently authored MCP audit regressions and six MCP implementation regressions. This suite does not itself establish external client or provider conformance.

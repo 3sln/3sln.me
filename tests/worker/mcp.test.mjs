@@ -1,0 +1,22 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createHarness} from './harness.mjs';
+import {digest} from '../../packages/messaging/store.mjs';
+test('actual Worker MCP OAuth enforces owner CSRF, exact audience/PKCE, granular tools and revocation',async t=>{
+ const h=await createHarness();t.after(()=>h.close());const {result:owner,cookie}=await h.signup();const headers={Origin:h.origin,Cookie:cookie,'X-CSRF-Token':owner.csrfToken};
+ const create=await h.request('/api/resources',{method:'POST',headers,value:{name:'Agent documents',provider:'hosted'}});assert.equal(create.status,200);const source=await create.json(),collectionId=`resource:${source.id}`;
+ const metadata=await h.request('/.well-known/oauth-protected-resource/mcp');assert.equal(metadata.status,200);assert.equal((await metadata.json()).resource,`${h.origin}/mcp`);
+ const verifier='B'.repeat(43),params=new URLSearchParams({client_id:'agent.example',redirect_uri:'https://agent.example/callback',response_type:'code',code_challenge:await digest(crypto,verifier),code_challenge_method:'S256',state:'isolated-worker-state',scope:'mcp:collections_list mcp:items_list mcp:item_read',resource:`${h.origin}/mcp`});
+ const begin=await h.mf.dispatchFetch(`${h.origin}/mcp/oauth/authorize?${params}`,{redirect:'manual'});assert.equal(begin.status,302);const requestId=new URL(begin.headers.get('Location')).hash.slice('#request='.length);assert.match(requestId,/^[0-9]{2}\./);
+ const consent=await h.request(`/api/mcp/requests/${requestId}`,{headers});assert.equal(consent.status,200);assert((await consent.json()).collections.some(c=>c.id===collectionId));
+ const permissions=[{collectionId,tools:['collections_list','items_list','item_read']}];assert.equal((await h.request('/api/mcp/approve',{method:'POST',headers:{...headers,'X-CSRF-Token':'wrong'},value:{requestId,permissions}})).status,403);
+ const approve=await h.request('/api/mcp/approve',{method:'POST',headers,value:{requestId,permissions}});assert.equal(approve.status,200);const redirect=new URL((await approve.json()).redirectUri);assert.equal(redirect.searchParams.get('state'),'isolated-worker-state');assert.equal(redirect.searchParams.get('iss'),`${h.origin}/mcp/oauth`);
+ const exchange={grant_type:'authorization_code',code:redirect.searchParams.get('code'),code_verifier:verifier,client_id:'agent.example',redirect_uri:'https://agent.example/callback',resource:`${h.origin}/mcp`};const token=(input)=>h.request('/mcp/oauth/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},form:new URLSearchParams(input).toString()});
+ assert.equal((await token({...exchange,resource:`${h.origin}/bindle/rpc`})).status,400);assert.equal((await token({...exchange,code_verifier:'C'.repeat(43)})).status,400);
+ const minted=await token(exchange);assert.equal(minted.status,200);const session=await minted.json();assert(session.refresh_token);assert.equal((await token(exchange)).status,400);
+ const call=(bearer,name,args={})=>h.request('/mcp',{method:'POST',headers:{Authorization:`Bearer ${bearer}`,Accept:'application/json, text/event-stream','MCP-Protocol-Version':'2025-11-25'},value:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}}});
+ const listed=await call(session.access_token,'collections_list');assert.equal(listed.status,200);const text=await listed.text();assert(text.includes(collectionId));assert(!text.includes('KEY_ENCRYPTION_KEY'));
+ assert.equal((await call(session.access_token,'item_write',{collectionId,key:'x',requestId:crypto.randomUUID()})).status,403);
+ const rotated=await token({grant_type:'refresh_token',refresh_token:session.refresh_token,client_id:'agent.example',resource:`${h.origin}/mcp`});assert.equal(rotated.status,200);const refreshed=await rotated.json();assert.notEqual(refreshed.refresh_token,session.refresh_token);
+ const grants=await (await h.request('/api/mcp/grants',{headers})).json();assert.equal(grants.grants.length,1);assert.equal((await h.request(`/api/mcp/grants/${grants.grants[0].id}`,{method:'DELETE',headers})).status,200);assert.equal((await call(refreshed.access_token,'collections_list')).status,401);assert.equal((await token({grant_type:'refresh_token',refresh_token:refreshed.refresh_token,client_id:'agent.example',resource:`${h.origin}/mcp`})).status,400);
+});

@@ -50,7 +50,7 @@ export class IdentityService {
   origin(context) { if (context?.origin !== this.config.origin) fail('csrf', 'Use the account website to complete this request.'); }
   async guard(operation, input, context) {
     this.origin(context);
-    if (!await this.rateLimiter.check({ phase: 'attempt', operation, remoteIP: context.remoteIP, handle: input.handle })) fail('rate_limited', 'Please wait before trying again.');
+    if (!await this.rateLimiter.check({ phase: 'attempt', operation, remoteIP: context.remoteIP, region:context.region, handle: input.handle })) fail('rate_limited', 'Please wait before trying again.');
     if (typeof input.turnstileToken !== 'string' || input.turnstileToken.length > 4096 || !await this.turnstile.verify({ token: input.turnstileToken, remoteIP: context.remoteIP, action: operation, hostname: new URL(this.config.origin).hostname })) fail('challenge_failed', 'Complete the security check and try again.');
   }
   audit(account, type) { account.audit = [...(account.audit || []).slice(-99), { id: this.crypto.id(), type, at: this.clock() }]; }
@@ -100,7 +100,7 @@ export class IdentityService {
     if (await this.repository.findByHandle(input.handle)) fail('handle_unavailable', 'Choose another account handle.');
     // Global/daily creation capacity is reserved only for a valid proof and
     // complete valid signup, never for anonymous CAPTCHA or malformed attempts.
-    if (!await this.rateLimiter.check({ phase: 'admitted', operation: 'signup', remoteIP: context.remoteIP, handle: input.handle })) fail('rate_limited', 'Account creation capacity is temporarily unavailable.');
+    if (!await this.rateLimiter.check({ phase: 'admitted', operation: 'signup', remoteIP: context.remoteIP, region:context.region, handle: input.handle })) fail('rate_limited', 'Account creation is limited for this network or region. Please try again in a few hours.');
     const account = { id: this.crypto.id(), revision: 0, handle: input.handle, status: 'pending',
       createdAt: this.clock(), lastActiveAt: this.clock(), termsVersion: this.config.termsVersion,
       termsAcceptedAt: this.clock(), credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null, emailLoginEnabled: false,
@@ -264,6 +264,12 @@ export class IdentityService {
     account.sessions = account.sessions.filter(s => s.credentialId !== input.credentialId);
     account.challenges = account.challenges.filter(c => c.purpose !== 'credential'); this.audit(account, 'passkey-removed');
     await this.save(account, revision); return { removed: true, currentSessionRevoked: !account.sessions.includes(session), credentials: publicCredentials(account) };
+  }
+  async renameSession(input, context) {
+    const {account}=await this.authorized(context,true);const revision=account.revision;
+    if(typeof input.label!=='string'||!input.label.trim()||input.label.length>80||/[\u0000-\u001f\u007f]/.test(input.label))fail('invalid_device_label','Choose a device name of up to 80 characters.');
+    const target=(await Promise.all(account.sessions.map(async s=>({session:s,id:await this.sessionID(s)})))).find(s=>s.id===input.sessionId&&s.session.expiresAt>this.clock())?.session;
+    if(!target)fail('not_found','Device session not found.');target.label=input.label.trim();this.audit(account,'device-session-renamed');await this.save(account,revision);return {renamed:true,sessionId:input.sessionId,label:target.label};
   }
   async revokeSession(input, context) {
     const { account, session } = await this.recent(context); const revision = account.revision;

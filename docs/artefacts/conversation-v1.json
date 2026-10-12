@@ -1,0 +1,363 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://3sln.me/artefacts/conversation-v1.json",
+  "title": "Conversation v1 local submission envelope \u2014 provisional draft",
+  "description": "Schema for the local text contribution and membership-operation envelope. Transport authorization uses a separate current-epoch bearer secret. Schema validity never grants authority; runtime validates signatures, live policy, membership, epoch, quotas, recipient admission, and idempotency. Publication under this authority is user-authorized; the contract remains provisional and is not a claim of enabled federation or production conformance.",
+  "type": "object",
+  "properties": {
+    "payload": {
+      "$ref": "#/$defs/payload"
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{86}$",
+      "description": "Unpadded base64url of a 64-byte P-256 ECDSA SHA-256 signature over project canonical JSON UTF-8 payload bytes. Independent actor proof; not a shared-secret MAC. Required whenever live policy requires identity."
+    }
+  },
+  "required": [
+    "payload"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "remove",
+                  "policy",
+                  "permissions"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "signature"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+    },
+    "safeString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "participant": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "format": "uri",
+          "description": "Exact canonical HTTPS origin. Local development permits explicitly configured loopback HTTP; origin checks and network authorization are runtime requirements."
+        },
+        "owner": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "origin",
+        "owner"
+      ],
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "send": {
+          "type": "boolean"
+        },
+        "invite": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "post": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000,
+          "pattern": "^[^\\u0000-\\u0008\\u000b-\\u001f\\u007f]+$"
+        },
+        "threadId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "replyTo": {
+          "$ref": "#/$defs/uuid"
+        },
+        "eventId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/safeString",
+            "maxLength": 64
+          }
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "invite": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/participant"
+        },
+        "contactURL": {
+          "$ref": "#/$defs/safeString",
+          "maxLength": 18000,
+          "description": "Secret-bearing individual contact endpoint for this new recipient; never publish or index."
+        },
+        "collection": {
+          "$ref": "#/$defs/uuid",
+          "description": "Collection authorized for initial invitation delivery."
+        },
+        "confirmed": {
+          "const": true
+        },
+        "eventId": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "target",
+        "contactURL",
+        "collection",
+        "confirmed"
+      ],
+      "additionalProperties": false
+    },
+    "remove": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/participant"
+        },
+        "confirmed": {
+          "const": true
+        },
+        "eventId": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "target",
+        "confirmed"
+      ],
+      "additionalProperties": false
+    },
+    "changePolicy": {
+      "type": "object",
+      "properties": {
+        "policy": {
+          "$ref": "#/$defs/policy"
+        },
+        "confirmed": {
+          "const": true
+        },
+        "eventId": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "policy",
+        "confirmed"
+      ],
+      "additionalProperties": false
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "source": {
+          "$ref": "#/$defs/participant"
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "eventId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "Use the exact string bearer with no signature for a holder contribution permitted by broad live policy. Otherwise a member URI, verified only with a valid independent actor signature."
+        },
+        "operation": {
+          "enum": [
+            "post",
+            "invite",
+            "remove",
+            "policy",
+            "permissions"
+          ]
+        },
+        "input": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "version",
+        "id",
+        "source",
+        "epoch",
+        "eventId",
+        "actor",
+        "operation",
+        "input"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "post"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "input": {
+                "$ref": "#/$defs/post"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "invite"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "input": {
+                "$ref": "#/$defs/invite"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "remove"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "input": {
+                "$ref": "#/$defs/remove"
+              }
+            },
+            "required": [
+              "actor"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "policy"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "input": {
+                "$ref": "#/$defs/changePolicy"
+              }
+            },
+            "required": [
+              "actor"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "permissions"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "input": {
+                "$ref": "#/$defs/permissions"
+              }
+            },
+            "required": [
+              "actor"
+            ]
+          }
+        }
+      ]
+    },
+    "permissions": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/participant"
+        },
+        "permissions": {
+          "type": "object",
+          "properties": {
+            "send": {
+              "type": "boolean"
+            },
+            "invite": {
+              "type": "boolean"
+            },
+            "admin": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "confirmed": {
+          "const": true
+        },
+        "eventId": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "target",
+        "permissions",
+        "confirmed"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

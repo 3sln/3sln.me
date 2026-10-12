@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>3sln.me local walkthrough</title><style>body{background:#f6f7f2;color:#193c32;font:17px/1.65 system-ui;margin:0}main{max-width:1040px;margin:auto;padding:32px 20px}h1,h2{line-height:1.2}h2{margin-top:64px}a{color:#16624d}img{display:block;max-width:100%;height:auto;margin:24px auto;border:1px solid #d8e0d1;border-radius:12px}img[src*=mobile]{max-width:390px}p{max-width:900px}</style><main><h1>Local app walkthrough</h1>
-<p>Captured from the actual local Wrangler app and real Chrome, 2026-10-11. These are test accounts; no live recovery credentials, contact capabilities or private answers appear in the images. <strong>Production release remains disabled.</strong> External-provider setup, notification delivery, full federation and account-retention/deletion still require the work recorded in <a href="../DEVLOG.md">DEVLOG</a>.</p>
+<p>Captured from the actual local Wrangler app and real Chrome, 2026-10-11–12. These are test accounts; no live recovery credentials, contact capabilities or private answers appear in the images. <strong>Production release remains disabled.</strong> External-provider setup, notification delivery, full federation and account-retention/deletion still require the work recorded in <a href="../DEVLOG.md">DEVLOG</a>.</p>
 <p>The new encrypted recovery flow passed real passkey and password signup, restoration, file rotation and replay rejection, with independent adversarial checks. Personal information remains vulnerable to offline guessing; the UI recommends an extra private passphrase.</p>
 <h2>1. Start with an identity</h2>
 <p>Public documentation, self-hosting links and language selection remain accessible without an account. Local signup offers passkeys or a password, terms acknowledgement, then mandatory recovery setup.</p>
@@ -46,4 +46,25 @@
 <h2>14. Search messages across the account</h2>
 <p>Lexical and tag search support bounded cursor pages, index-lag notices and opening messages outside the initial inbox page. Semantic search remains unavailable until its provider is configured and verified. User-authored titles and snippets retain their language and render as inert text.</p>
 <p><img src="walkthrough-assets/search-desktop.png" alt="Account search"></p>
+<h2>File beaming and nearby pairing</h2>
+<p>Paid senders can select several files, choose a registered device or saved contact, and review the names and declared size. Nearby QR pairing does not require a saved contact. The recipient chooses which files to receive; remote offers appear on eligible devices and only one device can accept.</p>
+<p><img src="walkthrough-assets/beaming-desktop.png" alt="File sending and nearby pairing"></p>
+<p><img src="walkthrough-assets/beaming-mobile.png" alt="File sending on a narrow phone"></p>
+<p><img src="walkthrough-assets/beaming-spanish.png" alt="Spanish localization with unavailable paid sending"></p>
+<p>These screenshots use explicitly mocked paid-account/API fixtures. Browser tests exercised native WebRTC between two local portals and verified selected-file bytes; they do not establish internet NAT traversal, TURN relay, push delivery or real paid entitlements. Streaming uses a user-approved file destination where supported, with a bounded 32 MiB memory fallback elsewhere. TURN remains disabled pending credentials and an enforceable relay-spend budget.</p>
+<h2>Agent consent and connected apps</h2>
+<p>The HTTP MCP consent page identifies the requesting app, callback origin and signed-in account. Every collection/action checkbox starts unchecked. Deletion has a separate warning; the user can deny the request. Connections can be revoked in the portal.</p>
+<p><img src="walkthrough-assets/mcp-consent-desktop.png" alt="Granular MCP consent"></p>
+<p><img src="walkthrough-assets/mcp-consent-mobile.png" alt="MCP consent on a narrow phone"></p>
+<p>These screenshots use mocked authorization-request metadata. Separate actual Worker tests verify PKCE, audience, scoped tools, refresh rotation and revocation. An upstream app/MCP resource importer remains a design, not a deployed feature.</p>
+<h2>Conversations and reply-all</h2>
+<p>Every conversation message targets the full active membership. The recipient list and per-recipient delivery outcomes stay visible; a partial delivery never appears as complete. Shared-secret authors are labeled unverified. Joining, invitations, individual permissions and removal each have explicit controls.</p>
+<p><img src="walkthrough-assets/conversations-desktop.png" alt="Conversation and partial delivery"></p>
+<p><img src="walkthrough-assets/conversations-mobile.png" alt="Conversation on a phone"></p>
+<p>These screenshots use mocked conversation records/delivery outcomes. Durable Node and real local HTTP tests separately verify posting, admission, reply-all, epoch rotation, restart and sanitized inbox/search content. General cross-host federation and production conformance remain gated.</p>
+<h2>Visible monthly activity and semantic consent</h2>
+<p>Storage and monthly covered-change usage each show remaining capacity. Exhaustion preserves account reading, export, deletion and security controls. Semantic search requires explicit consent for limited English excerpts to be processed by Workers AI.</p>
+<p><img src="walkthrough-assets/billing-activity.png" alt="Storage and monthly activity"></p>
+<p><img src="walkthrough-assets/semantic-search-consent.png" alt="Semantic search consent"></p>
+<p>These images use bounded API fixtures. Real Workers AI inference and insertion/query/deletion checks ran separately against all four hosted Vectorize shards.</p>
 </main>

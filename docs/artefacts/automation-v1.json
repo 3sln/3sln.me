@@ -1,0 +1,482 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "SUPERSEDED EXPERIMENTAL FIXTURE. Retained for architectural comparison only; not a canonical, advertised or deployed Bindle contract. The current provisional design uses ordinary separately granted contract methods on an app connection resource, optionally implemented by an MCP adapter. See ../spec/resource-contributions.md and ../architecture/app-resource-options.md. No canonical $id is assigned to this fixture.",
+  "deprecated": true,
+  "title": "Superseded experimental one-callable resource schema — not a published contract",
+  "description": "Historical describe/invoke option, superseded as the default by ordinary app resource contract methods. This fixture grants no access and must not be advertised as an implemented contract or used as the importer manifest. It is not evidence of descriptor integrity, executable semantics, schema satisfiability, canonical processor origins, authorization, durable idempotency or production conformance. Those are independently enforced adapter policies in the current design.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "describe"
+        },
+        "args": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "invoke"
+        },
+        "args": {
+          "$ref": "#/$defs/invokeArgs"
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "invokeArgs": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "input": {
+          "$ref": "#/$defs/jsonObject"
+        }
+      },
+      "required": [
+        "revision",
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    "describeResult": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048,
+          "pattern": "^https://"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "inputSchema": {
+          "$ref": "#/$defs/objectSchema"
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/objectSchema"
+        },
+        "effects": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "read",
+              "write",
+              "delete",
+              "communicate",
+              "spend"
+            ]
+          }
+        },
+        "execution": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "enum": [
+                "provider-contract",
+                "provider-module",
+                "app-callback"
+              ]
+            },
+            "processorOrigin": {
+              "type": "string",
+              "maxLength": 2048,
+              "format": "uri",
+              "pattern": "^https://"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "mode": {
+                    "const": "app-callback"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "processorOrigin"
+                ]
+              }
+            }
+          ]
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "maxRequestBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "maxResultBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 131072
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30000
+            },
+            "txRetentionSeconds": {
+              "type": "integer",
+              "minimum": 86400
+            },
+            "maxInvocationsPerMinute": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 60
+            },
+            "maxConcurrentInvocations": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            }
+          },
+          "required": [
+            "maxRequestBytes",
+            "maxResultBytes",
+            "timeoutMs",
+            "txRetentionSeconds",
+            "maxInvocationsPerMinute",
+            "maxConcurrentInvocations"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "resource",
+        "revision",
+        "label",
+        "description",
+        "inputSchema",
+        "outputSchema",
+        "effects",
+        "execution",
+        "limits"
+      ],
+      "additionalProperties": false
+    },
+    "invokeResult": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "output": {
+          "$ref": "#/$defs/jsonObject"
+        }
+      },
+      "required": [
+        "revision",
+        "output"
+      ],
+      "additionalProperties": false
+    },
+    "jsonValue": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "string",
+          "maxLength": 8192
+        },
+        {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/jsonObject"
+        }
+      ]
+    },
+    "jsonObject": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+        "not": {
+          "enum": [
+            "constructor",
+            "prototype",
+            "__proto__"
+          ]
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/jsonValue"
+      }
+    },
+    "schemaNode": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "null"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "boolean"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "string"
+            },
+            "minLength": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8192
+            },
+            "maxLength": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8192
+            }
+          },
+          "required": [
+            "type",
+            "maxLength"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "integer"
+            },
+            "minimum": {
+              "type": "number",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "maximum": {
+              "type": "number",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "type",
+            "minimum",
+            "maximum"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "number"
+            },
+            "minimum": {
+              "type": "number",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "maximum": {
+              "type": "number",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "type",
+            "minimum",
+            "maximum"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "object"
+            },
+            "properties": {
+              "type": "object",
+              "maxProperties": 32,
+              "propertyNames": {
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+                "not": {
+                  "enum": [
+                    "constructor",
+                    "prototype",
+                    "__proto__"
+                  ]
+                }
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/schemaNode"
+              }
+            },
+            "required": {
+              "type": "array",
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+              }
+            },
+            "additionalProperties": {
+              "const": false
+            }
+          },
+          "required": [
+            "type",
+            "properties",
+            "required",
+            "additionalProperties"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "array"
+            },
+            "items": {
+              "$ref": "#/$defs/schemaNode"
+            },
+            "minItems": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "maxItems": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "type",
+            "items",
+            "maxItems"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "objectSchema": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "object"
+        },
+        "properties": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+            "not": {
+              "enum": [
+                "constructor",
+                "prototype",
+                "__proto__"
+              ]
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/schemaNode"
+          }
+        },
+        "required": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+          }
+        },
+        "additionalProperties": {
+          "const": false
+        }
+      },
+      "required": [
+        "type",
+        "properties",
+        "required",
+        "additionalProperties"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

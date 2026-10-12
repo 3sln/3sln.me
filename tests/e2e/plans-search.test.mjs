@@ -9,12 +9,12 @@ test.before(async()=>{browser=await launch();});
 test.after(async()=>{await browser?.close();});
 const storage={plan:'free',planName:'Free',storageBytes:500000000,usedBytes:123450000,reservedBytes:2000000,remainingBytes:374550000,overLimit:false,messagesBytes:100000000,objectsBytes:23450000,messageCount:101,objectCount:4};
 const plans=[{id:'free',name:'Free',storageBytes:500000000,annualAmount:0,currency:'usd'},{id:'plus',name:'Plus',storageBytes:5000000000,annualAmount:500,currency:'usd'},{id:'pro',name:'Pro',storageBytes:100000000000,annualAmount:3000,currency:'usd'}];
-async function fixture(t,{locale='en',billing={plan:'free',enabled:false,configured:false,plans},storageOverride={}}={}){
+async function fixture(t,{locale='en',billing={plan:'free',enabled:false,configured:false,plans},storageOverride={},semantic=false}={}){
  const context=await browser.newContext({viewport:{width:1440,height:1050},serviceWorkers:'block'});t.after(()=>context.close());
  await context.addInitScript(value=>localStorage.setItem('personal-space-preferences',JSON.stringify({locale:value})),locale);
  const page=await context.newPage();page.setDefaultTimeout(10000);const errors=[];page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error'&&message.text()!=='Failed to load resource: the server responded with a status of 503 (Service Unavailable)'&&message.text()!=='Failed to load resource: net::ERR_INTERNET_DISCONNECTED')errors.push(message.text());});t.after(()=>assert.deepEqual(errors,[],'No browser runtime errors'));
  const account={id:'browser-owner',handle:'river',status:'active'};
- await page.route('**/api/config',route=>route.fulfill({json:{environment:'Plans/search browser fault injection',localDevelopment:true,providers:{}}}));
+ await page.route('**/api/config',route=>route.fulfill({json:{environment:'Plans/search browser fault injection',localDevelopment:true,semanticSearchEnabled:semantic,providers:{}}}));
  await page.route('**/api/session',route=>route.fulfill({json:{account,csrfToken:'fixture-csrf'}}));
  await page.route('**/api/account',route=>route.fulfill({json:{account,storage:{...storage,...storageOverride},collections:[{id:'inbox',name:'Inbox'}],messages:[],contacts:[],resources:[],rules:[],grants:[]}}));
  await page.route('**/api/billing',route=>route.fulfill({json:billing}));
@@ -52,4 +52,14 @@ test('empty, API failure, and offline search states never show successful or sta
  await page.getByLabel('Search terms').fill('missing');await page.getByRole('button',{name:'Search all content',exact:true}).click();await page.getByRole('heading',{name:'No matches yet.'}).waitFor();
  await page.route('**/api/search?*',route=>route.fulfill({status:503,json:{message:'internal storage details'}}));await page.getByRole('button',{name:'Search all content',exact:true}).click();await page.getByText('Search could not be completed. Please try again.').waitFor();assert.equal(await page.getByText('internal storage details').count(),0);
  await context.setOffline(true);await page.getByText(/You’re offline/).waitFor();assert.equal(await page.locator('.search-result').count(),0);assert.equal(await page.getByText('123.45 MB').count(),0);
+});
+
+test('semantic opt-in explains remote processing, requires consent, routes chosen mode and clears results on revocation',async t=>{
+ const {page}=await fixture(t,{semantic:true});let preference={configured:true,enabled:false,available:false,cleanupPending:false};const writes=[],queries=[];
+ await page.route('**/api/search/preferences',route=>{if(route.request().method()==='PUT'){const value=route.request().postDataJSON();writes.push(value);preference={...preference,enabled:value.enabled,available:value.enabled,cleanupPending:!value.enabled};}return route.fulfill({json:preference});});
+ await page.route('**/api/search?*',route=>{queries.push(new URL(route.request().url()).searchParams.get('mode'));return route.fulfill({json:{items:[],semanticAvailable:true,indexing:{ready:true}}});});
+ await page.getByRole('button',{name:'Search your space',exact:true}).first().click();await page.getByText(/sends short excerpts and search queries/).waitFor();
+ await page.getByLabel('Enable semantic search',{exact:true}).check();await page.getByRole('button',{name:'Save search preferences'}).click();await page.getByText('Review and agree to remote semantic processing before enabling it.',{exact:true}).waitFor();assert.equal(writes.length,0);
+ await page.getByLabel('I agree to remote processing of my message excerpts and queries.',{exact:true}).check();await page.getByRole('button',{name:'Save search preferences'}).click();await page.getByLabel('Search mode',{exact:true}).selectOption('hybrid');await page.getByLabel('Search terms').fill('nearby ideas');await page.getByRole('button',{name:'Search all content',exact:true}).click();await page.getByRole('heading',{name:'No matches yet.'}).waitFor();assert.equal(queries.at(-1),'hybrid');
+ await screenshot(page,'semantic-search-consent');await page.getByLabel('Enable semantic search',{exact:true}).uncheck();await page.getByRole('button',{name:'Save search preferences'}).click();await page.getByText('Remote vector cleanup is pending.',{exact:true}).waitFor();assert.deepEqual(writes,[{enabled:true},{enabled:false}]);assert.equal(await page.locator('.search-result').count(),0);assert.ok(await page.getByLabel('Enable semantic search',{exact:true}).isDisabled());
 });

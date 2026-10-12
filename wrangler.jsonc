@@ -4,42 +4,165 @@
   "main": "apps/worker/index.mjs",
   "account_id": "160b9c59cb80a1a5a4f391dfc5be9aca",
   "compatibility_date": "2026-10-11",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": false,
   "preview_urls": false,
-  "routes": [{"pattern":"3sln.me","custom_domain":true}],
-  "assets": {"directory":".output/public","binding":"ASSETS","run_worker_first":true},
-  "durable_objects": {"bindings":[
-    {"name":"IDENTITIES","class_name":"IdentityDirectory"},
-    {"name":"ACCOUNTS","class_name":"AccountObject"},
-    {"name":"ABUSE","class_name":"AbuseGuard"}
-  ]},
-  "migrations": [{"tag":"v1","new_sqlite_classes":["IdentityDirectory","AccountObject","AbuseGuard"]}],
-  "r2_buckets": [
-    {"binding":"BLOBS","bucket_name":"3sln-me-blobs"},
-    {"binding":"ARCHIVES","bucket_name":"3sln-me-account-archives"}
+  "routes": [
+    {
+      "pattern": "3sln.me",
+      "custom_domain": true
+    }
   ],
-  "triggers": {"crons":["17 */6 * * *"]},
-  "send_email": [{
-    "name":"EMAIL",
-    "allowed_sender_addresses":["verify@sys.3sln.me","login@sys.3sln.me","notify@sys.3sln.me","accounts@sys.3sln.me","security@sys.3sln.me"]
-  }],
-  "vars": {
-    "APP_ORIGIN":"https://3sln.me",
-    "BRAND_NAME":"3sln.me",
-    "RP_ID":"3sln.me",
-    "TERMS_VERSION":"2026-10-11",
-    "RELEASE_READY":"false",
-    "BILLING_ENABLED":"false",
-    "POLAR_SERVER":"sandbox",
-    "POLAR_PRODUCT_ID_PLUS":"",
-    "POLAR_PRODUCT_ID_PRO":"",
-    "MAIL_ENABLED":"false",
-    "MAIL_SENDER_DOMAIN":"sys.3sln.me",
-    "TURNSTILE_SITE_KEY":"",
-    "ALLOWED_CONNECTOR_HOSTS":"",
-    "VAPID_PUBLIC_KEY":""
+  "assets": {
+    "directory": ".output/public",
+    "binding": "ASSETS",
+    "run_worker_first": true
   },
-  "observability":{"enabled":false},
-  "limits":{"cpu_ms":100}
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "IDENTITIES",
+        "class_name": "IdentityDirectory"
+      },
+      {
+        "name": "ACCOUNTS",
+        "class_name": "AccountObject"
+      },
+      {
+        "name": "ABUSE",
+        "class_name": "AbuseGuard"
+      },
+      {
+        "name": "SEMANTIC_BUDGET",
+        "class_name": "SemanticBudgetObject"
+      },
+      {
+        "name": "MCP_AUTH",
+        "class_name": "McpAuthorizationObject"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "IdentityDirectory",
+        "AccountObject",
+        "AbuseGuard"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "SemanticBudgetObject"
+      ]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": [
+        "McpAuthorizationObject"
+      ]
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BLOBS",
+      "bucket_name": "3sln-me-blobs"
+    },
+    {
+      "binding": "ARCHIVES",
+      "bucket_name": "3sln-me-account-archives"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "17 */6 * * *"
+    ]
+  },
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": [
+        "verify@sys.3sln.me",
+        "login@sys.3sln.me",
+        "notify@sys.3sln.me",
+        "accounts@sys.3sln.me",
+        "security@sys.3sln.me"
+      ]
+    }
+  ],
+  "vars": {
+    "APP_ORIGIN": "https://3sln.me",
+    "BRAND_NAME": "3sln.me",
+    "RP_ID": "3sln.me",
+    "TERMS_VERSION": "2026-10-11",
+    "RELEASE_READY": "false",
+    "BILLING_ENABLED": "false",
+    "POLAR_SERVER": "sandbox",
+    "POLAR_PRODUCT_ID_PLUS": "",
+    "POLAR_PRODUCT_ID_PRO": "",
+    "MAIL_ENABLED": "false",
+    "MAIL_SENDER_DOMAIN": "sys.3sln.me",
+    "TURNSTILE_SITE_KEY": "",
+    "ALLOWED_CONNECTOR_HOSTS": "",
+    "VAPID_PUBLIC_KEY": "",
+    "SEMANTIC_SEARCH_ENABLED": "true",
+    "SEMANTIC_EMBEDDING_MODEL": "@cf/baai/bge-small-en-v1.5",
+    "SEMANTIC_GLOBAL_MONTHLY_MICRO_USD": "5000000",
+    "SEMANTIC_GLOBAL_DAILY_MICRO_USD": "500000",
+    "SEMANTIC_GLOBAL_MAX_OWNERS": "1000",
+    "SEMANTIC_GLOBAL_MAX_UPSERTS": "2000000",
+    "SIGNUP_IP_WINDOW_MS": "10800000",
+    "SIGNUP_IP_DAILY_LIMIT": "2",
+    "SIGNUP_SUBNET_DAILY_LIMIT": "15",
+    "SIGNUP_REGION_HOURLY_LIMIT": "5",
+    "SIGNUP_REGION_DAILY_LIMIT": "25",
+    "SIGNUP_GLOBAL_HOURLY_LIMIT": "10",
+    "SIGNUP_GLOBAL_DAILY_LIMIT": "200",
+    "SIGNUP_MAX_ADMISSIONS": "1000",
+    "IDENTITY_LAYOUT": "v1-64-fresh",
+    "BEAM_ENABLED": "true",
+    "BEAM_MONTHLY_DELIVERY_BYTES": "1000000000",
+    "BEAM_MONTHLY_OFFERS": "20",
+    "BEAM_TURN_ENABLED": "false",
+    "CLOUDFLARE_TURN_KEY_ID": "",
+    "BEAM_STUN_ENABLED": "true",
+    "WORK_LIMITS_ENABLED": "true",
+    "SERVICE_MONTHLY_WORK_LIMIT": "250000",
+    "FREE_MONTHLY_WORK_LIMIT": "1000",
+    "PLUS_MONTHLY_WORK_LIMIT": "5000",
+    "PRO_MONTHLY_WORK_LIMIT": "10000",
+    "MCP_ENABLED": "true",
+    "MCP_LAYOUT": "mcp-auth-v1-64",
+    "MCP_CLIENTS": "[]"
+  },
+  "observability": {
+    "enabled": false
+  },
+  "limits": {
+    "cpu_ms": 100
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "vectorize": [
+    {
+      "binding": "SEARCH_VECTORS_0",
+      "index_name": "bindle-search-bge-small-v1"
+    },
+    {
+      "binding": "SEARCH_VECTORS_1",
+      "index_name": "bindle-search-bge-small-v1-s1"
+    },
+    {
+      "binding": "SEARCH_VECTORS_2",
+      "index_name": "bindle-search-bge-small-v1-s2"
+    },
+    {
+      "binding": "SEARCH_VECTORS_3",
+      "index_name": "bindle-search-bge-small-v1-s3"
+    }
+  ]
 }

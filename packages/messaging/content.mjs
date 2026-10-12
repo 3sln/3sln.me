@@ -39,13 +39,30 @@ export function inspectWebArchive(bytes) {
   return { entrypoint, entries, size: total };
 }
 
+export const CONVERSATION_INVITE_MIME='application/vnd.3sln.conversation-invite+json';
+export const CONVERSATION_EVENT_MIME='application/vnd.3sln.conversation-event+json';
+export function conversationText(mimeType,bytes){
+ if(![CONVERSATION_INVITE_MIME,CONVERSATION_EVENT_MIME].includes(mimeType))return null;
+ if(bytes.byteLength>100000)fail('invalid_conversation_content');
+ let value;try{value=JSON.parse(strictText(bytes));}catch{fail('invalid_conversation_content');}
+ const event=mimeType===CONVERSATION_EVENT_MIME,keys=event?['version','kind','conversationId','source','eventId','threadId','replyTo','title','text','actor','tags','createdAt']:['version','kind','conversationId','source','invitationId','title','permissions','expiresAt'];
+ const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(v);
+ if(!value||Array.isArray(value)||Object.keys(value).some(k=>!keys.includes(k))||value.version!==1||value.kind!==(event?'event':'invitation')||!uuid(value.conversationId)||typeof value.title!=='string'||value.title.length>100||!value.source||Object.keys(value.source).some(k=>!['origin','owner'].includes(k))||!uuid(value.source.owner))fail('invalid_conversation_content');
+ let origin;try{origin=new URL(value.source.origin);}catch{fail('invalid_conversation_content');}if(!['https:','http:'].includes(origin.protocol)||origin.origin!==value.source.origin||origin.username||origin.password)fail('invalid_conversation_content');
+ if(event){if(!uuid(value.eventId)||!uuid(value.threadId)||value.replyTo!==null&&!uuid(value.replyTo)||typeof value.text!=='string'||value.text.length>16000||typeof value.actor!=='string'||value.actor.length>2048||!Array.isArray(value.tags)||value.tags.length>32||value.tags.some(t=>typeof t!=='string'||t.length>100)||!Number.isSafeInteger(value.createdAt))fail('invalid_conversation_content');return value.title+'\n\n'+value.text;}
+ if(!uuid(value.invitationId)||!Number.isSafeInteger(value.expiresAt)||!value.permissions||Object.keys(value.permissions).some(k=>!['send','invite','admin'].includes(k))||['send','invite','admin'].some(k=>typeof value.permissions[k]!=='boolean'))fail('invalid_conversation_content');
+ return value.title+'\n\nConversation invitation. Open Conversations to review membership and choose whether to join.';
+}
+
 export function validateContent(mimeType, bytes) {
+  conversationText(mimeType,bytes);
   if (mimeType === 'text/plain' || mimeType === 'text/html') strictText(bytes);
   if (mimeType === WEB_ARCHIVE_MIME) inspectWebArchive(bytes);
 }
 
 export function renderMessage({ mimeType, bytes }) {
   if (!(bytes instanceof Uint8Array) || bytes.byteLength > 10485760) fail('invalid_content');
+  const conversation=conversationText(mimeType,bytes);if(conversation!==null)return renderMessage({mimeType:'text/plain',bytes:new TextEncoder().encode(conversation)});
   if (mimeType === WEB_ARCHIVE_MIME) return renderMessage(inspectWebArchive(bytes).entrypoint);
   if (!['text/plain', 'text/html'].includes(mimeType)) return { kind: 'download', mimeType: 'application/octet-stream', contentDisposition: 'attachment', nosniff: true };
   const source = strictText(bytes);

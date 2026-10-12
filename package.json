@@ -13,7 +13,7 @@
     "check:worker": "npm run build:assets && wrangler deploy --dry-run --outdir .output/worker",
     "dev:node": "npm run build:assets && node apps/node/server.mjs",
     "test:e2e": "node scripts/run-browser-checks.mjs",
-    "test:ui-state": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/release-state.mjs tests/browser/plans-search.mjs"
+    "test:ui-state": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/release-state.mjs tests/browser/plans-search.mjs tests/browser/beaming.mjs tests/browser/beaming-security.mjs tests/browser/mcp-conversations.mjs tests/browser/owner-flow-audit.mjs"
   },
   "engines": {
     "node": ">=24"
@@ -27,12 +27,14 @@
     "wrangler": "4.149.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
     "@polar-sh/sdk": "1.0.2",
     "@simplewebauthn/server": "14.0.3",
     "aws4fetch": "1.0.20",
     "hash-wasm": "4.12.0",
     "qrcode": "1.5.4",
     "standardwebhooks": "1.1.1",
-    "web-push": "3.6.7"
+    "web-push": "3.6.7",
+    "zod": "4.6.6"
   }
 }

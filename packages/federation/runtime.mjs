@@ -1,7 +1,7 @@
 import {FederationService} from './service.mjs';
 import {fail} from './schema.mjs';
 import {canonical,digest} from '../messaging/store.mjs';
-const readMethods=new Set(['get','list','read','describe']);
+const readMethods=new Set(['get','list','read','describe','capabilities','presign']);
 const faultResult=(code,message)=>({__federationError:{code,message}});
 /** Portable composition boundary. Both hosted and self-hosted runtimes inject
  * metadata, live owner authentication and actual contract adapters here. */
@@ -29,6 +29,9 @@ export class FederationController {
     // A remote adapter must itself reserve/deduplicate durably before upstream
     // side effects. This transaction cannot make external requests atomic.
     if(writing&&adapter?.transactional!==true&&adapter?.durableJournal!==true)fail('temporarily_unavailable','This adapter has no verified durable mutation journal.');
+    // Reads have no effects to replay. Re-authorize through the service and
+    // fetch fresh data without creating fleet-wide per-transaction records.
+    if(!writing){try{return await (typeof adapter==='function'?adapter(ctx):adapter.execute(ctx));}catch(error){if(['invalid_args','unsupported_contract','unsupported_method','not_found','forbidden','conflict','quota_exceeded','rate_limited','tx_conflict'].includes(error.code))return faultResult(error.code,'The requested operation could not be completed.');throw error;}}
     const journalKey=`federation/journal/${encodeURIComponent(ctx.subject)}/${encodeURIComponent(ctx.clientId)}/${ctx.tx}`;
     const fingerprint=await digest(crypto,canonical({resource:ctx.resource,contract:ctx.contract,method:ctx.method,args:ctx.args}));
     const prior=await ctx.transaction.get(journalKey);

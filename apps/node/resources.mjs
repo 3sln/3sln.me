@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { resolve, join, extname } from 'node:path';
 import {nodeSqlPort} from '../../packages/search/index.mjs';
 import { IdentityRepository, FixedWindowGuard, AccountController } from '../../packages/runtime/accounts.mjs';
+import {McpShardController,mcpAuthorities} from '../../packages/mcp/runtime.mjs';
 
 export class SerialGate {
  constructor(){this.tail=Promise.resolve();}
@@ -26,7 +27,7 @@ export class SqliteMetadata {
  async transaction(operation){return this.gate.run(async()=>{this.db.exec('BEGIN IMMEDIATE');try{const value=await operation(this.raw());this.db.exec('COMMIT');return value;}catch(error){this.db.exec('ROLLBACK');throw error;}});}
  async setAlarm(time){await this.put('@alarm',time);this.arm(time);}
  getAlarm(){return this.get('@alarm');}
- arm(time){clearTimeout(this.timer);if(!this.onAlarm)return;this.timer=setTimeout(async()=>{try{await this.onAlarm();}catch{this.arm(Date.now()+60000);}},Math.min(2147483647,Math.max(1,time-Date.now())));this.timer.unref();}
+ arm(time){clearTimeout(this.timer);if(!this.onAlarm)return;this.timer=setTimeout(async()=>{try{const claimed=await this.transaction(async tx=>{if(await tx.get('@alarm')!==time)return false;await tx.delete('@alarm');return true;});if(!claimed)return;await this.onAlarm();}catch{const next=await this.getAlarm();if(!next)await this.setAlarm(Date.now()+60000);else this.arm(next);}},Math.min(2147483647,Math.max(1,time-Date.now())));this.timer.unref();}
  close(){clearTimeout(this.timer);this.db.close();}
 }
 export class FileBucket {
@@ -37,19 +38,22 @@ export class FileBucket {
  async delete(keys){let deleted=false;for(const key of Array.isArray(keys)?keys:[keys])try{await unlink(this.path(key));deleted=true;}catch(error){if(error.code!=='ENOENT')throw error;}if(deleted){const directory=await open(this.directory,'r');try{await directory.sync();}finally{await directory.close();}}}
 }
 export async function nodeResources({directory,config}){
- await mkdir(directory,{recursive:true,mode:0o700});await mkdir(join(directory,'accounts'),{recursive:true,mode:0o700});
+ await mkdir(directory,{recursive:true,mode:0o700});await mkdir(join(directory,'accounts'),{recursive:true,mode:0o700});await mkdir(join(directory,'abuse'),{recursive:true,mode:0o700});
  const identities=new SqliteMetadata(join(directory,'identities.sqlite'));const repository=new IdentityRepository({metadata:identities});
  const deviceDb=new SqliteMetadata(join(directory,'devices.sqlite'));const deviceRepo=new IdentityRepository({metadata:deviceDb});
  const deviceRequests={create:r=>deviceRepo.createDevice(r),get:id=>deviceRepo.getDevice(id),findByUserCode:code=>deviceRepo.findDeviceByCode(code),compareAndSwap:(id,revision,r)=>deviceRepo.compareAndSwapDevice(id,revision,r)};
  const blobs=new FileBucket(join(directory,'blobs')),archives=new FileBucket(join(directory,'archives'));const accountMap=new Map(),guardMap=new Map();
+ const abuse={consume:async(name,limits)=>{const file=createHash('sha256').update(name).digest('hex');if(!guardMap.has(file)){const metadata=new SqliteMetadata(join(directory,'abuse',file+'.sqlite'));const guard=new FixedWindowGuard({metadata});metadata.onAlarm=()=>guard.alarm();guardMap.set(file,{metadata,guard});}return guardMap.get(file).guard.consume(limits);}};
  const accounts={get:id=>{
    if(!/^[a-f0-9-]{36}$/.test(id))throw new Error('Invalid account identifier');
-   if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=new AccountController({metadata,gate:new SerialGate(),blobs,archives,config,sql:metadata.sql});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
+   if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner)},sql:metadata.sql});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
  }};
- const abuse={consume:async(name,limits)=>{const file=createHash('sha256').update(name).digest('hex');if(!guardMap.has(file)){await mkdir(join(directory,'abuse'),{recursive:true,mode:0o700});const metadata=new SqliteMetadata(join(directory,'abuse',file+'.sqlite'));const guard=new FixedWindowGuard({metadata});metadata.onAlarm=()=>guard.alarm();guardMap.set(file,{metadata,guard});}return guardMap.get(file).guard.consume(limits);}};
+
  const assets={fetch:async request=>{
    let path;try{const pathname=decodeURIComponent(new URL(request.url).pathname);const base=resolve('.output/public');path=resolve(base,pathname==='/'?'index.html':'.'+pathname);if(!path.startsWith(base+'/'))return new Response('Not found',{status:404});}catch{return new Response('Not found',{status:404});}
    try{const data=await readFile(path);const type={'.html':'text/html; charset=utf-8','.mjs':'text/javascript','.js':'text/javascript','.css':'text/css','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.md':'text/markdown; charset=utf-8','.txt':'text/plain; charset=utf-8'}[extname(path)]||'application/octet-stream';return new Response(data,{headers:{'Content-Type':type,'Cache-Control':'no-cache'}});}catch(error){if(['ENOENT','EISDIR'].includes(error.code))return new Response('Not found',{status:404});throw error;}
  }};
- return {repository,deviceRequests,accounts,abuse,assets,close(){identities.close();deviceDb.close();for(const {metadata}of accountMap.values())metadata.close();for(const {metadata}of guardMap.values())metadata.close();}};
+ await mkdir(join(directory,'mcp'),{recursive:true,mode:0o700});const mcpMap=new Map();
+ const mcp=mcpAuthorities(shard=>{if(!mcpMap.has(shard)){const metadata=new SqliteMetadata(join(directory,'mcp',`mcp-auth-v1-64-${shard}.sqlite`));const controller=new McpShardController({metadata,config,shard,accounts,repository});metadata.onAlarm=()=>controller.cleanup();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});mcpMap.set(shard,{metadata,controller});}return mcpMap.get(shard).controller;});
+ return {repository,deviceRequests,accounts,abuse,assets,mcp,close(){identities.close();deviceDb.close();for(const {metadata}of accountMap.values())metadata.close();for(const {metadata}of guardMap.values())metadata.close();for(const {metadata}of mcpMap.values())metadata.close();}};
 }

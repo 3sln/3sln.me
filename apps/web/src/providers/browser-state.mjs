@@ -1,6 +1,6 @@
 import { Provider } from '../shared/stack.mjs';
 function freeze(value){if(value&&typeof value==='object'&&!Object.isFrozen(value)){Object.freeze(value);for(const child of Object.values(value))freeze(child);}return value;}
-const initial = () => ({loading:true,locale:'en',keybindingOverrides:[],keyChord:[],view:'inbox',auth:'signup',authMethod:'passkey',session:null,data:null,notice:'',error:'',busy:false,modal:null,selected:null,filter:'all',search:'',searchDraft:{},spaceSearch:{phase:'idle',items:[]},billing:null,billingLoading:false,billingError:'',config:{},pending:false,recovery:null,downloaded:false,offline:false,route:{kind:'home'},deviceLogin:null});
+const initial = () => ({loading:true,conversations:{},mcpRequest:null,mcpGrants:null,beaming:{},beamGeneration:0,locale:'en',keybindingOverrides:[],keyChord:[],view:'inbox',auth:'signup',authMethod:'passkey',session:null,data:null,notice:'',error:'',busy:false,modal:null,selected:null,filter:'all',search:'',searchDraft:{},spaceSearch:{phase:'idle',items:[]},semanticPreferences:null,billing:null,billingLoading:false,billingError:'',config:{},pending:false,recovery:null,downloaded:false,offline:false,route:{kind:'home'},deviceLogin:null});
 // The provider owns the only mutable browser model. Read leases cannot change it;
 // domain Action leases can commit transitions. A Query is its sole UI projection.
 export default class BrowserStateProvider extends Provider {

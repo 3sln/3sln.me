@@ -1,4 +1,8 @@
+import * as conversationActions from './bl/conversations.mjs';
+import * as mcpActions from './bl/mcp.mjs';
 import {Engine,dodo,watch,queryCell} from './shared/stack.mjs';
+import BeamingProvider from './providers/beaming.mjs';
+import * as beamActions from './bl/beaming.mjs';
 import APIProvider from './providers/api.mjs';
 import BrowserProvider,{isTextInputTarget} from './providers/browser.mjs';
 import RecoveryFileProvider from './providers/recovery-file.mjs';
@@ -14,14 +18,18 @@ import createApp from './ui/release-app.mjs';
 // Composition is the only layer naming concrete browser resources and domain
 // Actions. Components receive the Query projection and bubble native intents.
 const root=document.getElementById('app');
-const engine=new Engine({providers:{api:APIProvider,browser:BrowserProvider,state:BrowserStateProvider,portalContributions:portalContributionsProvider(builtInModules),portalAccess:PortalAccessProvider,recoveryFile:RecoveryFileProvider}});
+const engine=new Engine({providers:{beaming:BeamingProvider,api:APIProvider,browser:BrowserProvider,state:BrowserStateProvider,portalContributions:portalContributionsProvider(builtInModules),portalAccess:PortalAccessProvider,recoveryFile:RecoveryFileProvider}});
 const registry=await engine.container.use(['portalContributions'],({portalContributions})=>portalContributions);
 // Registry data is immutable; this read composes UI factories once per locale.
 const surfaces=Object.fromEntries(['en','es'].map(locale=>{const localization=createLocalization({locale,catalogue:catalogueForContributions(registry.list('translations'),locale)}),localize=tree=>localizeTree(tree,localization),views=composePortalViews(registry,{t:localization.t,number:localization.number,date:localization.date,localize});return [locale,createApp({views,localize})];}));
 const cancelRecovery=await engine.container.use(['recoveryFile'],({recoveryFile})=>recoveryFile.cancel);
 const captureSubmission=await engine.container.use(['browser'],({browser})=>browser.captureSubmission);
 const readModel=await engine.container.use(['state'],({state})=>state.snapshot);
+const prepareBeamDestination=await engine.container.use(['beaming'],({beaming})=>beaming.prepareDestination);
 const constructors={
+ 'load-mcp-request':mcpActions.LoadMCPRequest,'decide-mcp':mcpActions.DecideMCP,'load-mcp-grants':mcpActions.LoadMCPGrants,'revoke-mcp-grant':mcpActions.RevokeMCPGrant,
+ 'load-conversations':conversationActions.LoadConversations,'open-conversation':conversationActions.OpenConversation,'create-conversation':conversationActions.CreateConversation,'conversation-action':conversationActions.ConversationAction,'conversation-reply':conversationActions.ConversationReply,'copy-conversation-access':conversationActions.CopyConversationAccess,
+ 'select-beam-file':beamActions.SelectBeamFiles,'decline-beam-file':beamActions.SelectBeamFiles,'remove-saved-contact':beamActions.RemoveSavedContact,'copy-saved-contact':beamActions.CopySavedContact,'load-beaming':beamActions.LoadBeaming,'stage-beam-files':beamActions.StageBeamFiles,'send-beam':beamActions.SendBeam,'accept-beam':beamActions.AcceptBeam,'reject-beam':beamActions.RejectBeam,'cancel-beam':beamActions.RejectBeam,'rename-device':beamActions.RenameDevice,'redeem-contact':beamActions.RedeemContact,'update-beam-grant':beamActions.UpdateBeamGrant,'save-profile':beamActions.SaveProfile,'create-beam-invite':beamActions.CreateBeamInvite,'redeem-beam-invite':beamActions.RedeemBeamInvite,'write-beam-nfc':beamActions.WriteBeamNFC,
   signup:actions.SignUp,signin:actions.SignIn,signout:actions.SignOut,
   'start-recovery':actions.StartRecovery,'inspect-recovery':actions.InspectRecovery,
   'recover-account':actions.RecoverAccount,'encrypt-recovery':actions.EncryptRecovery,
@@ -51,10 +59,10 @@ const constructors={
   'save-shortcut':actions.SetShortcut,'reset-shortcut':actions.ResetShortcuts,
   'reset-shortcuts':actions.ResetShortcuts,
   'load-billing':actions.LoadBilling,'billing-checkout':actions.BillingCheckout,
-  'billing-portal':actions.BillingPortal,'search-space':actions.SearchSpace,
+  'save-semantic-preferences':actions.SaveSemanticPreferences,'billing-portal':actions.BillingPortal,'search-space':actions.SearchSpace,
   'search-next-page':actions.SearchSpace,'read-search-message':actions.ReadSearchMessage
 };
-function dispatchIntent(input){let detail=input;if(input.form){detail={...input,operationId:captureSubmission(input.form)};delete detail.form;}if(detail.kind==='run-command'){dispatchCommand(detail.id);return;}const Action=constructors[detail.kind]??actions.NavigateSpace;engine.dispatch(new Action(detail));}
+function dispatchIntent(input){let detail=input;if(input.kind==='accept-beam'){if(!input.files?.length){engine.dispatch(new actions.ReportCommandError({message:'Select at least one file.'}));return;}detail={...input,destination:prepareBeamDestination(input.files,input.mode)};detail.destination.catch(()=>{});}if(input.form){detail={...detail,operationId:captureSubmission(input.form)};delete detail.form;}if(detail.kind==='run-command'){dispatchCommand(detail.id);return;}const Action=constructors[detail.kind]??actions.NavigateSpace;engine.dispatch(new Action(detail));if(detail.kind==='navigate'&&detail.view==='beaming')engine.dispatch(new beamActions.LoadBeaming());if(detail.kind==='navigate'&&detail.view==='conversations')engine.dispatch(new conversationActions.LoadConversations());if(detail.kind==='navigate'&&detail.view==='connected-apps')engine.dispatch(new mcpActions.LoadMCPGrants());}
 function dispatchCommand(id){try{engine.dispatch(new RunPortalCommand(registry,id)).next('complete').catch(error=>engine.dispatch(new actions.ReportCommandError({message:error.message})));}catch(error){engine.dispatch(new actions.ReportCommandError({message:error.message}));}}
 root.addEventListener('3sln-intent',event=>{event.stopPropagation();dispatchIntent(event.detail);});
 engine.feed.addEventListener('portal-command-requested',event=>dispatchCommand(event.detail.id));
@@ -66,7 +74,12 @@ function keydown(event){if(event.repeat)return;const model=readModel(),stroke=no
 window.addEventListener('keydown',keydown);
 engine.feed.addEventListener('device-poll-due',()=>engine.dispatch(new actions.PollDeviceLogin()));
 engine.feed.addEventListener('network-changed',event=>engine.dispatch(new actions.NetworkChanged({online:event.detail})));
+engine.feed.addEventListener('beam-invite-opened',()=>engine.dispatch(new beamActions.LoadBeaming({invite:true})));
+engine.feed.addEventListener('beam-poll-due',()=>engine.dispatch(new beamActions.PollBeaming()));
+engine.feed.addEventListener('beam-progress',event=>engine.dispatch(new beamActions.BeamProgress(event.detail)));
+engine.feed.addEventListener('mcp-request-opened',()=>engine.dispatch(new mcpActions.LoadMCPRequest()));
+const beamCell=queryCell(engine.query(new beamActions.BeamingState()));
 const stateCell=queryCell(engine.query(new actions.BrowserState())),contextCell=queryCell(engine.query(new actions.PortalContext()));
-dodo.reconcile(root,[watch(stateCell,state=>watch(contextCell,context=>{return surfaces[state.locale??'en']({...state,context});} ))]);
+dodo.reconcile(root,[watch(stateCell,state=>watch(contextCell,context=>{return watch(beamCell,()=>surfaces[state.locale??'en']({...state,context}));} ))]);
 engine.dispatch(new actions.InitializeSpace());
 window.addEventListener('pagehide',()=>{cancelRecovery();window.removeEventListener('keydown',keydown);dodo.reconcile(root,[]);engine.dispose();},{once:true});

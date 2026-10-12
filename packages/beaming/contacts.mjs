@@ -1,0 +1,47 @@
+import {BeamError,uuid} from './index.mjs';
+import {IdentityCrypto,secureEqual} from '../identity/crypto.mjs';
+import {key} from '../messaging/store.mjs';
+const fail=(c,m,s=400)=>{throw new BeamError(c,m,s);};
+const ic=new IdentityCrypto();
+export class BeamContacts {
+ constructor({metadata,endpoints,clock=()=>Date.now()}){Object.assign(this,{metadata,endpoints,clock});}
+ async profile(owner,input){
+ if(input!==undefined){if(!input||Object.keys(input).some(k=>!['displayName','bio','avatar','discloseToContacts'].includes(k))||typeof input.displayName!=='string'||input.displayName.length>100||typeof input.bio!=='string'||input.bio.length>500||typeof input.avatar!=='string'||input.avatar.length>2048||typeof input.discloseToContacts!=='boolean'||/[\u0000-\u001f\u007f]/.test(input.displayName+input.bio))fail('profile_invalid','The profile fields are invalid.');if(input.avatar){let url;try{url=new URL(input.avatar);}catch{fail('profile_invalid','Use an HTTPS avatar URL.');}if(url.protocol!=='https:'||url.username||url.password)fail('profile_invalid','Use an HTTPS avatar URL.');}await this.metadata.put('beam/profile',{...input,owner});}
+ const {owner:ignored,...profile}=await this.metadata.get('beam/profile')||{displayName:'',bio:'',avatar:'',discloseToContacts:false};return profile;
+ }
+ async enable(owner,id,input){
+ if(!input||typeof input!=='object'||Array.isArray(input)||!Object.keys(input).length||Object.keys(input).some(k=>!['beamEnabled','profileFields','discloseProfile'].includes(k))||input.beamEnabled!==undefined&&typeof input.beamEnabled!=='boolean'||input.discloseProfile!==undefined&&typeof input.discloseProfile!=='boolean')fail('beam_invalid_permission','Choose the contact permissions.');
+ if(input.profileFields!==undefined&&(!Array.isArray(input.profileFields)||input.profileFields.length>3||new Set(input.profileFields).size!==input.profileFields.length||input.profileFields.some(k=>!['displayName','bio','avatar'].includes(k))))fail('profile_fields_invalid','Choose display name, bio or avatar fields to share.');
+ const grant=await this.metadata.get(key('contact-grant',id));if(!grant||grant.owner!==owner||!grant.active||grant.quarantined||grant.claims.exp*1000<=this.clock())fail('contact_not_found','The contact invitation is inactive.',404);
+ const prior=await this.metadata.get('beam/grant/'+id)||{},profileFields=input.profileFields!==undefined?[...input.profileFields]:input.discloseProfile!==undefined?input.discloseProfile?['displayName','bio','avatar']:[]:prior.profileFields||[];
+ const permission={beamEnabled:input.beamEnabled??prior.beamEnabled??false,profileFields};await this.metadata.put('beam/grant/'+id,permission);return {id,...permission,discloseProfile:profileFields.length>0};
+ }
+ async redeem(owner,url,peer){const {grant}=await this.endpoints.inspect(url);if(grant.owner!==owner||!uuid(peer)||peer===owner)fail('contact_invalid_redemption','Redeem another account’s signed contact link.');if(grant.quarantined)fail('contact_quarantined','This contact invitation is quarantined.',403);return this.metadata.transaction(async tx=>{const prior=await tx.get('beam/redeemed/'+grant.id);if(prior&&prior.peer!==peer)fail('contact_already_redeemed','This invitation has already been bound to another account.',409);const binding={peer,grantId:grant.id,owner,expiresAt:grant.claims.exp*1000};await tx.put('beam/redeemed/'+grant.id,binding);return binding;});}
+
+ async remember(owner,binding){if(!uuid(binding.owner)||!uuid(binding.peer)||binding.peer!==owner||!uuid(binding.grantId))fail('contact_invalid_redemption','Invalid contact binding.');const rows=await this.metadata.list({prefix:'beam/directory/',limit:1001});if(rows.size>=1000&&!rows.has('beam/directory/'+binding.owner))fail('contact_directory_full','The contact directory is full.',429);await this.metadata.put('beam/directory/'+binding.owner,binding);return {peer:binding.owner,grantId:binding.grantId};}
+ async forget(owner,peer){if(!uuid(peer))fail('contact_invalid','Choose a contact.');await this.metadata.delete('beam/directory/'+peer);return {removed:true,peer};}
+ async directory(){return [...(await this.metadata.list({prefix:'beam/directory/',limit:1000})).values()].filter(r=>r.expiresAt>this.clock()).map(r=>({peer:r.owner,grantId:r.grantId}));}
+ async permission(owner,peer,input={}){
+ if(owner===peer)return {kind:'self'};
+ if(input.inviteId){return this.metadata.transaction(async tx=>{const r=await tx.get('beam/nearby/'+input.inviteId);if(!r||r.peer!==peer||r.used||r.expiresAt<=this.clock())fail('beam_invite_expired','The nearby invitation has expired or was used.',410);if(input.consume){r.used=true;await tx.put('beam/nearby/'+input.inviteId,r);}return {kind:'nearby',id:input.inviteId,deviceId:r.deviceId,senderDevice:r.senderDevice};});}
+ const grants=await this.metadata.list({prefix:'beam/redeemed/',limit:1000});for(const r of grants.values())if(r.owner===owner&&r.peer===peer&&(!input.grantId||r.grantId===input.grantId)){const grant=await this.metadata.get(key('contact-grant',r.grantId)),permission=await this.metadata.get('beam/grant/'+r.grantId);if(grant?.active&&!grant.quarantined&&grant.claims.exp*1000>this.clock()&&permission?.beamEnabled)return {kind:'contact',id:r.grantId};}
+ fail('beam_contact_required','Redeem a beam-enabled contact link or pair nearby first.',403);
+ }
+ async relationship(owner,peer,{grantId}={}){
+ if(!uuid(grantId))fail('beam_contact_required','Use an imported signed contact link.',403);
+ const binding=await this.metadata.get('beam/redeemed/'+grantId),grant=await this.metadata.get(key('contact-grant',grantId));if(!binding||binding.owner!==owner||binding.peer!==peer||!grant||grant.owner!==owner||!grant.active||grant.quarantined||grant.claims.exp*1000<=this.clock())fail('beam_contact_required','This contact link is no longer active.',403);
+ return {grant,permission:await this.metadata.get('beam/grant/'+grantId)||{beamEnabled:false,profileFields:[]}};
+ }
+ async selectedProfile(owner,permission){const profile=await this.profile(owner);if(!profile.discloseToContacts||!Array.isArray(permission?.profileFields)||!permission.profileFields.length)return null;return Object.fromEntries(permission.profileFields.filter(field=>['displayName','bio','avatar'].includes(field)).map(field=>[field,profile[field]]));}
+ async contactInfo(owner,peer,input){const {permission}=await this.relationship(owner,peer,input);return {beamEnabled:permission.beamEnabled===true,profile:await this.selectedProfile(owner,permission)};}
+ async disclosed(owner,peer,{grantId}={}){if(!uuid(grantId))return null;return (await this.contactInfo(owner,peer,{grantId})).profile;}
+ async publicProfile(owner,url){const {grant,endpoint}=await this.endpoints.inspect(url);if(grant.owner!==owner||grant.quarantined)fail('contact_quarantined','This contact invitation is unavailable.',403);const permission=await this.metadata.get('beam/grant/'+grant.id)||{beamEnabled:false,profileFields:[]},identity=new URL(endpoint);identity.pathname=identity.pathname.replace(/\/contact\/[^/]+$/,'');identity.search='';identity.hash='';return {identityURI:identity.href,beamEnabled:permission.beamEnabled===true,profile:await this.selectedProfile(owner,permission)};}
+
+ async createInvite(owner,input,device){
+ if(!['send','receive'].includes(input?.direction))fail('beam_invite_invalid','Choose send or receive.');const rows=await this.metadata.list({prefix:'beam/invite/',limit:129});let active=0;for(const [path,r]of rows){if(r.expiresAt<=this.clock())await this.metadata.delete(path);else active++;}if(active>=32)fail('beam_invite_limit','Too many nearby invitations.',429);
+ const id=crypto.randomUUID(),secret=ic.random(),token=`${owner}.${id}.${secret}`,record={owner,id,device,direction:input.direction,hash:await ic.hash('beam-invite',token),expiresAt:this.clock()+120000,peer:null};await this.metadata.put('beam/invite/'+id,record);return {id,token,expiresAt:record.expiresAt,direction:record.direction};
+ }
+ async invite(owner,id){const r=await this.metadata.get('beam/invite/'+id);if(!r||r.owner!==owner)fail('beam_invite_not_found','Invitation not found.',404);if(r.expiresAt<=this.clock())fail('beam_invite_expired','The nearby invitation has expired.',410);return {id:r.id,peer:r.peer,direction:r.direction,expiresAt:r.expiresAt};}
+ async joinInvite(owner,token,peer){const [,id]=typeof token==='string'?token.split('.'):[];if(!uuid(peer)||owner===peer)fail('beam_invite_invalid','Use another account to pair nearby.');const hash=await ic.hash('beam-invite',token);return this.metadata.transaction(async tx=>{const r=await tx.get('beam/invite/'+id);if(!r||r.owner!==owner||r.expiresAt<=this.clock()||!secureEqual(r.hash,hash))fail('beam_invite_expired','This nearby invitation is invalid or expired.',410);if(r.peer)fail('beam_invite_used','This nearby invitation has already been used.',409);r.peer=peer;await tx.put('beam/invite/'+id,r);return {owner,id:r.id,device:r.device,peer,direction:r.direction,expiresAt:r.expiresAt};});}
+ async pair(owner,id,peer,expiresAt,deviceId,senderDevice){if(!uuid(id)||!uuid(peer)||typeof senderDevice!=='string'||!senderDevice||senderDevice.length>128||typeof deviceId!=='string'||!deviceId||deviceId.length>128||expiresAt<=this.clock()||expiresAt>this.clock()+120000)fail('beam_invite_invalid','Invalid nearby pairing.');await this.metadata.put('beam/nearby/'+id,{owner,peer,expiresAt,deviceId,senderDevice,used:false});return {paired:true};}
+}

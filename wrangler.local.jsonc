@@ -1,20 +1,114 @@
 {
-  "$schema":"node_modules/wrangler/config-schema.json",
-  "name":"3sln-me-local",
-  "main":"apps/worker/index.mjs",
-  "compatibility_date":"2026-10-11",
-  "compatibility_flags":["nodejs_compat"],
-  "assets":{"directory":".output/public","binding":"ASSETS","run_worker_first":true},
-  "durable_objects":{"bindings":[
-    {"name":"IDENTITIES","class_name":"IdentityDirectory"},
-    {"name":"ACCOUNTS","class_name":"AccountObject"},
-    {"name":"ABUSE","class_name":"AbuseGuard"}
-  ]},
-  "migrations":[{"tag":"v1","new_sqlite_classes":["IdentityDirectory","AccountObject","AbuseGuard"]}],
-  "r2_buckets":[{"binding":"BLOBS","bucket_name":"3sln-me-blobs-local"},{"binding":"ARCHIVES","bucket_name":"3sln-me-account-archives-local"}],
-  "vars":{"APP_ORIGIN":"http://localhost:8787","RP_ID":"localhost","TERMS_VERSION":"2026-10-11","LOCAL_DEVELOPMENT":"true","TURNSTILE_SITE_KEY":"1x00000000000000000000AA","TURNSTILE_SECRET_KEY":"1x0000000000000000000000000000000AA","RELEASE_READY":"false",
-    "BILLING_ENABLED":"false",
-    "POLAR_SERVER":"sandbox",
-    "POLAR_PRODUCT_ID_PLUS":"",
-    "POLAR_PRODUCT_ID_PRO":"","VAPID_PUBLIC_KEY":"","ALLOWED_CONNECTOR_HOSTS":""}
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "3sln-me-local",
+  "main": "apps/worker/index.mjs",
+  "compatibility_date": "2026-10-11",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": ".output/public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "IDENTITIES",
+        "class_name": "IdentityDirectory"
+      },
+      {
+        "name": "ACCOUNTS",
+        "class_name": "AccountObject"
+      },
+      {
+        "name": "ABUSE",
+        "class_name": "AbuseGuard"
+      },
+      {
+        "name": "SEMANTIC_BUDGET",
+        "class_name": "SemanticBudgetObject"
+      },
+      {
+        "name": "MCP_AUTH",
+        "class_name": "McpAuthorizationObject"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "IdentityDirectory",
+        "AccountObject",
+        "AbuseGuard"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "SemanticBudgetObject"
+      ]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": [
+        "McpAuthorizationObject"
+      ]
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BLOBS",
+      "bucket_name": "3sln-me-blobs-local"
+    },
+    {
+      "binding": "ARCHIVES",
+      "bucket_name": "3sln-me-account-archives-local"
+    }
+  ],
+  "vars": {
+    "APP_ORIGIN": "http://localhost:8787",
+    "RP_ID": "localhost",
+    "TERMS_VERSION": "2026-10-11",
+    "LOCAL_DEVELOPMENT": "true",
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
+    "TURNSTILE_SECRET_KEY": "1x0000000000000000000000000000000AA",
+    "RELEASE_READY": "false",
+    "BILLING_ENABLED": "false",
+    "POLAR_SERVER": "sandbox",
+    "POLAR_PRODUCT_ID_PLUS": "",
+    "POLAR_PRODUCT_ID_PRO": "",
+    "VAPID_PUBLIC_KEY": "",
+    "ALLOWED_CONNECTOR_HOSTS": "",
+    "SEMANTIC_SEARCH_ENABLED": "false",
+    "SEMANTIC_EMBEDDING_MODEL": "@cf/baai/bge-small-en-v1.5",
+    "SEMANTIC_GLOBAL_MONTHLY_MICRO_USD": "5000000",
+    "SEMANTIC_GLOBAL_DAILY_MICRO_USD": "500000",
+    "SEMANTIC_GLOBAL_MAX_OWNERS": "1000",
+    "SEMANTIC_GLOBAL_MAX_UPSERTS": "2000000",
+    "SIGNUP_IP_WINDOW_MS": "1000",
+    "SIGNUP_IP_DAILY_LIMIT": "20",
+    "SIGNUP_SUBNET_DAILY_LIMIT": "15",
+    "SIGNUP_REGION_HOURLY_LIMIT": "5",
+    "SIGNUP_REGION_DAILY_LIMIT": "25",
+    "SIGNUP_GLOBAL_HOURLY_LIMIT": "10",
+    "SIGNUP_GLOBAL_DAILY_LIMIT": "200",
+    "SIGNUP_MAX_ADMISSIONS": "1000",
+    "IDENTITY_LAYOUT": "v1-64-fresh",
+    "BEAM_ENABLED": "true",
+    "BEAM_MONTHLY_DELIVERY_BYTES": "1000000000",
+    "BEAM_MONTHLY_OFFERS": "20",
+    "BEAM_TURN_ENABLED": "false",
+    "CLOUDFLARE_TURN_KEY_ID": "",
+    "BEAM_STUN_ENABLED": "true",
+    "WORK_LIMITS_ENABLED": "true",
+    "SERVICE_MONTHLY_WORK_LIMIT": "250000",
+    "FREE_MONTHLY_WORK_LIMIT": "1000",
+    "PLUS_MONTHLY_WORK_LIMIT": "5000",
+    "PRO_MONTHLY_WORK_LIMIT": "10000",
+    "MCP_ENABLED": "true",
+    "MCP_LAYOUT": "mcp-auth-v1-64",
+    "MCP_CLIENTS": "[]"
+  }
 }

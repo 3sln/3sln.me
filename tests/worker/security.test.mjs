@@ -1,3 +1,4 @@
+import {ShardedIdentityRepository} from '../../packages/runtime/identity-shards.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
@@ -33,7 +34,7 @@ test.before(async () => {
   await build({ stdin: { contents: harness, resolveDir: process.cwd(), sourcefile: 'test-harness.mjs' }, outfile: out,
     bundle: true, format: 'esm', platform: 'browser', mainFields: ['browser', 'module', 'main'], conditions: ['workerd', 'worker', 'browser'],
     external: ['cloudflare:workers', 'node:*'], target: 'es2022', logLevel: 'silent',
-    banner: { js: "import * as util from 'node:util'; import * as fs from 'node:fs'; import * as stream from 'node:stream'; import * as buffer from 'node:buffer'; import * as assert from 'node:assert'; import * as zlib from 'node:zlib'; const nodeModules={'node:util':util,'node:fs':fs,'node:stream':stream,'node:buffer':buffer,'node:assert':assert,'node:zlib':zlib}; const require=name=>{if(!nodeModules[name])throw new Error('Unexpected builtin '+name);return nodeModules[name];};" },
+    banner: { js: "import * as util from 'node:util'; import * as fs from 'node:fs'; import * as stream from 'node:stream'; import * as buffer from 'node:buffer'; import * as nodeAssertBuiltin from 'node:assert'; import * as zlib from 'node:zlib'; const nodeModules={'node:util':util,'node:fs':fs,'node:stream':stream,'node:buffer':buffer,'node:assert':nodeAssertBuiltin,'node:zlib':zlib}; const require=name=>{if(!nodeModules[name])throw new Error('Unexpected builtin '+name);return nodeModules[name];};" },
     plugins: [{ name: 'worker-test-imports', setup(build) {
       build.onResolve({ filter: /^(?:util|fs|stream|buffer|assert|zlib)$/ }, args => ({ path: `node:${args.path}`, external: true }));
       build.onResolve({ filter: /\.wasm$/ }, args => ({ path: `./${path.basename(args.path)}`, external: true }));
@@ -41,11 +42,11 @@ test.before(async () => {
   for (const name of ['argon2', 'blake2b']) await copyFile(path.resolve(`vendor/hash-wasm/${name}.wasm`), path.join(temporary, `${name}.wasm`));
   mf = new Miniflare(convertV4MiniflareOptions({ name: 'identity-security-test', modulesRoot: temporary, modules: [{ type: 'ESModule', path: out }, ...['argon2', 'blake2b'].map(name => ({ type: 'CompiledWasm', path: path.join(temporary, `${name}.wasm`) }))],
     compatibilityDate: '2026-10-11', compatibilityFlags: ['nodejs_compat'], log: new Log(LogLevel.ERROR),
-    bindings: { APP_ORIGIN: origin, RP_ID: 'localhost', TERMS_VERSION: '2026-10-11', LOCAL_DEVELOPMENT: 'true',
+    bindings: { APP_ORIGIN: origin, RP_ID: 'localhost', TERMS_VERSION: '2026-10-11', LOCAL_DEVELOPMENT: 'true', IDENTITY_LAYOUT:'v1-64-fresh', SIGNUP_IP_WINDOW_MS:'1000', SIGNUP_IP_DAILY_LIMIT:'20',
       KEY_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'), ABUSE_HASH_KEY: 'isolated-test-rate-limit-key' },
     durableObjects: { IDENTITIES: { className: 'TestDirectory', useSQLite: true }, ACCOUNTS: { className: 'TestAccount', useSQLite: true }, ABUSE: { className: 'TestAbuse', useSQLite: true } },
     r2Buckets: ['BLOBS', 'ARCHIVES'], serviceBindings: { ASSETS: async () => new Response('<!doctype html><title>Test</title>', { headers: { 'Content-Type': 'text/html' } }) } }));
-  const identities = await mf.getDurableObjectNamespace('IDENTITIES'); directory = identities.get(identities.idFromName('directory-v1'));
+  const identities = await mf.getDurableObjectNamespace('IDENTITIES'); directory = new ShardedIdentityRepository({shard:name=>identities.get(identities.idFromName(name)),layout:'v1-64-fresh'});directory.passwordVector=(...args)=>identities.get(identities.idFromName('password-vector-test')).passwordVector(...args);
   accounts = await mf.getDurableObjectNamespace('ACCOUNTS'); abuse = await mf.getDurableObjectNamespace('ABUSE'); archives = await mf.getR2Bucket('ARCHIVES');
 });
 test.after(async () => { await mf?.dispose(); if (temporary) await rm(temporary, { recursive: true, force: true }); });

@@ -73,7 +73,7 @@ test('audit: failed orphan deletion retains reservation and retries through sche
   const f=fixture(),r=await f.quota.reserve(owner,reservation(10));f.blobs.delete=async()=>{throw new Error('bucket unavailable');};
   await f.quota.release(r.id);assert.equal((await f.quota.usage(owner)).reservedBytes,10);
   f.advance(21*60000);await f.quota.cleanup();assert(await f.metadata.get('storage/reservation/'+r.id));assert((await f.quota.nextCleanup())>f.now);
-  f.blobs.delete=async ref=>f.deleted.push(ref);await f.quota.cleanup();assert.equal((await f.quota.usage(owner)).reservedBytes,0);assert.deepEqual(f.deleted,[r.blobRef]);
+  f.blobs.delete=async ref=>f.deleted.push(ref);f.advance((await f.quota.nextCleanup())-f.now);await f.quota.cleanup();assert.equal((await f.quota.usage(owner)).reservedBytes,0);assert.deepEqual(f.deleted,[r.blobRef]);
 });
 test('audit: a timed-out upload lease cannot commit after its twenty-minute reservation window',async()=>{
   const f=fixture(),r=await f.quota.reserve(owner,reservation(1));f.advance(20*60000);
@@ -84,7 +84,7 @@ test('audit: failed first cleanup page cannot permanently starve later healthy o
   const f=fixture();const ids=[];
   for(let i=0;i<40;i++){const id=String(i).padStart(8,'0')+'-1111-4111-8111-111111111111';ids.push(id);await f.quota.reserve(owner,reservation(1,{id,blobRef:`objects/${owner}/${id}`}));}
   const failing=new Set(ids.slice(0,32).map(id=>`objects/${owner}/${id}`));f.blobs.delete=async ref=>{if(failing.has(ref))throw new Error('specific corrupted object');f.deleted.push(ref);};f.advance(21*60000);
-  for(let i=0;i<4;i++)await f.quota.cleanup();
+  for(let i=0;i<4;i++){await f.quota.cleanup();const next=await f.quota.nextCleanup();if(Number.isFinite(next))f.advance(Math.max(0,next-f.now));}
   assert.equal(f.deleted.length,8);for(const id of ids.slice(32))assert.equal(await f.metadata.get('storage/reservation/'+id),undefined);
 });
 test('audit: inbox SQL keyset pages bind owner and filter scope with equal timestamp ties',()=>{
@@ -167,7 +167,7 @@ test('audit: committed blob garbage retries fairly and cannot delete a current h
     const first=await call('put',{key:'item',dataBase64:'eA==',condition:{absent:true}}),replacement=await call('put',{key:'item',dataBase64:'eQ==',condition:{version:first.object.version}});
     const current=await f.metadata.get(`hosted/${resource.id}/${encodeURIComponent('item')}`),old=[...f.stored.keys()].find(ref=>ref!==current.blobRef);assert(old);assert.equal(f.stored.size,2);
     const deletion=f.controller.blobs.delete;f.controller.blobs.delete=async()=>{throw new Error('bucket outage');};await f.controller.collectBlobGarbage();assert.equal((await f.metadata.list({prefix:'blob-garbage/'})).size,1);assert.equal(f.stored.size,2);
-    f.controller.blobs.delete=deletion;await f.controller.collectBlobGarbage();assert.equal(f.stored.size,1);assert(f.stored.has(current.blobRef));assert(!f.stored.has(old));assert.equal((await f.metadata.list({prefix:'blob-garbage/'})).size,0);
+    f.controller.blobs.delete=deletion;const retry=await f.metadata.get('storage/garbage-retry');await f.metadata.put('storage/garbage-retry',{...retry,retryAt:0});await f.controller.collectBlobGarbage();assert.equal(f.stored.size,1);assert(f.stored.has(current.blobRef));assert(!f.stored.has(old));assert.equal((await f.metadata.list({prefix:'blob-garbage/'})).size,0);
     assert.equal((await call('get',{key:'item',ifVersion:replacement.object.version})).dataBase64,'eQ==');
   }finally{f.close();}
 });

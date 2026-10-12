@@ -1,3 +1,4 @@
+import {consentPage} from './release-mcp.mjs';
 import {h,icon,badge,logo,empty,helpers,fire} from './release-primitives.mjs';
 import authCard from './release-auth.mjs';
 import recoveryPage from './release-recovery.mjs';
@@ -9,7 +10,7 @@ import securityView from './release-security.mjs';
 import modal from './release-dialogs.mjs';
 import publicPage from './release-public.mjs';
 import {contactsView,resourcesView,rulesView,notificationsView} from './release-views.mjs';
-function renderApp(state,views){if(state.loading)return h('main',logo(state),h('p','Opening your personal space…').attrs({role:'status'})).classes('boot-screen');const background=(state.route.kind.startsWith('recovery-')?recoveryPage(state):state.route.kind!=='home'?publicPage(state):state.session?.account?shell(state,views):landing(state)).props({inert:!!state.modal}).attrs({'aria-hidden':state.modal?'true':null});return h('div',state.offline?h('div','You’re offline. Your private information is available again when you reconnect.').classes('offline-banner'):null,background,state.modal?modal(state):null).classes('application');}
+function renderApp(state,views){if(state.loading)return h('main',logo(state),h('p','Opening your personal space…').attrs({role:'status'})).classes('boot-screen');const background=(state.route.kind==='mcp-consent'?consentPage(state):state.route.kind.startsWith('recovery-')?recoveryPage(state):state.route.kind!=='home'?publicPage(state):state.session?.account?shell(state,views):landing(state)).props({inert:!!state.modal}).attrs({'aria-hidden':state.modal?'true':null});return h('div',state.offline?h('div','You’re offline. Your private information is available again when you reconnect.').classes('offline-banner'):null,background,state.modal?modal(state):null).classes('application');}
 function viewContent(state,views){if(views?.[state.view])return h('div',views[state.view](state)).attrs({translate:'no'}).classes('portal-module-view');return ({inbox:inboxView,contacts:contactsView,resources:resourcesView,rules:rulesView,notifications:notificationsView,security:securityView,settings:settingsView,billing:billingView,'space-search':searchView}[state.view]??inboxView)(state);}
 function landing(state){const {btn}=helpers(state);
   const story=h('section',

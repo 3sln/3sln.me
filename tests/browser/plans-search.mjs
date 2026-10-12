@@ -61,3 +61,12 @@ test('late and superseded search replies cannot restore stale results, and resul
   await f.act(new ReadSearchMessage({id:'older-message'}));assert.equal((await f.read()).view,'inbox');assert.match(render(inboxView,await f.read()).textContent,/Beyond the loaded page/);
  }finally{await f.engine.dispose();}
 });
+
+test('monthly activity shows remaining/reset, warns when exhausted, and plan inclusions are optional',()=>{
+ const work={enabled:true,month:'2026-10',used:1250,limit:5000,remaining:3750,resetsAt:Date.UTC(2026,10,1),unit:'covered-changes'},monthlyPlans=plans.map((plan,index)=>({...plan,monthlyWorkUnits:[1000,5000,10000][index]}));
+ const root=render(billingView,{locale:'es',data:{storage,work},billing:{plan:'plus',enabled:false,configured:false,plans:monthlyPlans},config:{}});
+ assert.match(root.textContent,/ACTIVIDAD MENSUAL/);assert.match(root.textContent,/1250 de 5000 cambios incluidos/);assert.match(root.textContent,/Quedan 3750 cambios/);assert.match(root.textContent,/UTC/);assert.match(root.textContent,/1000 cambios incluidos \/ mes/);assert.match(root.textContent,/controles de seguridad siguen disponibles/);assert.equal(root.querySelectorAll('meter').length,2);
+ const exhausted=render(billingView,{locale:'en',data:{storage,work:{...work,used:5000,remaining:0}},billing:{plans},config:{}});
+ assert.match(exhausted.textContent,/Covered updates and new deliveries pause/);assert.equal(exhausted.querySelector('.activity-panel meter').getAttribute('value'),'5000');assert.equal(exhausted.querySelectorAll('.plan-work').length,0);
+ const absent=render(billingView,{locale:'en',data:{storage},billing:{plans},config:{}});assert.equal(absent.querySelector('.activity-panel'),null);
+});

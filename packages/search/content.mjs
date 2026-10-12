@@ -1,10 +1,11 @@
-import { inspectWebArchive, WEB_ARCHIVE_MIME } from '../messaging/content.mjs';
+import { inspectWebArchive, WEB_ARCHIVE_MIME, conversationText } from '../messaging/content.mjs';
 import { fail, DEFAULT_BUDGETS } from './schema.mjs';
 
 // Extraction is inert text only. It never executes HTML, follows links, fetches
 // remote media, expands recursive archives, or guesses OCR/transcription.
 export function extractSearchText({ mimeType, bytes }, { maxInputBytes = 1048576, maxTextBytes = DEFAULT_BUDGETS.maxTextBytes } = {}) {
   if (!(bytes instanceof Uint8Array) || bytes.length > maxInputBytes) fail('search_extraction_limit');
+  const conversation=conversationText(mimeType,bytes);if(conversation!==null)return extractSearchText({mimeType:'text/plain',bytes:new TextEncoder().encode(conversation)},{maxInputBytes,maxTextBytes});
   if (mimeType === WEB_ARCHIVE_MIME) return extractSearchText(inspectWebArchive(bytes).entrypoint, { maxInputBytes, maxTextBytes });
   if (!['text/plain', 'text/html'].includes(mimeType)) return { text: '', supported: false, truncated: false };
   let text;

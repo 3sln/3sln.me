@@ -1,6 +1,6 @@
 # Local app walkthrough
 
-Captured from the actual local Wrangler app and real Chrome, 2026-10-11. These are test accounts; no live recovery credentials, contact capabilities or private answers appear in the images. **Production release remains disabled.** External-provider setup, notification delivery, full federation and account-retention/deletion still require the work recorded in [DEVLOG](../DEVLOG.md).
+Captured from the actual local Wrangler app and real Chrome, 2026-10-11–12. These are test accounts; no live recovery credentials, contact capabilities or private answers appear in the images. **Production release remains disabled.** External-provider setup, notification delivery, full federation and account-retention/deletion still require the work recorded in [DEVLOG](../DEVLOG.md).
 
 The new encrypted recovery flow passed real passkey and password signup, restoration, file rotation and replay rejection, with independent adversarial checks. Personal information remains vulnerable to offline guessing; the UI recommends an extra private passphrase.
 
@@ -93,3 +93,47 @@ The visible account meter shows 500 MB on the free plan, reserved uploads and a 
 Lexical and tag search support bounded cursor pages, index-lag notices and opening messages outside the initial inbox page. Semantic search remains unavailable until its provider is configured and verified. User-authored titles and snippets retain their language and render as inert text.
 
 ![Account search](walkthrough-assets/search-desktop.png)
+
+
+## File beaming and nearby pairing
+
+Paid senders can select several files, choose a registered device or saved contact, and review the names and declared size. Nearby QR pairing does not require a saved contact. The recipient chooses which files to receive; remote offers appear on eligible devices and only one device can accept.
+
+![File sending and nearby pairing](walkthrough-assets/beaming-desktop.png)
+
+![File sending on a narrow phone](walkthrough-assets/beaming-mobile.png)
+
+![Spanish localization with unavailable paid sending](walkthrough-assets/beaming-spanish.png)
+
+These screenshots use explicitly mocked paid-account/API fixtures. Browser tests exercised native WebRTC between two local portals and verified selected-file bytes; they do not establish internet NAT traversal, TURN relay, push delivery or real paid entitlements. Streaming uses a user-approved file destination where supported, with a bounded 32 MiB memory fallback elsewhere. TURN remains disabled pending credentials and an enforceable relay-spend budget.
+
+
+## Agent consent and connected apps
+
+The HTTP MCP consent page identifies the requesting app, callback origin and signed-in account. Every collection/action checkbox starts unchecked. Deletion has a separate warning; the user can deny the request. Connections can be revoked in the portal.
+
+![Granular MCP consent](walkthrough-assets/mcp-consent-desktop.png)
+
+![MCP consent on a narrow phone](walkthrough-assets/mcp-consent-mobile.png)
+
+These screenshots use mocked authorization-request metadata. Separate actual Worker tests verify PKCE, audience, scoped tools, refresh rotation and revocation. An upstream app/MCP resource importer remains a design, not a deployed feature.
+
+## Conversations and reply-all
+
+Every conversation message targets the full active membership. The recipient list and per-recipient delivery outcomes stay visible; a partial delivery never appears as complete. Shared-secret authors are labeled unverified. Joining, invitations, individual permissions and removal each have explicit controls.
+
+![Conversation and partial delivery](walkthrough-assets/conversations-desktop.png)
+
+![Conversation on a phone](walkthrough-assets/conversations-mobile.png)
+
+These screenshots use mocked conversation records/delivery outcomes. Durable Node and real local HTTP tests separately verify posting, admission, reply-all, epoch rotation, restart and sanitized inbox/search content. General cross-host federation and production conformance remain gated.
+
+## Visible monthly activity and semantic consent
+
+Storage and monthly covered-change usage each show remaining capacity. Exhaustion preserves account reading, export, deletion and security controls. Semantic search requires explicit consent for limited English excerpts to be processed by Workers AI.
+
+![Storage and monthly activity](walkthrough-assets/billing-activity.png)
+
+![Semantic search consent](walkthrough-assets/semantic-search-consent.png)
+
+These images use bounded API fixtures. Real Workers AI inference and insertion/query/deletion checks ran separately against all four hosted Vectorize shards.

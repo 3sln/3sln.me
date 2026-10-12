@@ -6,8 +6,8 @@ const changed=(feed)=>feed.dispatchEvent(new Event('browser-state-updated'));
 function commit(state,feed,recipe){state.transition(recipe);changed(feed);}
 const update=(resources,ctx,patch)=>commit(resources.state,ctx.engineFeed,next=>Object.assign(next,patch));
 const current=r=>r.state.snapshot();
-async function refresh(r,ctx){const data=await r.api.get('/api/account');if(!current(r).offline)update(r,ctx,{data});}
-function clearAccount(r,ctx){r.api.csrf=null;update(r,ctx,{session:null,data:null,messageDetail:null,messageRender:null,selected:null,modal:null,billing:null,billingLoading:false,billingError:'',searchDraft:{},spaceSearch:{phase:'idle',items:[]}});}
+async function refresh(r,ctx){const owner=current(r).session?.account?.id,generation=current(r).beamGeneration??0;const data=await r.api.get('/api/account');if(!current(r).offline&&current(r).session?.account?.id===owner&&(current(r).beamGeneration??0)===generation){update(r,ctx,{data});return true;}return false;}
+function clearAccount(r,ctx){r.api.csrf=null;update(r,ctx,{busy:false,conversations:{},mcpRequest:null,mcpGrants:null,beaming:{},beamGeneration:(current(r).beamGeneration??0)+1,session:null,data:null,messageDetail:null,messageRender:null,selected:null,modal:null,billing:null,billingLoading:false,billingError:'',semanticPreferences:null,searchDraft:{},spaceSearch:{phase:'idle',items:[]}});}
 const notice=(r,ctx,text)=>update(r,ctx,{notice:text,error:''});
 async function completed(r,ctx,text){update(r,ctx,{modal:null});await refresh(r,ctx);notice(r,ctx,text);r.browser.restoreFocus();}
 function pending(r,ctx,token,stage){r.browser.savePending(token,stage);update(r,ctx,{pending:true,pendingStage:stage});}
@@ -18,7 +18,7 @@ async function recovery(r,ctx){
  r.browser.storeSecret('recovery',result);r.browser.storeSecret('encryptedRecovery',null);
  update(r,ctx,{recovery:{fileName:result.fileName},recoveryStage:'questions',recoveryQuestions:[{id:r.browser.id(),type:'passphrase',prompt:createLocalization({locale:current(r).locale}).t('What is my private recovery passphrase?'),hint:''}],downloaded:false,recoveryVerified:false});
 }
-async function accept(r,ctx,result){if(!result.account||!result.csrfToken)throw new Error('Sign-in did not create a verified account session.');r.browser.clearPending();r.api.csrf=result.csrfToken;update(r,ctx,{pending:false,recovery:null,session:{account:result.account},auth:'login',notice:'',deviceLogin:null});await refresh(r,ctx);}
+async function accept(r,ctx,result){if(!result.account||!result.csrfToken)throw new Error('Sign-in did not create a verified account session.');r.browser.clearPending();r.api.csrf=result.csrfToken;update(r,ctx,{pending:false,recovery:null,beaming:{},beamGeneration:(current(r).beamGeneration??0)+1,session:{account:result.account},auth:'login',notice:'',deviceLogin:null});await refresh(r,ctx);}
 const tags=value=>String(value??'').split(',').map(value=>value.trim()).filter(Boolean);
 async function addRule(r,rule){return r.api.request('/api/rules',{rules:[...(current(r).data?.rules??[]),{...rule,id:r.browser.id()}]},'PUT');}
 async function loadBilling(r,ctx){
@@ -42,7 +42,7 @@ export class BrowserState extends Query {
   boot({state,browser,portalContributions},{notify,engineFeed}){
     this.cancelPoll=null;this.cancelChord=null;this.feed=engineFeed;
     this.publish=()=>{
-      const raw=state.snapshot(),registry=portalContributions,context=portalContext(raw,{textInputFocus:browser.inputFocused()});const commands=registry.list('commands').map(({id,title,module,capability})=>({id,title,module,disabled:capability!=='public'&&(!context.authenticated||context.offline)}));const bindings=compileKeybindings(defaultBindings(registry),raw.keybindingOverrides??[],commands);const snapshot={...raw,navigation:registry.list('navigation').map(({id,title,view,icon,order,module})=>({id,title,view,icon,order,module})),commands,shortcuts:inspectKeybindings(bindings,context).map(row=>({...row,title:commands.find(command=>command.id===row.command)?.title??row.command}))};notify(snapshot.offline?{...snapshot,data:null,messageDetail:null,messageRender:null,session:null}:snapshot);this.cancelPoll?.();this.cancelPoll=null;this.cancelChord?.();this.cancelChord=null;
+      const raw=state.snapshot(),registry=portalContributions,context=portalContext(raw,{textInputFocus:browser.inputFocused()});const commands=registry.list('commands').map(({id,title,module,capability})=>({id,title,module,disabled:capability!=='public'&&(!context.authenticated||context.offline)}));const bindings=compileKeybindings(defaultBindings(registry),raw.keybindingOverrides??[],commands);const snapshot={...raw,navigation:registry.list('navigation').map(({id,title,view,icon,order,module})=>({id,title,view,icon,order,module})),commands,shortcuts:inspectKeybindings(bindings,context).map(row=>({...row,title:commands.find(command=>command.id===row.command)?.title??row.command}))};if(raw.route.kind==='mcp-consent'&&raw.session?.account&&!raw.offline&&!raw.busy&&!raw.mcpRequest)queueMicrotask(()=>engineFeed.dispatchEvent(new Event('mcp-request-opened')));notify(snapshot.offline?{...snapshot,conversations:{},mcpRequest:null,mcpGrants:null,beaming:{},data:null,messageDetail:null,messageRender:null,session:null}:snapshot);this.cancelPoll?.();this.cancelPoll=null;this.cancelChord?.();this.cancelChord=null;
       if(raw.keyChord?.strokes?.length)this.cancelChord=browser.delay(()=>engineFeed.dispatchEvent(new CustomEvent('shortcut-chord-expired',{detail:{startedAt:raw.keyChord.startedAt}})),Math.max(0,raw.keyChord.startedAt+1500-browser.now()));const device=snapshot.deviceLogin;
       if(device?.status==='authorization_pending'&&!snapshot.busy&&!snapshot.offline)this.cancelPoll=browser.delay(()=>engineFeed.dispatchEvent(new Event('device-poll-due')),Math.max(0,device.nextPollAt-browser.now()));
     };
@@ -54,7 +54,7 @@ export class BrowserState extends Query {
 }
 export class RecheckSession extends Action {
   static deps={state:{write:true},api:{},browser:{}};
-  async execute(r,ctx){try{const result=await r.api.get('/api/session');update(r,ctx,{session:result.account?{account:result.account}:null});if(result.account)await refresh(r,ctx);else notice(r,ctx,'Sign in in the other tab, then check again.');}catch(error){update(r,ctx,{error:error.message});}}
+  async execute(r,ctx){const generation=current(r).beamGeneration??0;try{const result=await r.api.get('/api/session');if(current(r).offline||(current(r).beamGeneration??0)!==generation)return;update(r,ctx,{...(current(r).session?.account?.id!==result.account?.id?{busy:false,conversations:{},mcpRequest:null,mcpGrants:null,beaming:{},beamGeneration:(current(r).beamGeneration??0)+1}:{}),session:result.account?{account:result.account}:null});if(result.account)await refresh(r,ctx);else notice(r,ctx,'Sign in in the other tab, then check again.');}catch(error){if(!current(r).offline&&(current(r).beamGeneration??0)===generation)update(r,ctx,{error:error.message});}}
 }
 class Flow extends Action {
   static deps={state:{write:true},api:{},browser:{},portalContributions:{},recoveryFile:{}};
@@ -64,10 +64,10 @@ class Flow extends Action {
 }
 export class InitializeSpace extends Flow {
   async perform(r,ctx,detail){const route=r.browser.route(),restored=r.browser.restorePending(),preferences=r.browser.preferences(),locale=resolveLocale(preferences.locale??r.browser.language());let overrides=preferences.keybindingOverrides??[];try{compileKeybindings(defaultBindings(r.portalContributions),overrides,r.portalContributions.list('commands'));}catch{overrides=[];}r.browser.applyLocale(locale);update(r,ctx,{route,locale,keybindingOverrides:overrides,offline:!r.browser.online(),pending:!!restored,pendingStage:restored?.stage,brand:{name:'3sln.me',host:'3sln.me'},pushPermission:r.browser.pushPermission()});
-    try{const config=await r.api.get('/api/config');const host=config.handleOriginHost??new URL(config.origin??'https://3sln.me').host;update(r,ctx,{config,brand:config.brand??{name:'3sln.me',host,description:'Your personal space'}});r.browser.applyBrand(config.brand??{name:'3sln.me'});r.browser.setCaptchaAction(route.kind==='device'||route.auth==='login'?'login':'signup');}catch{/* Session read below reports actual service availability. */}
+    try{const config=await r.api.get('/api/config');const host=config.handleOriginHost??new URL(config.origin??'https://3sln.me').host;update(r,ctx,{config,brand:config.brand??{name:'3sln.me',host,description:'Your personal space'}});r.browser.applyBrand(config.brand??{name:'3sln.me'});r.browser.setCaptchaAction(route.kind==='device'||route.kind==='mcp-consent'||route.auth==='login'?'login':'signup');}catch{/* Session read below reports actual service availability. */}
     if(route.kind==='contact'&&r.browser.secret('contactEndpoint'))update(r,ctx,{route:{...route,claims:await r.api.contactClaims(r.browser.secret('contactEndpoint'))}});
-    if(route.kind==='device'||route.auth==='login')update(r,ctx,{auth:'login'});
-    try{const result=await r.api.get('/api/session');update(r,ctx,{session:result.account?{account:result.account}:null});if(result.account)await refresh(r,ctx);else r.browser.installCaptcha(current(r).config);if(route.kind==='recovery-setup'&&restored?.stage==='recovery')await recovery(r,ctx);if(route.kind==='device'&&route.requestId&&route.userCode)update(r,ctx,{deviceRequest:await r.api.request('/api/auth/device/inspect',{requestId:route.requestId,userCode:route.userCode})});}finally{update(r,ctx,{loading:false});r.browser.installWorker();}
+    if(route.kind==='device'||route.kind==='mcp-consent'||route.auth==='login')update(r,ctx,{auth:'login'});
+    try{const result=await r.api.get('/api/session');update(r,ctx,{...(current(r).session?.account?.id!==result.account?.id?{busy:false,conversations:{},mcpRequest:null,mcpGrants:null,beaming:{},beamGeneration:(current(r).beamGeneration??0)+1}:{}),session:result.account?{account:result.account}:null});if(result.account)await refresh(r,ctx);else r.browser.installCaptcha(current(r).config);if(route.kind==='recovery-setup'&&restored?.stage==='recovery')await recovery(r,ctx);if(route.kind==='device'&&route.requestId&&route.userCode)update(r,ctx,{deviceRequest:await r.api.request('/api/auth/device/inspect',{requestId:route.requestId,userCode:route.userCode})});}finally{update(r,ctx,{loading:false});r.browser.installWorker();}
   }
 }
 export class NavigateSpace extends Action {
@@ -82,13 +82,13 @@ export class NavigateSpace extends Action {
     'edit-space-search':()=>({searchDraft:{...current(r).searchDraft,[d.field]:d.value}}),
     'close-message':()=>({selected:null,messageRender:null}),
     'open-modal':()=>({modal:d.modal,error:''}),'close-modal':()=>({modal:null,commandSearch:'',keyChord:[]})
-  };if(d.kind==='set-auth')r.browser.setCaptchaAction(d.auth==='recover'?'recovery':d.auth==='email'?'email':d.auth==='login'?'login':'signup');if(d.kind==='open-modal')r.browser.captureFocus();update(r,ctx,patches[d.kind]?.()??{});if(d.kind==='open-modal')r.browser.modalFocus();if(d.kind==='close-modal')r.browser.restoreFocus();if(d.kind==='navigate'&&d.view==='billing')await loadBilling(r,ctx);}
+  };if(d.kind==='set-auth')r.browser.setCaptchaAction(d.auth==='recover'?'recovery':d.auth==='email'?'email':d.auth==='login'?'login':'signup');if(d.kind==='open-modal')r.browser.captureFocus();update(r,ctx,patches[d.kind]?.()??{});if(d.kind==='open-modal')r.browser.modalFocus();if(d.kind==='close-modal')r.browser.restoreFocus();if(d.kind==='navigate'&&d.view==='billing')await loadBilling(r,ctx);if(d.kind==='navigate'&&d.view==='space-search'&&current(r).config.semanticSearchEnabled===true)await loadSemanticPreferences(r,ctx);}
 }
 export class NetworkChanged extends Action {
   static deps={state:{write:true},api:{},browser:{}};
   constructor(detail){super();this.detail=detail;}
-  async execute(r,ctx){try{await this.perform(r,ctx,this.detail);}catch(error){if(error.status===401)clearAccount(r,ctx);update(r,ctx,{error:error.message});}}
-  async perform(r,ctx,detail){update(r,ctx,{offline:!detail.online,data:null,messageDetail:null,messageRender:null,selected:null,billing:null,billingLoading:false,billingError:'',searchDraft:{},spaceSearch:{phase:'idle',items:[]}});if(detail.online){const result=await r.api.get('/api/session');update(r,ctx,{session:result.account?{account:result.account}:null});if(result.account){await refresh(r,ctx);if(current(r).view==='billing')await loadBilling(r,ctx);}}}
+  async execute(r,ctx){try{await this.perform(r,ctx,this.detail);}catch(error){if((current(r).beamGeneration??0)!==this.generation||current(r).offline)return;if(error.status===401)clearAccount(r,ctx);update(r,ctx,{error:error.message});}}
+  async perform(r,ctx,detail){update(r,ctx,{busy:false,conversations:{},mcpRequest:null,mcpGrants:null,beaming:{},beamGeneration:(current(r).beamGeneration??0)+1,modal:null,offline:!detail.online,data:null,messageDetail:null,messageRender:null,selected:null,billing:null,billingLoading:false,billingError:'',semanticPreferences:null,searchDraft:{},spaceSearch:{phase:'idle',items:[]}});this.generation=current(r).beamGeneration??0;if(detail.online){const result=await r.api.get('/api/session');if(current(r).offline||(current(r).beamGeneration??0)!==this.generation)return;update(r,ctx,{...(current(r).session?.account?.id!==result.account?.id?{busy:false,conversations:{},mcpRequest:null,mcpGrants:null,beaming:{},beamGeneration:(current(r).beamGeneration??0)+1}:{}),session:result.account?{account:result.account}:null});this.generation=current(r).beamGeneration??0;if(result.account){if(!await refresh(r,ctx))return;if(current(r).view==='billing')await loadBilling(r,ctx);}}}
 }
 export class SignUp extends Flow {
   async perform(r,ctx,detail){const s=current(r),v=detail.values;const result=await r.api.request('/api/auth/signup',{handle:v.handle,password:v.password,method:s.authMethod,termsAccepted:v.termsAccepted==='on',termsVersion:s.config.termsVersion??'2026-10-11',...r.browser.captcha(s.config)});
@@ -156,6 +156,8 @@ export class BillingPortal extends Flow {
 }
 // Each request owns a model ticket. Superseded requests and replies after a
 // network/session transition cannot reintroduce private search results.
+async function loadSemanticPreferences(r,ctx){const owner=current(r).session?.account?.id;if(!owner||current(r).offline)return;try{const preferences=await r.api.get('/api/search/preferences');if(!current(r).offline&&current(r).session?.account?.id===owner)update(r,ctx,{semanticPreferences:preferences});}catch(error){if(error.status===401)clearAccount(r,ctx);else update(r,ctx,{error:'Search preferences could not be loaded. Please try again.'});}}
+export class SaveSemanticPreferences extends Flow {async perform(r,ctx,detail){const owner=current(r).session?.account?.id;if(!owner||current(r).offline)return;const enabled=detail.values?.enabled==='on';if(enabled&&detail.values?.consent!=='on')throw new Error('Review and agree to remote semantic processing before enabling it.');const preferences=await r.api.request('/api/search/preferences',{enabled},'PUT');if(!current(r).offline&&current(r).session?.account?.id===owner)update(r,ctx,{semanticPreferences:preferences,error:'',spaceSearch:{phase:'idle',items:[]},searchDraft:{...current(r).searchDraft,mode:'lexical'},notice:enabled?'Semantic indexing is starting. Text search remains available.':'Semantic search is off. Remote vector cleanup is pending.'});}}
 export class SearchSpace extends Action {
  static deps={state:{write:true},api:{},browser:{}};
  constructor(detail={}){super();this.detail=detail;}
@@ -164,15 +166,15 @@ export class SearchSpace extends Action {
   const previous=initial.spaceSearch??{items:[]},append=this.detail.kind==='search-next-page';
   if(append&&(!previous.cursor||previous.phase==='loading'))return;
   let values;try{values=this.detail.operationId?r.browser.consumeSubmission(this.detail.operationId):this.detail.values??initial.searchDraft??{};}catch{update(r,ctx,{spaceSearch:{...previous,phase:'error',error:'This search expired. Please try again.'}});return;}
-  const criteria=append?previous.criteria:{q:String(values.q??'').trim(),tag:String(values.tag??'').trim(),type:String(values.type??'').trim()};
-  const ticket=r.browser.id(),query=new URLSearchParams({q:criteria.q,mode:'lexical',limit:'20'});
+  const criteria=append?previous.criteria:{q:String(values.q??'').trim(),tag:String(values.tag??'').trim(),type:String(values.type??'').trim(),mode:['lexical','semantic','hybrid'].includes(values.mode)?values.mode:'lexical'};
+  const ticket=r.browser.id(),query=new URLSearchParams({q:criteria.q,mode:criteria.mode,limit:'20'});
   if(criteria.tag)query.append('tag',criteria.tag);if(criteria.type)query.append('type',criteria.type);if(append)query.set('cursor',previous.cursor);
   update(r,ctx,{searchDraft:criteria,spaceSearch:{phase:'loading',ticket,criteria,items:append?previous.items:[],cursor:null,error:''}});
   try{
    const result=await r.api.get(`/api/search?${query}`);
    if(current(r).offline||!current(r).session||current(r).spaceSearch?.ticket!==ticket)return;
    const incoming=Array.isArray(result.items)?result.items:[],combined=append?[...previous.items,...incoming]:incoming,items=[...new Map(combined.map(item=>[item.id,item])).values()];
-   update(r,ctx,{spaceSearch:{phase:'ready',ticket,criteria,items,cursor:result.cursor??null,indexing:result.indexing,bounded:result.bounded,semanticAvailable:result.semanticAvailable===true,error:''}});
+   update(r,ctx,{spaceSearch:{phase:'ready',ticket,criteria,items,cursor:result.cursor??null,indexing:result.indexing,bounded:result.bounded,semanticAvailable:result.semanticAvailable===true,semanticError:result.semanticError,semantic:result.semantic,error:''}});
   }catch(error){if(current(r).spaceSearch?.ticket!==ticket||current(r).offline)return;if(error.status===401){clearAccount(r,ctx);return;}update(r,ctx,{spaceSearch:{...current(r).spaceSearch,phase:'error',cursor:append?previous.cursor:null,error:'Search could not be completed. Please try again.'}});}
  }
 }
@@ -181,7 +183,7 @@ export class ReadSearchMessage extends ReadMessage {async perform(r,ctx,detail){
 export class UpdateMessage extends Flow {async perform(r,ctx,detail){await r.api.request(`/api/messages/${detail.id}`,detail.actions,'PATCH');await refresh(r,ctx);}}
 export class OrganizeMessage extends Flow {async perform(r,ctx,detail){const v=detail.values;await r.api.request(`/api/messages/${current(r).modal.message.id}`,{collection:v.collection,tags:tags(v.tags),classification:v.classification},'PATCH');await completed(r,ctx,'Message updated.');}}
 export class CreateCollection extends Flow {async perform(r,ctx,detail){await r.api.request('/api/collections',{name:detail.values.name});await completed(r,ctx,'Collection created.');}}
-export class CreateContact extends Flow {async perform(r,ctx,detail){const v=detail.values;const result=await r.api.request('/api/contacts',{name:v.name,collections:[v.collection],mimeTypes:[v.mimeType],expiresAt:r.browser.now()+Number(v.days)*86400000,maxMessages:Number(v.maxMessages),maxMessageBytes:Number(v.maxMessageBytes),maxBytes:Number(v.maxMessages)*Number(v.maxMessageBytes)});await refresh(r,ctx);update(r,ctx,{modal:{kind:'share',contact:result.contact??result}});notice(r,ctx,'Contact link created.');}}
+export class CreateContact extends Flow {async perform(r,ctx,detail){const v=detail.values;const result=await r.api.request('/api/contacts',{name:v.name,collections:[v.collection],mimeTypes:[v.mimeType,...v.conversationInvites==='on'?['application/vnd.3sln.conversation-invite+json']:[]],expiresAt:r.browser.now()+Number(v.days)*86400000,maxMessages:Number(v.maxMessages),maxMessageBytes:Number(v.maxMessageBytes),maxBytes:Number(v.maxMessages)*Number(v.maxMessageBytes)});await refresh(r,ctx);update(r,ctx,{modal:{kind:'share',contact:result.contact??result}});notice(r,ctx,'Contact link created.');}}
 export class ShareContact extends Flow {async perform(r,ctx,detail){r.browser.captureFocus();const contact=current(r).data.contacts.find(c=>c.id===detail.id),share=await r.api.get(`/api/contacts/${detail.id}/url`);update(r,ctx,{modal:{kind:'share',contact:{...contact,...share}}});r.browser.modalFocus();}}
 export class CopyContactLink extends Flow {async perform(r,ctx,detail){await r.browser.copy(current(r).modal.contact.url);notice(r,ctx,'Link copied.');}}
 export class SaveContactLink extends Flow {async perform(r,ctx,detail){r.browser.download('contact-link.txt',current(r).modal.contact.url,'text/plain');}}

@@ -170,3 +170,14 @@ test('lexical rebuild discards orphaned derived content and rejects unbounded ad
   f.index.candidates = async () => Array.from({ length: 201 }, () => ({ owner: 'alice', id: 'current', revision: 1 }));
   await assert.rejects(f.service.search('alice'), { code: 'unbounded_search_index' });
 });
+
+test('remote semantic deletion failure defers cleanup without blocking lexical events', async () => {
+  const failures = [], vectorIndex = new MemoryVectorIndex({ dimensions: 2 });
+  const f = fixture({ vectorIndex, embedder: { embed: async () => [1, 0] }, onSemanticError: async (event, error) => failures.push({ event, error }) });
+  await f.put(doc('gone', { embeddingAllowed: true })); f.docs.delete('alice/gone');
+  vectorIndex.tombstone = async () => { throw Error('provider unavailable'); };
+  await f.service.ingest({ owner: 'alice', id: 'gone', revision: 2, operation: 'tombstone' });
+  await f.put(doc('next', { embeddingAllowed: true }));
+  assert.equal(failures.length, 1);
+  assert.deepEqual((await f.service.search('alice', { text: 'violet', mode: 'lexical' })).items.map(row => row.id), ['next']);
+});
