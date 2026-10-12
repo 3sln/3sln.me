@@ -8,7 +8,7 @@ const email = 'recipient@inbox.example';
 const token = 'account-id.secret_opaque-token';
 function fixture(send) {
   const sent = [];
-  const env = { APP_ORIGIN: origin, MAIL_ENABLED: 'true', MAIL_SENDER_DOMAIN: 'sys.3sln.com', BRAND_NAME: '3sln.me', EMAIL: { async send(message) {
+  const env = { APP_ORIGIN: origin, MAIL_ENABLED: 'true', MAIL_SENDER_DOMAIN: 'sys.3sln.me', BRAND_NAME: '3sln.me', EMAIL: { async send(message) {
     sent.push(message);
     return send ? send(message) : { messageId: `accepted-${sent.length}` };
   } } };
@@ -32,7 +32,7 @@ test('link and login use distinct approved senders and fragment confirmation rou
     assert.deepEqual(result, { messageId: `accepted-${sent.length}` });
     const message = sent.at(-1);
     assert.equal(message.to, email);
-    assert.equal(message.from, purpose === 'link' ? 'verify@sys.3sln.com' : 'login@sys.3sln.com');
+    assert.equal(message.from, purpose === 'link' ? 'verify@sys.3sln.me' : 'login@sys.3sln.me');
     assert.match(message.text, /expires in ten minutes/);
     assert.match(message.text, /until you confirm/);
     const url = new URL(message.text.split('\n').find(line => line.startsWith('https://')));
@@ -52,7 +52,7 @@ test('reminder uses notify sender, generic content and manual fragment unsubscri
   await transport.sendReminder(input);
   assert.equal(sent.length, 2, 'the binding has no documented provider deduplication');
   const message = sent[0];
-  assert.equal(message.from, 'notify@sys.3sln.com');
+  assert.equal(message.from, 'notify@sys.3sln.me');
   assert.equal(message.to, email);
   assert.deepEqual(message.headers, { 'List-Unsubscribe': `<${origin}/unsubscribe#token=account-id.unsubscribe-secret>` });
   assert.equal(message.headers['List-Unsubscribe-Post'], undefined);
@@ -65,13 +65,13 @@ test('account and security notice resources restrict templates and senders', asy
   const { transport, sent } = fixture();
   for (const type of ['inactivity-warning', 'deletion-scheduled', 'deletion-cancelled']) {
     await transport.sendAccountNotice({ email, type });
-    assert.equal(sent.at(-1).from, 'accounts@sys.3sln.com');
+    assert.equal(sent.at(-1).from, 'accounts@sys.3sln.me');
     assert.match(sent.at(-1).text, /Open https:\/\/space.example\//);
   }
   assert.doesNotMatch(sent[1].text, /\d{4}-\d{2}-\d{2}|grace|days/);
   for (const type of ['recovery-used', 'passkey-added', 'passkey-removed', 'password-changed']) {
     await transport.sendSecurityAlert({ email, type });
-    assert.equal(sent.at(-1).from, 'security@sys.3sln.com');
+    assert.equal(sent.at(-1).from, 'security@sys.3sln.me');
   }
   assert.throws(() => transport.sendAccountNotice({ email, type: 'unknown' }), /Invalid mail notice type/);
   assert.throws(() => transport.sendSecurityAlert({ email, type: 'toString' }), /Invalid mail notice type/);
@@ -117,8 +117,8 @@ test('checked-in Cloudflare config disables mail and restricts the binding to fi
   const production = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   const local = JSON.parse(await readFile(new URL('../wrangler.local.jsonc', import.meta.url), 'utf8'));
   assert.equal(production.vars.MAIL_ENABLED, 'false');
-  assert.equal(production.vars.MAIL_SENDER_DOMAIN, 'sys.3sln.com');
-  assert.deepEqual(production.send_email, [{ name: 'EMAIL', allowed_sender_addresses: ['verify@sys.3sln.com', 'login@sys.3sln.com', 'notify@sys.3sln.com', 'accounts@sys.3sln.com', 'security@sys.3sln.com'] }]);
+  assert.equal(production.vars.MAIL_SENDER_DOMAIN, 'sys.3sln.me');
+  assert.deepEqual(production.send_email, [{ name: 'EMAIL', allowed_sender_addresses: ['verify@sys.3sln.me', 'login@sys.3sln.me', 'notify@sys.3sln.me', 'accounts@sys.3sln.me', 'security@sys.3sln.me'] }]);
   assert.equal(local.send_email, undefined, 'local development cannot deliver remote mail');
   assert.notEqual(local.vars.MAIL_ENABLED, 'true');
 });

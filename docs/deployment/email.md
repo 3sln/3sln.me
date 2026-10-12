@@ -1,6 +1,6 @@
 # Cloudflare email deployment
 
-Hosted system mail uses `sys.3sln.com`, reserving bare-domain addresses for potential user email. `MAIL_SENDER_DOMAIN="sys.3sln.com"` is explicit in the hosted configuration; account links and branding remain on `3sln.me`.
+Hosted system mail uses `sys.3sln.me`, reserving bare-domain addresses for potential user email. `MAIL_SENDER_DOMAIN="sys.3sln.me"` is explicit in the hosted configuration; account links and branding remain on `3sln.me`.
 
 Hosted email uses the Cloudflare Email Sending beta `EMAIL.send({from,to,subject,text,headers})` structured binding. It returns a `messageId` acknowledgement; inbox arrival still needs operational verification. No Resend account, API key, MIME builder or `cloudflare:email` import is needed. [Workers API](https://developers.cloudflare.com/email-service/api/send-emails/workers-api/).
 
@@ -8,19 +8,19 @@ The checked-in production configuration declares `EMAIL` and sets `MAIL_ENABLED=
 
 ## Current live verification
 
-The account owner reports that `sys.3sln.com` has been onboarded. A user-authorized test through an isolated local Worker with a real remote `EMAIL` binding was rejected before acceptance: `email sending not authorized for subdomain 'sys.3sln.com'`. No successful send/message ID was returned. Sender authorization or onboarding propagation still needs resolution; keep `MAIL_ENABLED="false"`.
+The account owner corrected the onboarded sender domain to `sys.3sln.me`. The previous test used `sys.3sln.com` and was rejected before acceptance; that result does not establish authorization for the corrected domain. The corrected test from `notify@sys.3sln.me` succeeded through a real remote Cloudflare `EMAIL` binding and returned a provider `messageId`. This verifies binding acceptance and sender authorization; recipient inbox arrival is not yet confirmed. Keep `MAIL_ENABLED="false"` pending delivery verification and completion of the relevant hosted flows.
 
-Email Sending onboards each subdomain separately; Email Routing activation or apex-domain onboarding does not establish sending authorization for `sys.3sln.com`. Check this exact domain under **Compute → Email Service → Email Sending** and wait for verified/ready status. [Cloudflare subdomain onboarding](https://developers.cloudflare.com/email-service/configuration/subdomains/).
+Email Sending onboards each subdomain separately; check the exact domain under **Compute → Email Service → Email Sending**. [Cloudflare subdomain onboarding](https://developers.cloudflare.com/email-service/configuration/subdomains/).
 
 ## Sender policy and connected behavior
 
 | Sender | Resource | Current connection |
 | --- | --- | --- |
-| `verify@sys.3sln.com` | Email association confirmation | Worker identity mailer; `/email/confirm#token=…`, same requesting browser session |
-| `login@sys.3sln.com` | Email sign-in confirmation | Worker identity mailer; `/email/login#token=…`, only accounts explicitly enabling email sign-in |
-| `notify@sys.3sln.com` | Generic unread-message reminder | Injectable `sendReminder` resource; hosted dispatcher delivery is still unconnected |
-| `accounts@sys.3sln.com` | Inactivity/deletion notices | Finite `sendAccountNotice` resource; lifecycle scheduling and event calls remain unconnected |
-| `security@sys.3sln.com` | Recovery/passkey/password alerts | Finite `sendSecurityAlert` resource; security event calls remain unconnected |
+| `verify@sys.3sln.me` | Email association confirmation | Worker identity mailer; `/email/confirm#token=…`, same requesting browser session |
+| `login@sys.3sln.me` | Email sign-in confirmation | Worker identity mailer; `/email/login#token=…`, only accounts explicitly enabling email sign-in |
+| `notify@sys.3sln.me` | Generic unread-message reminder | Injectable `sendReminder` resource; hosted dispatcher delivery is still unconnected |
+| `accounts@sys.3sln.me` | Inactivity/deletion notices | Finite `sendAccountNotice` resource; lifecycle scheduling and event calls remain unconnected |
+| `security@sys.3sln.me` | Recovery/passkey/password alerts | Finite `sendSecurityAlert` resource; security event calls remain unconnected |
 
 The application chooses fixed sender roles; callers cannot override them. Hosted `3sln.me` configuration yields the five addresses above. Wrangler additionally limits the binding with `allowed_sender_addresses`. The portable identity and notification services continue to accept injected delivery resources. [Binding restrictions](https://developers.cloudflare.com/email-service/configuration/send-bindings/).
 
@@ -32,8 +32,8 @@ Verification links expire in ten minutes. A GET does not sign in or associate an
 
 ## Setup the account owner must complete
 
-1. Confirm that the Cloudflare account has **Workers Paid** and can access **Compute → Email Service → Email Sending** beta, and that `3sln.com` uses Cloudflare DNS. Email Sending is available on Workers Paid; verified-destination Email Routing sends alone are free on all plans. [Service availability](https://developers.cloudflare.com/email-service/).
-2. Choose **Onboard Domain** for `sys.3sln.com`. Review the proposed bounce MX, SPF, DKIM and DMARC records, including existing mail policy, before authorizing onboarding. Wait for the domain to become ready. This work has not changed DNS or onboarded a domain. [Cloudflare onboarding](https://developers.cloudflare.com/email-service/get-started/send-emails/).
+1. Confirm that the Cloudflare account has **Workers Paid** and can access **Compute → Email Service → Email Sending** beta, and that `3sln.me` uses Cloudflare DNS. Email Sending is available on Workers Paid; verified-destination Email Routing sends alone are free on all plans. [Service availability](https://developers.cloudflare.com/email-service/).
+2. Choose **Onboard Domain** for `sys.3sln.me`. Review the proposed bounce MX, SPF, DKIM and DMARC records, including existing mail policy, before authorizing onboarding. Wait for the domain to become ready. This work has not changed DNS or onboarded a domain. [Cloudflare onboarding](https://developers.cloudflare.com/email-service/get-started/send-emails/).
 3. Confirm this account's Email Sending supports application mail to ordinary user recipients. Email Sending domain onboarding is the intended service for this app; old Email Routing send bindings limited to manually verified destination addresses cannot support public signup. The binding reference still describes verified destinations, so confirm actual account capability before enabling public email flows. The deployed binding deliberately restricts senders and does not hardcode user destinations. [Email Sending overview](https://developers.cloudflare.com/email-service/), [binding reference](https://developers.cloudflare.com/email-service/configuration/send-bindings/).
 4. After onboarding, set `MAIL_ENABLED="true"` only in the intended configuration for explicitly authorized delivery verification and deploy through the gated workflow. Keep `RELEASE_READY="false"` until the complete release gates pass. Check all five allowed addresses against domain policy; outbound sender authorization is based on the onboarded domain. Inbound support mailboxes/routing are separate work.
 5. Perform an explicitly authorized recipient test for association and sign-in, including delivery, spam placement, expired links and scanner-safe confirmation. Validate suppression/bounce handling and sending quotas for that account. Keep release status and feature claims provisional until the end-to-end checks pass.
