@@ -1,6 +1,6 @@
 # Local app walkthrough
 
-Captured from the actual local Wrangler app and real Chrome, 2026-10-11–12. These are test accounts; no live recovery credentials, contact capabilities or private answers appear in the images. **Production release remains disabled.** External-provider setup, notification delivery, full federation and account-retention/deletion still require the work recorded in [DEVLOG](../DEVLOG.md).
+Captured from the actual local Wrangler app, the gated deployment and real Chrome, 2026-10-11–12. These are test accounts; no live recovery credentials, contact capabilities or private answers appear in the images. **Production release remains disabled.** External-provider setup, notification delivery, full federation and account-retention/deletion still require the work recorded in [DEVLOG](../DEVLOG.md).
 
 The new encrypted recovery flow passed real passkey and password signup, restoration, file rotation and replay rejection, with independent adversarial checks. Personal information remains vulnerable to offline guessing; the UI recommends an extra private passphrase.
 
@@ -186,3 +186,12 @@ These desktop/mobile images use explicit Google/OAuth fixtures. Actual Worker te
 ![Google Drive setup — simulated provider](walkthrough-assets/google-drive-setup-fixture.png)
 
 ![Google Drive setup on a phone — simulated provider](walkthrough-assets/google-drive-setup-mobile-fixture.png)
+
+
+## 25. First live deployment
+
+The first Cloudflare Worker is live at [3sln.me](https://3sln.me). These screenshots are from the actual deployed interactive app, after its API-driven UI loaded. Signup remains closed server-side and in the UI; docs and branding assets are available. Google/email/MCP remain unconfigured or disabled until the required secrets and release work are verified. No account was created during this smoke check.
+
+![Actual gated Cloudflare deployment](walkthrough-assets/deployed-landing-desktop.png)
+
+![Actual gated deployment on a phone](walkthrough-assets/deployed-landing-mobile.png)
