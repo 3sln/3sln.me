@@ -8,6 +8,7 @@
     "nodejs_compat"
   ],
   "workers_dev": false,
+  "keep_vars": true,
   "preview_urls": false,
   "routes": [
     {
@@ -95,6 +96,7 @@
   ],
   "vars": {
     "APP_ORIGIN": "https://3sln.me",
+    "LOCAL_DEVELOPMENT": "false",
     "BRAND_NAME": "3sln.me",
     "RP_ID": "3sln.me",
     "TERMS_VERSION": "2026-10-11",
