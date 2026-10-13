@@ -10,7 +10,7 @@ function fixture(){
  const metadata=new SqliteMetadata(':memory:'),calls=[];
  const products=Object.fromEntries(['paid','plus','ultra'].map(plan=>{const id=config[`POLAR_PRODUCT_ID_${plan.toUpperCase()}`];return[id,{id,is_archived:false,is_recurring:true,recurring_interval:'year',recurring_interval_count:1,organization_id:'org',prices:[{id:plan+'-price',product_id:id,source:'catalog',is_archived:false,amount_type:'fixed',price_currency:'usd',price_amount:BILLING_PLANS[plan].annualAmount}]}];}));
  const customer={id:'customer',external_id:owner,organization_id:'org',deleted_at:null,active_subscriptions:[]};
- const order={id:'order',created_at:'2020-01-01T00:00:00Z',paid:true,status:'paid',currency:'usd',net_amount:500,total_amount:550,refunded_amount:0,customer_id:'customer',customer:{...customer},product_id:'paid-product',product:{id:'paid-product',organization_id:'org',is_recurring:true,recurring_interval:'year',recurring_interval_count:1},subscription_id:'subscription',subscription:{id:'subscription',customer_id:'customer',product_id:'paid-product',currency:'usd',amount:500,recurring_interval:'year',recurring_interval_count:1,status:'canceled'}};
+ const order={id:'order',created_at:'2020-01-01T00:00:00Z',paid:true,status:'paid',currency:'usd',subtotal_amount:500,discount_amount:0,net_amount:500,tax_amount:50,total_amount:550,applied_balance_amount:0,due_amount:550,refunded_amount:0,refunded_tax_amount:0,customer_id:'customer',customer:{...customer},product_id:'paid-product',product:{id:'paid-product',organization_id:'org',is_recurring:true,recurring_interval:'year',recurring_interval_count:1},subscription_id:'subscription',subscription:{id:'subscription',customer_id:'customer',product_id:'paid-product',currency:'usd',amount:500,recurring_interval:'year',recurring_interval_count:1,status:'canceled'}};
  const pages=[{items:[order],pagination:{total_count:1,max_page:1}}];
  const client={products:{get:async id=>{calls.push(['product',id]);return structuredClone(products[id]);}},orders:{list:async query=>{calls.push(['orders',query]);return structuredClone(pages[query.page-1]);}},customers:{getStateExternal:async()=>structuredClone(customer)},subscriptions:{get:async()=>{throw new Error('No active subscriptions should be inspected.');}}};
  const service=new BillingService({metadata,client,config,now:()=>123456});
@@ -31,7 +31,7 @@ test('actual historical paid order grants immutable eligibility after cancellati
  }finally{f.close();}
 });
 test('active plan fixtures, unpaid zero-value discounted refunded and wrong-currency orders cannot create eligibility',async()=>{
- for(const patch of [{paid:false},{status:'pending'},{net_amount:0},{net_amount:499},{refunded_amount:1},{currency:'eur'},{total_amount:499}]){
+ for(const patch of [{paid:false},{status:'pending'},{discount_amount:500,net_amount:0,tax_amount:0,total_amount:0,due_amount:0},{applied_balance_amount:-550,due_amount:0},{refunded_amount:1},{refunded_tax_amount:1},{currency:'eur'}]){
   const f=fixture();try{
    await f.metadata.put(BILLING_STATE_KEY,{owner,source:'polar',catalogVersion:2,plan:'plus',validUntil:999999999,status:'active'});
    Object.assign(f.order,patch);if(patch.currency)await assert.rejects(f.service.paidHandleEligibility(owner),{code:'billing_provider_unavailable'});else assert.equal(await f.service.paidHandleEligibility(owner),false);assert.equal(await f.metadata.get(markerKey),undefined);
@@ -40,18 +40,18 @@ test('active plan fixtures, unpaid zero-value discounted refunded and wrong-curr
  }
 });
 test('identity product organization and subscription mismatches or malformed fields fail closed',async()=>{
- const patches=[o=>o.customer.external_id='another',o=>o.customer.id='another',o=>o.customer.organization_id='another',o=>o.product.organization_id='another',o=>o.product_id='other-product',o=>o.subscription.id='another',o=>o.subscription.customer_id='another',o=>o.subscription.product_id='another',o=>o.subscription.recurring_interval='month',o=>o.subscription.amount=300,o=>delete o.refunded_amount,o=>o.net_amount='500',o=>o.subscription=null,o=>o.created_at='invalid',o=>o.status='open'];
+ const patches=[o=>o.customer.external_id='another',o=>o.customer.id='another',o=>o.customer.organization_id='another',o=>o.product.organization_id='another',o=>o.product_id='other-product',o=>o.subscription.id='another',o=>o.subscription.customer_id='another',o=>o.subscription.product_id='another',o=>o.subscription.recurring_interval='month',o=>o.subscription.amount=300,o=>delete o.refunded_amount,o=>o.net_amount='500',o=>o.subscription=null,o=>o.created_at='invalid',o=>o.status='open',o=>o.net_amount=499,o=>o.total_amount=499,o=>o.discount_amount=1];
  for(const patch of patches){const f=fixture();try{patch(f.order);await assert.rejects(f.service.paidHandleEligibility(owner),{code:'billing_provider_unavailable'});assert.equal(await f.metadata.get(markerKey),undefined);}finally{f.close();}}
 });
 test('bounded history checks a second page and never interprets truncated or malformed history as unpaid',async()=>{
  const f=fixture();try{
-  f.pages[0]={items:Array.from({length:100},(_,i)=>({...structuredClone(f.order),id:'first-'+i,net_amount:0})),pagination:{total_count:101,max_page:2}};
+  f.pages[0]={items:Array.from({length:100},(_,i)=>({...structuredClone(f.order),id:'first-'+i,discount_amount:500,net_amount:0,tax_amount:0,total_amount:0,due_amount:0})),pagination:{total_count:101,max_page:2}};
   f.pages[1]={items:[f.order],pagination:{total_count:101,max_page:2}};
   assert.equal(await f.service.paidHandleEligibility(owner),true);assert.equal(f.calls.filter(([kind])=>kind==='orders').length,2);
  }finally{f.close();}
  const truncated=fixture();try{
-  truncated.pages[0]={items:Array.from({length:100},(_,i)=>({...structuredClone(truncated.order),id:'first-'+i,net_amount:0})),pagination:{total_count:201,max_page:3}};
-  truncated.pages[1]={items:Array.from({length:100},(_,i)=>({...structuredClone(truncated.order),id:'second-'+i,net_amount:0})),pagination:{total_count:201,max_page:3}};
+  truncated.pages[0]={items:Array.from({length:100},(_,i)=>({...structuredClone(truncated.order),id:'first-'+i,discount_amount:500,net_amount:0,tax_amount:0,total_amount:0,due_amount:0})),pagination:{total_count:201,max_page:3}};
+  truncated.pages[1]={items:Array.from({length:100},(_,i)=>({...structuredClone(truncated.order),id:'second-'+i,discount_amount:500,net_amount:0,tax_amount:0,total_amount:0,due_amount:0})),pagination:{total_count:201,max_page:3}};
   await assert.rejects(truncated.service.paidHandleEligibility(owner),{code:'billing_order_capacity'});assert.equal(truncated.calls.filter(([kind])=>kind==='orders').length,2);
  }finally{truncated.close();}
  for(const page of [{items:[],pagination:{total_count:1,max_page:1}},{items:[],pagination:{total_count:0,max_page:2}},{items:[],pagination:{total_count:Infinity,max_page:1}}]){const malformed=fixture();try{malformed.pages[0]=page;await assert.rejects(malformed.service.paidHandleEligibility(owner),{code:'billing_provider_unavailable'});}finally{malformed.close();}}
@@ -91,4 +91,8 @@ test('verified past payment survives billing disablement and later catalog rotat
 
 test('legacy v1 ever-paid markers retain permanent handle eligibility without granting a larger storage tier',async()=>{const f=fixture();try{await f.service.paidHandleEligibility(owner);const marker=await f.metadata.get(markerKey);for(const plan of ['plus','pro']){await f.metadata.put(markerKey,{...marker,version:1,plan});const disabled=new BillingService({metadata:f.metadata,config:{...config,BILLING_ENABLED:'false',POLAR_ACCESS_TOKEN:''},client:{}});assert.equal(await disabled.paidHandleEligibility(owner),true);assert.equal((await disabled.entitlement(owner)).plan,'free');}}finally{f.metadata.close();}});
 
-test('foreign tax-inclusive paid orders use verified configured currency rather than comparing net to USD cents',async()=>{const f=fixture();try{for(const product of Object.values(f.products))product.prices.push({...product.prices[0],id:product.id+'-eur',price_currency:'eur',price_amount:450});Object.assign(f.order,{currency:'eur',net_amount:375,total_amount:450,tax_amount:75,tax_behavior:'inclusive'});Object.assign(f.order.subscription,{currency:'eur',amount:450});assert.equal(await f.service.paidHandleEligibility(owner),true);}finally{f.close();}});
+test('foreign tax-inclusive paid orders use verified configured currency rather than comparing net to USD cents',async()=>{const f=fixture();try{for(const product of Object.values(f.products))product.prices.push({...product.prices[0],id:product.id+'-eur',price_currency:'eur',price_amount:450});Object.assign(f.order,{currency:'eur',subtotal_amount:450,net_amount:375,total_amount:450,tax_amount:75,due_amount:450});Object.assign(f.order.subscription,{currency:'eur',amount:450});assert.equal(await f.service.paidHandleEligibility(owner),true);}finally{f.close();}});
+
+test('legitimate positive discounted settlement grants eligibility while full discounts and credit-only settlement do not',async()=>{for(const patch of [{discount_amount:1,net_amount:499,tax_amount:0,total_amount:499,due_amount:499},{discount_amount:450,net_amount:50,tax_amount:0,total_amount:50,applied_balance_amount:-49,due_amount:1},{discount_amount:100,net_amount:350,tax_amount:50,total_amount:400,due_amount:400}]){const f=fixture();try{Object.assign(f.order,patch);assert.equal(await f.service.paidHandleEligibility(owner),true);assert.equal((await f.metadata.get(markerKey)).orderId,'order');}finally{f.close();}}});
+
+test('valid negative-credit history cannot hide an older positive settled payment',async()=>{const f=fixture();try{f.pages[0]={items:[{...structuredClone(f.order),id:'credit',subtotal_amount:-50,net_amount:-50,tax_amount:0,total_amount:-50,due_amount:0},f.order],pagination:{total_count:2,max_page:1}};assert.equal(await f.service.paidHandleEligibility(owner),true);assert.equal((await f.metadata.get(markerKey)).orderId,'order');}finally{f.close();}});
