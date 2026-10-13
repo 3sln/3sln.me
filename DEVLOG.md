@@ -538,3 +538,9 @@ Final UI state 57/57 and SDK/localization 22/22 pass. After polishing mobile met
 The user identified the initial 5/app and 10/account rolling-minute policy as restrictive for legitimate sync and batches. Supersedes D084's minute limits with 120 attempts per app per account and 240 per account across all writers in a rolling 60 seconds. The full allowance can be used immediately; this is not a paced two-writes-per-second throttle. Monthly plan and shared service ceilings remain unchanged, so the burst increase does not raise the admitted monthly bucket-write ceiling. Defaults and both Wrangler configs agree; low-limit boundary tests now declare their intended fixture policy explicitly. Cost/product reviewer ___ / Date ___ / Outcome ___.
 
 Validation: core/SDK 517/517 passes after the burst-policy change; whitespace check passes. No production deployment performed.
+
+## 2026-10-13 — Shared storage-write ceiling raised
+
+User-approved policy supersedes D084's service ceiling: 10,000,000 physical bucket-write attempts per UTC month, split into 9,000,000 foreground and 1,000,000 reserved archive attempts. Runtime defaults and both Wrangler configs agree. Per-account monthly allowances, rolling burst limits, shard layout and atomic accounting are unchanged. Existing authority records pin their monthly policy, so an already-used shard retains its existing policy until the next UTC month; this change does not reset or bypass counters. No deployment performed. User direction recorded; operations reviewer ___ / Date ___ / Outcome ___.
+
+Validation: core/SDK 517/517 passes, including exact shard-capacity conservation at the new 10M ceiling; whitespace check passes.

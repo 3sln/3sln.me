@@ -7,8 +7,8 @@ An account's stored-byte quota does not control request fees: replacing a one-by
 | One app or stable contact/conversation writer | 120 attempts in a rolling 60 seconds |
 | Account, across all writers and resources | 240 attempts in a rolling 60 seconds |
 | Free / Plus / Pro foreground writes | 1,000 / 5,000 / 10,000 per UTC month |
-| Whole-service admitted bucket attempts | 250,000 per UTC month |
-| Service allocation | 225,000 foreground; 25,000 reserved for archives |
+| Whole-service admitted bucket attempts | 10,000,000 per UTC month |
+| Service allocation | 9,000,000 foreground; 1,000,000 reserved for archives |
 | Account archive reserve | 16 attempts per UTC month |
 
 These are conservative initial operator settings, separate from work units, storage bytes and app permissions. Paid entitlement comes from durable billing state; renewal, changing devices, adding resources, changing keys, changing versions or minting more upload URLs does not reset a writer's account allowance. Writer attribution uses stable application IDs and parent contact/conversation identities, not short-lived bearer strings. Active writer histories are bounded. The API exposes monthly usage alongside byte usage; exhausted attempts return a safe error and retry timing. Clients must not automatically retry ambiguous writes.
@@ -27,7 +27,7 @@ If retained-upload or garbage cleanup is paused, foreground bucket writes fail c
 
 ## Cost interpretation
 
-Cloudflare R2 Standard currently includes one million Class A operations per month, then charges $4.50 per million, rounded up to billing units. `PutObject` is Class A; delete operations are free. The 250,000-attempt application cap deliberately leaves room within that request allowance when it is otherwise unused. It is not a promise of a zero invoice: free allowances may be shared with other workloads, provider-internal retries are outside this application's meter, and bytes, reads, Worker/SQLite use, search and external providers have separate costs and controls. [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/).
+Cloudflare R2 Standard currently includes one million Class A operations per month, then charges $4.50 per million, rounded up to billing units. `PutObject` is Class A; delete operations are free. The 10,000,000-attempt application cap allows paid usage beyond the free allowance. It is not a promise of a zero invoice: free allowances may be shared with other workloads, provider-internal retries are outside this application's meter, and bytes, reads, Worker/SQLite use, search and external providers have separate costs and controls. [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/).
 
 This complements the existing logical work, signup, ingress, storage quota, semantic-spend and bounded-maintenance controls. It does not replace them. Alerts and reconciliation against actual Cloudflare usage remain operational release work.
 
