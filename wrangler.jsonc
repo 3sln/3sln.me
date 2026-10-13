@@ -115,7 +115,7 @@
     "TERMS_VERSION": "2026-10-11",
     "RELEASE_READY": "false",
     "BILLING_ENABLED": "false",
-    "POLAR_SERVER": "sandbox",
+    "POLAR_SERVER": "production",
     "POLAR_METADATA_PREFIX": "3sln_me_",
     "POLAR_CATALOG_MODE": "metadata",
     "POLAR_ORGANIZATION_ID": "",
