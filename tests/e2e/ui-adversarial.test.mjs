@@ -152,3 +152,27 @@ test('interaction-only flexible CAPTCHA fits every auth flow and preserves chall
   }
   assert.ok((await page.evaluate(()=>window.fixtureCaptcha.renders)).every(widget=>widget.size==='flexible'&&widget.appearance==='interaction-only'));
 });
+
+
+test('contact profile is literal scoped optional metadata with no automatic avatar requests',async t=>{
+ const invitation='/users/reader/contact/11111111-1111-1111-1111-111111111111?sig=private-profile-fixture';
+ const claims={collections:['inbox'],mimeTypes:['text/plain'],maxMessageBytes:65536},token=`e30.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.signature`;
+ for(const scenario of ['shared','long','partial','disabled','failure','expired']){
+  const context=await browser.newContext({viewport:{width:320,height:1000}});t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(8000);let profiles=0,avatarRequests=0;
+  await context.addInitScript(()=>localStorage.setItem('personal-space-preferences',JSON.stringify({locale:'es'})));
+  await page.route('https://images.example/**',route=>{avatarRequests++;return route.abort();});
+  await page.route('**/api/config',route=>route.fulfill({json:{origin:baseURL,providers:{}}}));
+  await page.route('**/api/session',route=>route.fulfill({json:{account:scenario==='shared'?{id:'owner-fixture',handle:'owner'}:null}}));
+  await page.route('**/api/account',route=>route.fulfill({json:{account:{id:'owner-fixture',handle:'owner'},collections:[],messages:[],contacts:[],rules:[],resources:[]}}));
+  await page.route('**'+invitation,route=>{
+   const accept=route.request().headers().accept;
+   if(accept==='application/vnd.bindle.contact-token+jwt')return route.fulfill(scenario==='expired'?{status:403,body:'Expired'}:{body:token,contentType:'application/vnd.bindle.contact-token+jwt'});
+   if(accept==='application/vnd.bindle.contact-profile+json'){profiles++;return route.fulfill(scenario==='failure'?{status:503,body:'Unavailable'}:{json:{identityURI:'https://forged.example',profile:scenario==='disabled'?null:scenario==='long'?{displayName:'Z'.repeat(100)}:scenario==='partial'?{bio:'Sign in',unknown:'not shared'}:{displayName:'<img src=x onerror=alert(1)>',bio:'Sign in',avatar:'https://images.example/avatar.png'}},contentType:'application/vnd.bindle.contact-profile+json'});}
+   return route.continue();
+  });
+  await page.goto(baseURL+invitation);await page.getByText('Identidad del contacto: reader',{exact:true}).waitFor();assert.equal(new URL(page.url()).search,'');
+  if(scenario==='expired'){await page.getByText('La invitación está incompleta, vencida o revocada. Pide un enlace firmado vigente.').waitFor();assert.equal(profiles,0);assert.equal(await page.getByRole('button',{name:'Enviar mensaje',exact:true}).count(),0);}
+  else{await page.getByRole('button',{name:'Enviar mensaje',exact:true}).waitFor();if(scenario==='shared'||scenario==='partial'){await page.getByText('Compartido por este enlace de contacto',{exact:true}).waitFor();assert.equal(await page.locator('.contact-profile-bio').textContent(),'Sign in','User biography must not be translated');}if(scenario==='long'){await page.getByRole('heading',{name:'Envía un mensaje a '+'Z'.repeat(100)+'.',exact:true}).waitFor();await screenshot(page,'contact-profile-long-es-320');}if(scenario==='shared'){await page.getByRole('heading',{name:'Envía un mensaje a <img src=x onerror=alert(1)>.',exact:true}).waitFor();assert.equal(await page.locator('.contact-recipient-profile strong').textContent(),'<img src=x onerror=alert(1)>');assert.equal(await page.locator('.contact-recipient-profile img').count(),0);const avatar=page.getByRole('link',{name:'Ver avatar compartido',exact:true});assert.equal(await avatar.getAttribute('rel'),'noreferrer noopener');await screenshot(page,'contact-profile-shared-es-320');}else assert.equal(await page.getByRole('link',{name:'Ver avatar compartido',exact:true}).count(),0);}
+  assert.equal(avatarRequests,0);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.equal(await page.locator('[href*="forged.example"]').count(),0);
+ }
+});

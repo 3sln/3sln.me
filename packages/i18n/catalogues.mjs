@@ -4,6 +4,9 @@ export const catalogues = freeze({
   "en": {
     "": {
       "yours.": "yours.",
+      "Shared by this contact link": "Shared by this contact link",
+      "Contact identity: {identity}": "Contact identity: {identity}",
+      "Send a message to {recipient}.": "Send a message to {recipient}.",
       "Account notices": "Account notices",
       "Public navigation": "Public navigation",
       "This setup session has expired.": "This setup session has expired.",
@@ -1272,6 +1275,9 @@ export const catalogues = freeze({
   "es": {
     "": {
       "yours.": "tuyo.",
+      "Shared by this contact link": "Compartido por este enlace de contacto",
+      "Contact identity: {identity}": "Identidad del contacto: {identity}",
+      "Send a message to {recipient}.": "Envía un mensaje a {recipient}.",
       "Account notices": "Avisos de la cuenta",
       "Public navigation": "Navegación pública",
       "This setup session has expired.": "Esta sesión de configuración ha caducado.",

@@ -74,3 +74,7 @@
 .auth-card .form>.cf-turnstile[data-interactive=false]{margin-top:-17px}
 
 @media(max-width:420px){.landing-story{padding-left:12px;padding-right:12px}}
+
+.contact-recipient-profile{margin:18px 0;padding:16px;border:1px solid var(--line);border-radius:10px;background:#f8faf4}.contact-recipient-profile .field-help{margin:0 0 8px}.contact-recipient-profile strong,.contact-profile-bio{overflow-wrap:anywhere;white-space:pre-wrap}.contact-profile-bio{margin:8px 0}
+
+.contact-recipient-heading{overflow-wrap:anywhere}
