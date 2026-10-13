@@ -265,3 +265,16 @@ Captured from https://3sln.me on2026-10-13 after deployment of sourcea54eff8, Wo
 ![Published landing at320pixels](walkthrough-assets/deployed-polished-landing-320.png)
 
 Public documentation is an explicit31-page English developer set plus canonical artefacts; project tracking, audits and this walkthrough stay in the repository. Signup is open with Turnstile, verified email or acknowledged push, credentials and tested recovery required. Routine notifications and automatic retention suspension/deletion remain unfinished; this landing deployment does not certify the whole release.
+
+
+## 31. Balanced selector and conditional rectangular challenge
+
+Published source4d0420a, Worker349ef5c2-3bc7-47a3-851f-00bb35938705 supersedes the compact widget shown above. The language selector has matching12pxtext and arrow edge insets. Turnstile uses flexible rectangular sizing with interaction-only appearance: automatic checks run without a visible widget, and Cloudflare can show a65px-high interactive challenge when needed. Narrow forms accommodate its300pxminimum without clipping or resetting the challenge. [Cloudflare configuration](https://developers.cloudflare.com/turnstile/get-started/client-side-rendering/widget-configurations/).
+
+![Balanced selector](walkthrough-assets/deployed-balanced-selector.png)
+
+![Published entry at320pixels](walkthrough-assets/deployed-balanced-entry-320.png)
+
+![Published entry on desktop](walkthrough-assets/deployed-balanced-entry-1440.png)
+
+Fresh productionChrome confirms the real widget is mounted but hidden (zero height) in these screenshots, no horizontal overflow at320/1440, matching selector insets and no runtime errors. Local browser fixtures additionally verify the visible challenge in signin/signup/email/device forms at320/390/1440. No claim of a solved production challenge or account creation is made.
