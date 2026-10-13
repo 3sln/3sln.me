@@ -138,6 +138,12 @@
 <p>The composer displays only the profile fields permitted by the live signed contact link and the owner&#39;s profile-sharing setting. Name and biography remain literal text; the recipient handle stays visible. The avatar URL opens through an explicit shared-avatar link, without an automatic external image request. Optional profile failures do not block a valid composer.</p>
 <p><img src="walkthrough-assets/contact-page-scoped-profile.png" alt="Local Worker contact page with name-only disclosure"></p>
 <p>This screenshot comes from the actual local Worker flow with a test account, name-only field grant, and signed-in viewer. It establishes local field filtering, not a new live production user&#39;s disclosure. The deployed UI is sourceba06983, Worker6de3be20-c53d-41fa-8554-154b58c9346a. A fresh anonymous productionChrome check confirms an invalid capability shows no profile, performs no profile lookup, has no320px overflow and no runtime errors. No production account or message was created by the check.</p>
+<h2>33. Public pages follow the system theme</h2>
+<p>Published source52bb3bc, Workerda76c802-982b-43d8-b164-adadbaac4416. Landing and public account pages match the browser&#39;s light/dark preference, including forms, native selectors, focus states and logo. Turnstile keeps its automatic theme; changing preferences preserves its mounted instance. The signed-in console retains its existing light palette.</p>
+<p><img src="walkthrough-assets/live-system-theme-light-1440.png" alt="Production light landing on desktop"></p>
+<p><img src="walkthrough-assets/live-system-theme-dark-1440.png" alt="Production dark landing on desktop"></p>
+<p><img src="walkthrough-assets/live-system-theme-dark-320.png" alt="Production dark entry at320pixels"></p>
+<p>Fresh productionChrome checks cover light/dark at320/1440pixels: correct palette/logo,12pxselectorarrow, stable widget identity through preference switches, no horizontal overflow or runtime errors. Local browser checks additionally cover Spanish, contrast, focus, contact/recovery/MCP pages and the console. No production account or message was created.</p>
 </main>
 </body>
 </html>

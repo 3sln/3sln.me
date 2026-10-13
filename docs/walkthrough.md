@@ -287,3 +287,16 @@ The composer displays only the profile fields permitted by the live signed conta
 ![Local Worker contact page with name-only disclosure](walkthrough-assets/contact-page-scoped-profile.png)
 
 This screenshot comes from the actual local Worker flow with a test account, name-only field grant, and signed-in viewer. It establishes local field filtering, not a new live production user's disclosure. The deployed UI is sourceba06983, Worker6de3be20-c53d-41fa-8554-154b58c9346a. A fresh anonymous productionChrome check confirms an invalid capability shows no profile, performs no profile lookup, has no320px overflow and no runtime errors. No production account or message was created by the check.
+
+
+## 33. Public pages follow the system theme
+
+Published source52bb3bc, Workerda76c802-982b-43d8-b164-adadbaac4416. Landing and public account pages match the browser's light/dark preference, including forms, native selectors, focus states and logo. Turnstile keeps its automatic theme; changing preferences preserves its mounted instance. The signed-in console retains its existing light palette.
+
+![Production light landing on desktop](walkthrough-assets/live-system-theme-light-1440.png)
+
+![Production dark landing on desktop](walkthrough-assets/live-system-theme-dark-1440.png)
+
+![Production dark entry at320pixels](walkthrough-assets/live-system-theme-dark-320.png)
+
+Fresh productionChrome checks cover light/dark at320/1440pixels: correct palette/logo,12pxselectorarrow, stable widget identity through preference switches, no horizontal overflow or runtime errors. Local browser checks additionally cover Spanish, contrast, focus, contact/recovery/MCP pages and the console. No production account or message was created.
