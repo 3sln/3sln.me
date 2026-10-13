@@ -616,3 +616,5 @@ Discount follow-up Wrangler deployment dry run passes. Billing remains disabled;
 ## 2026-10-13 — Operator production Polar product IDs
 
 Operator supplied Paid `c3d5fd76-8330-4e2c-b1ec-4ee90555b994`, Plus `21634e36-3690-4264-bd59-80a898e4f5a4`, Ultra `a494de77-5e43-4daa-8e9d-201866705d8a`; recorded in hosted wrangler.jsonc. Metadata discovery remains authoritative; these configured IDs are available for explicit static mode and operator reference, not proof of verified products. Local sandbox placeholders remain isolated. Organization ID is still unset in tracked hosted config; access token and webhook secret must be configured through secrets. BILLING_ENABLED remains false. No live catalog request or deployment performed.
+
+Operator supplied production Polar organization `1e5a5f06-5c12-4dfd-9683-c1e08c4ba8a1`; recorded in hosted wrangler.jsonc with metadata discovery and billing disabled. Operator will set POLAR_ACCESS_TOKEN directly in Cloudflare. Local sandbox configuration remains isolated. No secret received or read, live catalog preflight pending.
