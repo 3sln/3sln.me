@@ -18,6 +18,29 @@ The in-memory adapter serializes operations and is a test/reference implementati
 
 Rules are an ordered array, at most 100: `{id,enabled,match:{grantId?,mimeType?,collection?},actions:{collection?,tags?,classification?,quarantined?}}`. Empty match applies to all deliveries. All comparisons use original delivery metadata, preventing accidental rule cascades. Matching actions apply in order; tags replace the current tag array. Quarantine is sticky during ingestion: a later rule cannot undo it. Only explicit owner action releases quarantine. Rules cannot mark an incoming message read, execute code, fetch URLs, trigger remote requests, or expand sender grant scope. A rule targeting a disabled destination is skipped. A grant-wide quarantine rule supports pausing a contact without notifying about its messages. Revoking its invitation blocks acceptance entirely.
 
+## Reference-service receipt limits
+
+The 3sln.me runtime applies additional durable recipient-wide and contact-parent message admission limits. These are service policy, not mandatory Bindle-wide rates. Owner counters use the stable account ID across all aliases and contact links; minted child tokens share the recorded parent link counter. Conversation invitations use contact admission, while stored conversation events consume the same owner allowance. Existing request, lifetime grant, storage quota, combined activity and physical-write safeguards remain in force and may refuse earlier. The runtime's per-message ceiling is one MiB; library/archive format ceilings described here are not a promise that a deployed endpoint accepts that size. Storage allowances depend on the account plan, rather than the MessagingService library default.
+
+Default owner ceilings use UTC fixed minute/hour/day windows:
+
+| Plan | Messages: minute / hour / day | Payload MiB: minute / hour / day |
+| --- | --- | --- |
+| Free | 30 / 300 / 1,000 | 16 / 128 / 512 |
+| Paid | 120 / 1,000 / 5,000 | 64 / 512 / 2,048 |
+| Plus | 240 / 2,000 / 10,000 | 128 / 1,024 / 4,096 |
+| Ultra | 240 / 2,000 / 10,000 | 256 / 2,048 / 8,192 |
+
+Each contact parent's default count and byte ceilings are half its owner's ceilings. Usage survives token refresh, restart, shelving and plan changes. A new parent still shares the owner cap. Fixed windows reset at their UTC boundary; existing rolling activity and write guards continue to bound bursts around that boundary. A provisional checkout upgrade does not increase receipt capacity before confirmation.
+
+The charged unit is an **admitted new message attempt**, not a successful delivery. Validation, live authorization, established idempotency replay and storage-quota checks run before this debit. Downstream failure may consume an admission until the window resets. An established authorized identical replay returns its original result without another receipt debit or new message blob write; changed content under the same key conflicts, and expired/revoked credentials cannot retrieve a receipt. Deleting or offloading content does not refund admission usage.
+
+Window exhaustion returns HTTP429 with `message_receipt_limited` and a bounded `Retry-After` in seconds. Signed contact URLs and bearer delivery expose that header through CORS. Senders should retain their operation ID and immutable payload for a retry, respect the delay and avoid tight retry loops. Disabled configured allowances have no promised retry time; content that can never fit a configured byte allowance returns413. Other grant/quota failures retain their existing semantics and do not imply that waiting renews a link. No response exposes another link's usage or the owner's classification results.
+
+Self-host operators can configure `MESSAGE_RECEIPT_LIMITS` as JSON, with optional plan entries containing exactly `owner` and `contact`; each contains exactly `minute`, `hour`, `day`, each with integer `messages` and `bytes`. Omitted plans use defaults. Contact limits cannot exceed owner limits; zero disables that allowance. Malformed configuration fails closed. The current bounded record supports256 active-day contact parents per owner; new-parent capacity exhaustion refuses with a retry delay. Owner snapshots expose `messageReceiptAdmission` and its explicit unit. Independent user-editable per-link rates are not implemented.
+
+Automated multi-label classification and rejection-summary push/email delivery are separate proposed features, not enabled by these receipt limits. Current classifications and owner rules retain the behavior described above.
+
 ## Safe rendering and bounded archives
 
 Treat sender bytes and MIME labels as hostile. Plain text requires strict UTF-8 and renders escaped in a `pre` element. HTML uses a deliberately small inert formatting-tag allowlist. Every tag is reconstructed; every attribute, URL, image, script, style, form, embedded document and custom element is removed. Text is escaped. Rich HTML entities may display literally; exact original styling is not preserved. This is a safe reduced-format viewer, not a general browser or high-fidelity sanitizer.
