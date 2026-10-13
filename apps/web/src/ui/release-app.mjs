@@ -14,22 +14,22 @@ function renderApp(state,views){if(state.loading)return h('main',logo(state),h('
 function viewContent(state,views){if(views?.[state.view])return h('div',views[state.view](state)).attrs({translate:'no'}).classes('portal-module-view');return ({inbox:inboxView,contacts:contactsView,resources:resourcesView,rules:rulesView,notifications:notificationsView,security:securityView,settings:settingsView,billing:billingView,'space-search':searchView}[state.view]??inboxView)(state);}
 function landing(state){const {btn}=helpers(state);
   const story=h('section',
-    h('div',h('span',h('i').classes('live-dot'),'A personal home on the open web').classes('eyebrow'),
-      h('h1','A little less platform.',h('br'),'A little more ',h('em','yours.')),
-      h('p','One identity. A calmer inbox. Your choice of storage. Build a digital life that belongs to you.').classes('hero-copy'),
-      h('div',h('div',icon('shield'),'Your keys, your account'),h('div',icon('link'),'Share access on your terms')).classes('hero-points')),
+    h('div',h('span',h('i').classes('live-dot'),'Made for your online life').classes('eyebrow'),
+      h('h1','Your apps.',h('br'),'Your files. ',h('em','Your choice.')),
+      h('p','One account for compatible apps, flexible storage, and conversations you control.').classes('hero-copy'),
+      h('div',h('div',icon('shield'),'Free to start'),h('div',icon('link'),'You choose what to share')).classes('hero-points')),
     h('div',
-      h('div',h('span','YOUR PERSONAL SPACE'),h('strong','you',h('span',`@${state.config.handleOriginHost??state.brand?.host??'3sln.me'}`)),h('p','Independent by design.')).classes('identity-tile'),
-      h('div',icon('inbox'),h('span','Inbox'),h('b','Only what you invited in.')).classes('floating-tile','inbox-tile'),
-      h('div',icon('storage'),h('span','Resources'),h('b','Connected. Still yours.')).classes('floating-tile','storage-tile'),
+      h('div',h('span','YOUR ACCOUNT'),h('strong','One account'),h('p','You choose what to share.')).classes('identity-tile'),
+      h('div',icon('inbox'),h('span','Conversations'),h('b','Contact links you control.')).classes('floating-tile','inbox-tile'),
+      h('div',icon('storage'),h('span','Storage'),h('b','Included or connected.')).classes('floating-tile','storage-tile'),
       h('div').classes('orb','orb-one'),h('div').classes('orb','orb-two')).classes('hero-art')
   ).classes('landing-story');
-  const features=[['link','Invite, don’t broadcast','Give each person or app a contact link. Set its limits. Close it whenever you need to.'],['storage','Bring your own resources','Keep files with a provider you choose. Review connection status and access in one place.'],['shield','Keep a way back in','Use a passkey or password, and save a private recovery file before your account opens.']];
+  const features=[['link','One account for your apps','Sign in to compatible apps and decide what each can access.'],['storage','Files where you want them','Use your included storage or connect a provider you already trust.'],['inbox','Choose who can reach you','Share a contact link, set its limits, and pause or revoke it whenever you need.']];
   return h('div',
     h('header',logo(state),h('nav',h('a','Docs').props({href:'/docs/'}).classes('docs-link'),h('select',h('option','English').props({value:'en',selected:(state.locale??'en')==='en'}),h('option','Español').props({value:'es',selected:state.locale==='es'})).props({value:state.locale??'en'}).attrs({'aria-label':'Interface language'}).classes('language-switch').on({change:event=>fire(event.currentTarget,'set-language',{values:{locale:event.target.value}})}),btn(state.auth==='login'?'Create an account':'Sign in',{kind:'set-auth',auth:state.auth==='login'?'signup':'login'},'button secondary')).attrs({'aria-label':'Public navigation'})).classes('landing-nav'),
     h('main',story,h('section',authCard(state)).classes('auth-column')).classes('landing-main'),
-    h('section',h('div',h('span','LESS NOISE. MORE CHOICE.').classes('eyebrow'),h('h2','A home base, with the doors you choose.')),h('div',...features.map(([i,title,text])=>h('article',icon(i),h('h3',title),h('p',text)))).classes('feature-grid')).props({id:'the-idea'}).classes('idea-section'),
-    h('footer',h('span',state.brand?.name??'3sln.me'),h('nav',h('a','Documentation').props({href:'/docs/'}),h('a','Specification').props({href:'/docs/spec/protocol.html'}),h('a','Self-hosting').props({href:'/docs/self-hosting.html'}),h('a','Resource contracts').props({href:'/docs/spec/contracts.html'})),btn('Service status',{kind:'open-modal',modal:{kind:'status'}},'text-button')).classes('landing-footer')
+    h('section',h('div',h('span','ONE ACCOUNT. MORE CONTROL.').classes('eyebrow'),h('h2','Connect, store, and stay in touch.')),h('div',...features.map(([i,title,text])=>h('article',icon(i),h('h3',title),h('p',text)))).classes('feature-grid')).props({id:'the-idea'}).classes('idea-section'),
+    h('footer',h('span',state.brand?.name??'3sln.me'),h('nav',h('a','Documentation').props({href:'/docs/'}),h('a','Specification').props({href:'/docs/spec/protocol.html'}),h('a','Self-hosting').props({href:'/docs/self-hosting.html'}),h('a','Resource contracts').props({href:'/docs/spec/contracts.html'}))).classes('landing-footer')
   );
 }
 const defaultNavigation=[['inbox','inbox','Inbox'],['contacts','link','Contact links'],['resources','storage','Resources'],['rules','rules','Rules'],['notifications','bell','Notifications'],['security','shield','Account & security'],['settings','rules','Preferences & shortcuts']];

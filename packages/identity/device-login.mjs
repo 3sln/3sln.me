@@ -75,11 +75,38 @@ export class DeviceLogin {
     return request;
   }
   async cancel(input, context) {
-    const request = await this.secret(input, context); const revision = request.revision;
-    if (['consumed', 'cancelled', 'denied'].includes(request.status)) return { cancelled: false };
-    request.status = 'cancelled';
-    if (!await this.save(request, revision)) this.fail('conflict');
-    return { cancelled: true };
+    const original = await this.secret(input, context);
+    for (let attempt = 0, request = original; attempt < 4; attempt++) {
+      if (!request || request.id !== original.id || request.deviceHash !== original.deviceHash || request.bindingHash !== original.bindingHash || (original.owner && request.owner !== original.owner)) this.fail('unauthorized');
+      if (request.status === 'denied') return { cancelled: false, reason: 'denied' };
+      // Older consumed records cannot identify their session. Never guess by
+      // label/source or revoke unrelated sessions to claim cancellation worked.
+      if ((request.status === 'consumed' || request.consumedAt !== undefined) && !request.issuedSessionHash) return { cancelled: false, reason: 'session_not_linked' };
+      if (!['pending', 'approved', 'consumed', 'cancelled'].includes(request.status)) this.fail('conflict');
+      if (request.status !== 'cancelled') {
+        const revision = request.revision; request.status = 'cancelled';
+        if (!await this.save(request, revision)) { request = await this.repository.get(original.id); continue; }
+      }
+      if (request.issuedSessionHash) await this.revokeIssued(request);
+      return { cancelled: true };
+    }
+    this.fail('conflict', 'Cancellation could not be confirmed. Try cancelling again.');
+  }
+  async revokeIssued(request) {
+    if (!requestID(request.owner) || !requestID(request.issuedSessionId) || typeof request.issuedSessionHash !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(request.issuedSessionHash)) this.fail('conflict');
+    const identity = this.identity;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const account = await identity.repository.get(request.owner);
+      if (!account) return; // A stale CAS cannot recreate a deleted account.
+      const revision = account.revision;
+      account.sessions = account.sessions.filter(session => !secureEqual(session.hash, request.issuedSessionHash));
+      // Even if absent, advance the account revision to fence the poll's sole
+      // prepared save. Reload/retry is allowed for cleanup, never for issuance.
+      identity.audit(account, 'device-login-cancelled');
+      try { await identity.save(account, revision); return; }
+      catch (error) { if (error.code !== 'conflict') throw error; }
+    }
+    this.fail('conflict', 'Cancellation could not be confirmed. Try cancelling again.');
   }
   async poll(input, context) {
     const identity = this.identity; const request = await this.secret(input, context); const revision = request.revision;
@@ -95,16 +122,24 @@ export class DeviceLogin {
       if (!await this.save(request, revision)) return { status: 'slow_down', interval: request.interval + 5 };
       return { status: 'authorization_pending', interval: request.interval };
     }
-    // Consume before creating a session: two pollers cannot both obtain owner
-    // credentials. Cross-resource failure loses the handoff, never replays it.
-    request.status = 'consumed'; request.consumedAt = identity.clock();
-    if (!await this.save(request, revision)) return { status: 'expired_token' };
+    // Prepare against one pre-consume account revision. Cancellation advances
+    // that revision even when this session has not reached account storage yet.
     const account = await identity.repository.get(request.owner);
     if (!account || account.status !== 'active' || !account.sessions.some(session => secureEqual(session.hash, request.approvalSessionHash) && session.expiresAt > identity.clock())) return { status: 'access_denied' };
     const accountRevision = account.revision;
     const result = await identity.session(account, { label: request.label, source: 'device-approval' });
+    const issued = account.sessions.at(-1); issued.deviceRequestId = request.id;
+    request.issuedSessionHash = issued.hash; request.issuedSessionId = issued.id;
+    request.status = 'consumed'; request.consumedAt = identity.clock();
+    if (request.expiresAt <= identity.clock() || !await this.save(request, revision)) return { status: 'expired_token' };
     identity.audit(account, 'device-login-approved');
+    // Never reload/retry this prepared session after a failed account CAS.
     await identity.save(account, accountRevision);
+    const current = await this.repository.get(request.id);
+    if (!current || current.status !== 'consumed' || current.issuedSessionHash !== request.issuedSessionHash) {
+      await this.revokeIssued(request);
+      return { status: 'access_denied' };
+    }
     return { status: 'authorized', ...result };
   }
 }

@@ -65,7 +65,7 @@ test('independent browser audit: repeated submit starts one worker and navigatio
           console.debug('audit-worker:created');
           // Cancel at the actual worker boundary while its real computation is
           // starting. The application still owns lifecycle/termination.
-          if (window.auditCancelOnWorker) queueMicrotask(() => document.querySelector('a[href="/?signin"]').click());
+          if (window.auditCancelOnWorker) queueMicrotask(() => document.querySelector('.pause-setup').click());
         }
         terminate() {
           // Console events emitted during unload can be dropped by DevTools.

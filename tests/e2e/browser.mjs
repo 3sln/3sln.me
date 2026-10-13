@@ -28,3 +28,18 @@ export async function publicAssetCache(page){
     return urls;
   });
 }
+
+// Traverse actual public signup questions; this does not create or activate an account.
+export async function completeSignupQuestions(page,{email,channel='email'}={}){
+ for(let count=0;count<8;count++){
+  const card=page.locator('.signup-wizard');await card.waitFor();
+  if(await card.getByRole('button',{name:/^(Create my account|Crear mi cuenta)$/,exact:true}).count())return;
+  const heading=await card.locator('.wizard-heading').textContent();
+  if(await card.getByRole('button',{name:/^(Use email|Usar correo)$/,exact:true}).count())await card.getByRole('button',{name:channel==='push'?/^(Use notifications|Usar notificaciones)$/:/^(Use email|Usar correo)$/,exact:true}).click();
+  if(await card.locator('input[name=noticeEmail]').count()){if(!email)throw new Error('Signup fixture requires an email for the selected contact channel');await card.locator('input[name=noticeEmail]').fill(email);}
+  if(await card.locator('input[name=termsAccepted]').count())await card.locator('input[name=termsAccepted]').check();
+  await card.getByRole('button',{name:/^(Continue|Continuar)$/,exact:true}).click();
+  await page.waitForFunction(previous=>document.querySelector('.signup-wizard .wizard-heading')?.textContent!==previous,heading);
+ }
+ throw new Error('Signup questions did not reach the credential screen');
+}

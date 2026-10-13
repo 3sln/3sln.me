@@ -27,6 +27,9 @@ const registry=await engine.container.use(['portalContributions'],({portalContri
 // Registry data is immutable; this read composes UI factories once per locale.
 const surfaces=Object.fromEntries(['en','es'].map(locale=>{const localization=createLocalization({locale,catalogue:catalogueForContributions(registry.list('translations'),locale)}),localize=tree=>localizeTree(tree,localization),views=composePortalViews(registry,{t:localization.t,number:localization.number,date:localization.date,localize});return [locale,createApp({views,localize})];}));
 const cancelRecovery=await engine.container.use(['recoveryFile'],({recoveryFile})=>recoveryFile.cancel);
+const cancelDeviceEntry=await engine.container.use(['browser'],({browser})=>browser.cancelDeviceEntry);
+const readSignupCaptcha=await engine.container.use(['browser'],({browser})=>browser.captcha);
+const pauseSetup=await engine.container.use(['browser'],({browser})=>browser.pauseSetup);
 const captureSubmission=await engine.container.use(['browser'],({browser})=>browser.captureSubmission);
 const readModel=await engine.container.use(['state'],({state})=>state.snapshot);
 const prepareBeamDestination=await engine.container.use(['beaming'],({beaming})=>beaming.prepareDestination);
@@ -44,7 +47,7 @@ const constructors={
   'add-recovery-question':actions.EditRecoveryQuestion,'remove-recovery-question':actions.EditRecoveryQuestion,
   'move-recovery-question':actions.EditRecoveryQuestion,'edit-recovery-question':actions.EditRecoveryQuestion,'set-pending-passkey':actions.SetPendingPasskey,
   'set-pending-password':actions.SetPendingPassword,'prepare-recovery':actions.PrepareRecovery,
-  'signup-channel':actions.ChooseSignupChannel,'setup-contact-mode':actions.SetupContactMode,'recheck-setup-contact':actions.RecheckSetupContact,'start-setup-email':actions.StartSetupEmail,'confirm-setup-email':actions.ConfirmSetupEmail,'start-setup-push':actions.StartSetupPush,'setup-push-proof':actions.ConfirmSetupPush,
+  'signup-channel':actions.ChooseSignupChannel,'signup-next':actions.SignupNext,'signup-back':actions.SignupBack,'setup-contact-mode':actions.SetupContactMode,'recheck-setup-contact':actions.RecheckSetupContact,'start-setup-email':actions.StartSetupEmail,'confirm-setup-email':actions.ConfirmSetupEmail,'start-setup-push':actions.StartSetupPush,'setup-push-proof':actions.ConfirmSetupPush,
   'download-recovery':actions.DownloadRecovery,'confirm-recovery':actions.ConfirmRecovery,
   'email-signin':actions.RequestEmailSignIn,'confirm-email':actions.ConfirmEmail,
   unsubscribe:actions.UnsubscribeChannel,'send-contact-message':actions.SendContactMessage,
@@ -61,7 +64,7 @@ const constructors={
   'link-email':actions.LinkEmail,'revoke-grant':actions.RevokeGrant,
   'add-passkey':actions.AddPasskey,'remove-passkey':actions.RemovePasskey,
   'revoke-device':actions.RevokeDevice,'revoke-other-devices':actions.RevokeOtherDevices,
-  'start-device':actions.StartDeviceLogin,'cancel-device':actions.CancelDeviceLogin,
+  'start-device':actions.StartDeviceLogin,'device-proof-ready':actions.PrepareDeviceQR,'cancel-device':actions.CancelDeviceLogin,
   'inspect-device':actions.InspectDeviceLogin,'approve-device':actions.ApproveDeviceLogin,
   'deny-device':actions.DenyDeviceLogin,'set-language':actions.SetLanguage,
   'save-shortcut':actions.SetShortcut,'reset-shortcut':actions.ResetShortcuts,
@@ -70,7 +73,7 @@ const constructors={
   'save-semantic-preferences':actions.SaveSemanticPreferences,'billing-portal':actions.BillingPortal,'search-space':actions.SearchSpace,
   'search-next-page':actions.SearchSpace,'read-search-message':actions.ReadSearchMessage
 };
-function dispatchIntent(input){if(input.kind==='save-resource'&&readModel().modal?.provider?.id==='google-drive'){if(input.nativeEvent?.isTrusted!==true)return;input={...input,kind:'start-google-drive'};}if(['enable-automation','confirm-automation'].includes(input.kind)&&input.nativeEvent?.isTrusted!==true)return;let detail={...input};delete detail.nativeEvent;if(input.kind==='accept-beam'){if(!input.files?.length){engine.dispatch(new actions.ReportCommandError({message:'Select at least one file.'}));return;}detail={...input,destination:prepareBeamDestination(input.files,input.mode)};detail.destination.catch(()=>{});}if(input.form){detail={...detail,operationId:captureSubmission(input.form)};delete detail.form;}if(detail.kind==='run-command'){dispatchCommand(detail.id);return;}const Action=constructors[detail.kind]??actions.NavigateSpace;engine.dispatch(new Action(detail));if(detail.kind==='navigate'&&detail.view==='beaming')engine.dispatch(new beamActions.LoadBeaming());if(detail.kind==='navigate'&&detail.view==='conversations')engine.dispatch(new conversationActions.LoadConversations());if(detail.kind==='navigate'&&detail.view==='connected-apps')engine.dispatch(new mcpActions.LoadMCPGrants());if(detail.kind==='navigate'&&detail.view==='automation')engine.dispatch(new automationActions.LoadAutomation());}
+function dispatchIntent(input){if(input.kind==='cancel-device'||input.kind==='set-auth'&&readModel().captchaPurpose==='device')cancelDeviceEntry();if(input.kind==='signup'&&readModel().config.localDevelopment!==true&&!readSignupCaptcha(readModel().config).turnstileToken){engine.dispatch(new actions.ReportCommandError({message:'The security check is still running. Please wait a moment and try again.'}));return;}if(input.kind==='pause-setup'){cancelRecovery();pauseSetup();return;}if(input.kind==='save-resource'&&readModel().modal?.provider?.id==='google-drive'){if(input.nativeEvent?.isTrusted!==true)return;input={...input,kind:'start-google-drive'};}if(['enable-automation','confirm-automation'].includes(input.kind)&&input.nativeEvent?.isTrusted!==true)return;let detail={...input};delete detail.nativeEvent;if(input.kind==='accept-beam'){if(!input.files?.length){engine.dispatch(new actions.ReportCommandError({message:'Select at least one file.'}));return;}detail={...input,destination:prepareBeamDestination(input.files,input.mode)};detail.destination.catch(()=>{});}if(input.form){detail={...detail,operationId:captureSubmission(input.form)};delete detail.form;}if(detail.kind==='run-command'){dispatchCommand(detail.id);return;}const Action=constructors[detail.kind]??actions.NavigateSpace;engine.dispatch(new Action(detail));if(detail.kind==='navigate'&&detail.view==='beaming')engine.dispatch(new beamActions.LoadBeaming());if(detail.kind==='navigate'&&detail.view==='conversations')engine.dispatch(new conversationActions.LoadConversations());if(detail.kind==='navigate'&&detail.view==='connected-apps')engine.dispatch(new mcpActions.LoadMCPGrants());if(detail.kind==='navigate'&&detail.view==='automation')engine.dispatch(new automationActions.LoadAutomation());}
 function dispatchCommand(id){try{engine.dispatch(new RunPortalCommand(registry,id)).next('complete').catch(error=>engine.dispatch(new actions.ReportCommandError({message:error.message})));}catch(error){engine.dispatch(new actions.ReportCommandError({message:error.message}));}}
 root.addEventListener('3sln-intent',event=>{event.stopPropagation();dispatchIntent(event.detail);});
 engine.feed.addEventListener('portal-command-requested',event=>dispatchCommand(event.detail.id));

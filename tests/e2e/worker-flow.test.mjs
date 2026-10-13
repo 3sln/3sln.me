@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {launch,baseURL,virtualAuthenticator,waitForApp,screenshot,publicAssetCache} from './browser.mjs';
+import {launch,baseURL,virtualAuthenticator,waitForApp,screenshot,publicAssetCache,completeSignupQuestions} from './browser.mjs';
 
 // These checks intentionally run against wrangler.local.jsonc only. Never point
 // this mutation suite at a deployed service. Turnstile's explicit local test
@@ -53,9 +53,9 @@ async function ownerAPI(page,path,body,method='POST'){
 }
 test('real passkey signup, confirmation gate, sign out and assertion login',async t=>{
   const {page,context}=await setup(t);await virtualAuthenticator(context,page);
-  await page.locator('.auth-card').getByRole('button',{name:'Sign in',exact:true}).click();await page.getByRole('heading',{name:'Good to see you.',exact:true}).waitFor();await page.getByRole('button',{name:'Create a 3sln.me account',exact:true}).click();await page.getByRole('heading',{name:'Your space starts here.',exact:true}).waitFor();
+  await page.locator('.auth-card').getByRole('button',{name:'Sign in',exact:true}).click();await page.getByRole('heading',{name:'Good to see you.',exact:true}).waitFor();await page.getByRole('button',{name:'Create a 3sln.me account',exact:true}).click();await page.getByRole('heading',{name:'How would you like to sign in?',exact:true}).waitFor();
   assert.equal(await page.getByLabel('Your handle').count(),0);assert.equal(await page.locator('input[type=email]').count(),0);
-  await page.getByRole('checkbox').check();await page.getByRole('button',{name:'Create my account'}).click();
+  await completeSignupQuestions(page);await page.getByRole('button',{name:'Create my account'}).click();
   await page.getByRole('heading',{name:'Keep a way back in.'}).waitFor();
   assert.equal((await context.request.get(`${baseURL}/api/session`)).status(),200);
   assert.equal((await (await context.request.get(`${baseURL}/api/session`)).json()).authenticated,false);
@@ -72,11 +72,14 @@ test('real passkey signup, confirmation gate, sign out and assertion login',asyn
   await page.getByRole('button',{name:'Resources',exact:true}).click();await screenshot(page,'live-resources-desktop');
   await page.getByRole('button',{name:'Account & security',exact:true}).click();await screenshot(page,'live-security-desktop');
   await page.setViewportSize({width:390,height:844});await screenshot(page,'live-security-mobile');
+  const tvContext=await browser.newContext({viewport:{width:1440,height:1000},extraHTTPHeaders:{'CF-Connecting-IP':'198.51.100.222'}});t.after(()=>tvContext.close());const tv=await tvContext.newPage();tv.setDefaultTimeout(15000);await tv.goto(baseURL+'/?signin');const created=tv.waitForResponse(response=>response.url().endsWith('/api/auth/device/start'));await tv.getByRole('button',{name:'Use phone / TV QR',exact:true}).click();const device=await(await created).json();await tv.getByRole('heading',{name:'A new screen. The same you.',exact:true}).waitFor();assert.equal(await tv.getByRole('button',{name:'Show device QR',exact:true}).count(),0);await tv.locator('.device-qr').waitFor();assert.equal((await(await tvContext.request.get(baseURL+'/api/session')).json()).authenticated,false);await screenshot(tv,'live-automatic-tv-qr');
+  await page.goto(device.verificationUriComplete);await page.getByLabel('Type the code shown on the requesting screen',{exact:true}).fill(device.userCode);await page.getByRole('checkbox',{name:'I compared the codes and want this device to access my account.',exact:true}).check();await page.getByRole('button',{name:'Approve this device',exact:true}).click();await page.getByRole('heading',{name:'Device approved.',exact:true}).waitFor();await tv.locator('.app-shell').waitFor();assert.equal((await(await tvContext.request.get(baseURL+'/api/session')).json()).account.id,assigned.id);await screenshot(tv,'live-automatic-tv-approved');
+
 });
 test('real password setup resumes, recovery rotates, contacts constrain messages, and private APIs never cache',async t=>{
   const {page,context}=await setup(t);
   await page.getByRole('button',{name:'Password',exact:true}).click();assert.equal(await page.getByLabel('Your handle').count(),0);
-  await page.getByLabel('Password',{exact:true}).fill('Test only long password 2026!');await page.getByRole('checkbox').check();await page.getByRole('button',{name:'Create my account'}).click();
+  await completeSignupQuestions(page);await page.getByLabel('Password',{exact:true}).fill('Test only long password 2026!');await page.getByRole('button',{name:'Create my account'}).click();
   await page.getByRole('heading',{name:'Keep a way back in.'}).waitFor();await page.reload();
   const recovery=await finishRecoveryDownload(page);
   const assigned=(await (await context.request.get(`${baseURL}/api/session`)).json()).account;assertAssignedIdentity(assigned);

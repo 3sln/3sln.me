@@ -28,8 +28,8 @@ async function fixture(){
 }
 
 test('signup assigns names without asking for a base; login and localized setup display the complete returned handle',()=>{
- const signup=render(authView,base);assert.equal(signup.querySelector('[name=handle]'),null);assert.match(signup.textContent,/unique handle starting with n\./);
- const spanish=render(authView,base,'es');assert.match(spanish.textContent,/nombre de usuario único/);
+ const signup=render(authView,{...base,signupStep:'credential',signupTermsAccepted:true});assert.equal(signup.querySelector('[name=handle]'),null);assert.match(signup.textContent,/unique handle starting with n\./);
+ const spanish=render(authView,{...base,signupStep:'credential',signupTermsAccepted:true},'es');assert.match(spanish.textContent,/nombre de usuario único/);
  const login=render(authView,{...base,auth:'login'}),input=login.querySelector('[name=handle]');
  const pattern=new RegExp('^(?:'+input.pattern+')$','v');for(const name of ['N.OI','n.2a','7alias','Alice'])assert.equal(pattern.test(name),true);assert.equal(pattern.test('name@evil.example'),false);
  const setup=render(recoveryView,{...base,pending:true,pendingStage:'recovery',pendingHandle:'n.2a',route:{kind:'recovery-setup'}},'es');assert.match(setup.textContent,/Tu nombre de usuario asignado/);assert.equal(setup.querySelector('strong[translate=no]').textContent,'n.2a@space.example');
