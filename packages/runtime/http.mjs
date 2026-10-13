@@ -22,10 +22,10 @@ function deviceCookie(request,local){const name=local?'bindle_device':'__Host-bi
 export function subnet(value){if(/^\d+\.\d+\.\d+\.\d+$/.test(value))return value.split('.').slice(0,3).join('.')+'/24';if(value.includes(':')){const [left,right='']=value.toLowerCase().split('::');const a=left?left.split(':'):[],b=right?right.split(':'):[];const groups=[...a,...Array(Math.max(0,8-a.length-b.length)).fill('0'),...b];return groups.slice(0,3).map(x=>parseInt(x||'0',16).toString(16)).join(':')+'::/48';}return 'unknown';}
 async function pseudonym(value,secret){const key=await crypto.subtle.importKey('raw',encoder.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);const bytes=new Uint8Array(await crypto.subtle.sign('HMAC',key,encoder.encode(value)));return [...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');}
 async function consume(env,key,windowMs,limit,lifetime=false){return env.ABUSE.consume(key,{windowMs,limit,lifetime});}
-async function limit(env,{operation,remoteIP,region,handle,phase}){
+async function limit(env,{operation,remoteIP,region,handle,phase,onDenied}){
   const secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY;if(!secret)return false;
   const ip=await pseudonym(remoteIP||'unknown',secret);const network=await pseudonym(subnet(remoteIP||'unknown'),secret);
-  return enforceAbusePolicy({consume:window=>consume(env,window.key,window.windowMs,window.limit,window.lifetime===true)},{operation,phase,ipHash:ip,subnetHash:network,handleHash:handle?await pseudonym(handle,secret):undefined,regionHash:await pseudonym(region||'unknown',secret),signupLimits:env});
+  return enforceAbusePolicy({consume:async window=>{const admitted=await consume(env,window.key,window.windowMs,window.limit,window.lifetime===true);if(!admitted)onDenied?.(window);return admitted;}},{operation,phase,ipHash:ip,subnetHash:network,handleHash:handle?await pseudonym(handle,secret):undefined,regionHash:await pseudonym(region||'unknown',secret),signupLimits:env});
 }
 async function turnstile(env,input){
   if(env.LOCAL_DEVELOPMENT==='true'&&input.token==='local-browser-test-token')return true;
@@ -87,7 +87,7 @@ export default {
    if(path==='/manifest.webmanifest'&&request.method==='GET'){const asset=await env.ASSETS.fetch(request);const manifest=await asset.json();const name=env.BRAND_NAME||'3sln.me';return new Response(JSON.stringify({...manifest,name,short_name:name,...name==='3sln.me'?{}:{icons:[{src:'/generic-icon.svg',sizes:'any',type:'image/svg+xml',purpose:'any'}]}}),{headers:{'Content-Type':'application/manifest+json','Cache-Control':'no-cache'}});}
    const signedContact=/^\/users\/((?:[a-z0-9][a-z0-9_-]{2,31}|n\.[0-9abcdefghjkmnpqrstvwxyz]{1,9}))\/contact\/([a-f0-9-]{36})$/.exec(path);
    if(signedContact||path==='/api/messages'&&request.method==='OPTIONS'){
-    const publicHeaders={Vary:'Accept','Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, HEAD, POST, OPTIONS','Access-Control-Allow-Headers':'Accept, Content-Type, Authorization, Idempotency-Key','X-Robots-Tag':'noindex, nofollow, nosnippet'};
+    const publicHeaders={Vary:'Accept','Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, HEAD, POST, OPTIONS','Access-Control-Allow-Headers':'Accept, Content-Type, Authorization, Idempotency-Key','Access-Control-Expose-Headers':'Retry-After','X-Robots-Tag':'noindex, nofollow, nosnippet'};
     if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{...privateHeaders,...publicHeaders}});
     if(signedContact){
      if(!['GET','HEAD','POST'].includes(request.method))return json({error:'method_not_allowed'},405,{...publicHeaders,Allow:'GET, HEAD, POST, OPTIONS'});
@@ -95,7 +95,7 @@ export default {
      const representation=selectContactRepresentation(request.headers.get('Accept')||'*/*');
      if(request.method==='GET'&&representation==='text/html'){const page=await securePage(await brandPage(await env.ASSETS.fetch(new Request(new URL('/',url),request)),env));const headers=new Headers(page.headers);for(const [key,value]of Object.entries(publicHeaders))headers.set(key,value);return new Response(page.body,{status:page.status,headers});}
      if(!representation&&request.method!=='POST')return json({error:'not_acceptable'},406,publicHeaders);
-     if(!await limit(env,{operation:'message',remoteIP:request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown')}))return json({error:'rate_limited'},429,publicHeaders);
+     let ingressRetry=3600;if(!await limit(env,{operation:'message',remoteIP:request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown'),onDenied:window=>ingressRetry=Math.ceil(window.windowMs/1000)}))return json({error:'rate_limited'},429,{...publicHeaders,'Retry-After':String(ingressRetry)});
      let claims;try{const sig=url.searchParams.get('sig');if(!sig||sig.length>16384)throw new Error();claims=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(sig.split('.')[1].replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0))));}catch{return json({error:'unauthorized',message:'This contact link is invalid or no longer active.'},401,publicHeaders);}
      if(typeof claims.sub!=='string'||!/^[a-f0-9-]{36}$/.test(claims.sub))return json({error:'unauthorized'},401,publicHeaders);
      const recipient=await env.IDENTITY_REPOSITORY.get(claims.sub);if(!recipient||recipient.status!=='active'||recipient.handle!==signedContact[1])return json({error:'unauthorized'},401,publicHeaders);
@@ -126,7 +126,7 @@ export default {
    // Public delivery uses the contact bearer token, not the owner's session or CSRF.
    const landing=/^\/users\/((?:[a-z0-9][a-z0-9_-]{2,31}|n\.[0-9abcdefghjkmnpqrstvwxyz]{1,9}))\/message$/.exec(path);
    if((path==='/api/messages'||landing)&&request.method==='POST'&&request.headers.get('Authorization')?.startsWith('Bearer ')){
-    if(!await limit(env,{operation:'message',remoteIP:request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown')}))return json({error:'rate_limited',message:'Please wait before sending another message.'},429);
+    let ingressRetry=3600;if(!await limit(env,{operation:'message',remoteIP:request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown'),onDenied:window=>ingressRetry=Math.ceil(window.windowMs/1000)}))return json({error:'rate_limited',message:'Please wait before sending another message.'},429,{'Access-Control-Allow-Origin':'*','Access-Control-Expose-Headers':'Retry-After','Retry-After':String(ingressRetry)});
     const input=await body(request,1500000);const token=request.headers.get('Authorization').slice(7);if(token.length>16384)return json({error:'unauthorized'},401);
     let claims;try{claims=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(token.split('.')[1].replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0))));}catch{return json({error:'unauthorized'},401);}
     // The unverified subject is used only to route; AccountObject cryptographically
@@ -217,7 +217,7 @@ export default {
    const secured=await securePage(immutable?asset:await brandPage(asset,env),path==='/recovery-kdf-worker.mjs'||/^\/assets\/scripts\/recovery-kdf-worker\.[a-f0-9]{10}\.js$/.test(path),immutable);
    if(/^\/packages\/sdk\/src\/(?:login-element|identity)\.mjs$/.test(path)||/^\/assets\/packages\/sdk\/src\/(?:login-element|identity)\.[a-f0-9]{10}\.js$/.test(path)){const headers=new Headers(secured.headers);headers.set('Access-Control-Allow-Origin','*');if(!immutable)headers.set('Cache-Control','no-cache');return new Response(secured.body,{status:secured.status,headers});}
    return secured;
-  }catch(error){const pathname=new URL(request.url).pathname;const cap=/^\/users\/[^/]+\/contact\/[^/]+$/.test(pathname)||pathname==='/api/messages'&&request.headers.get('Authorization')?.startsWith('Bearer ');const headers=cap?{'Access-Control-Allow-Origin':'*','X-Robots-Tag':'noindex, nofollow, nosnippet'}:{};if(Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0)headers['Retry-After']=String(error.retryAfter);if(error instanceof IdentityFault||error instanceof MessagingFault||error instanceof StorageError||error.status)return json({error:error.code||'invalid_request',message:error.message},status(error),headers);if(env.LOCAL_DEVELOPMENT==='true')console.error('Local runtime exception:',error.name,error.message);return json({error:'internal_error',message:'We could not complete this request. Please try again.'},500,headers);}
+  }catch(error){const pathname=new URL(request.url).pathname;const cap=/^\/users\/[^/]+\/contact\/[^/]+$/.test(pathname)||/^(?:\/api\/messages|\/users\/[^/]+\/message)$/.test(pathname)&&request.headers.get('Authorization')?.startsWith('Bearer ')||/^\/api\/conversations\/(?:identity|invitations|inbox)\/[a-f0-9-]{36}$/.test(pathname)||/^\/api\/conversations\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/join$/.test(pathname)||/^\/api\/conversations\/[a-f0-9-]{36}\/[a-f0-9-]{36}$/.test(pathname)&&request.headers.get('Authorization')?.startsWith('Bearer ');const headers=cap?{'Access-Control-Allow-Origin':'*','Access-Control-Expose-Headers':'Retry-After','X-Robots-Tag':'noindex, nofollow, nosnippet'}:{};if(Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0)headers['Retry-After']=String(error.retryAfter);if(error instanceof IdentityFault||error instanceof MessagingFault||error instanceof StorageError||error.status)return json({error:error.code||'invalid_request',message:error.message},status(error),headers);if(env.LOCAL_DEVELOPMENT==='true')console.error('Local runtime exception:',error.name,error.message);return json({error:'internal_error',message:'We could not complete this request. Please try again.'},500,headers);}
   finally{engine?.dispose();}
  },
  async scheduled(controller,env,ctx){

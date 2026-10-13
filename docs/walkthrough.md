@@ -226,7 +226,7 @@ Production federation and public release remain gated. This verifies the impleme
 
 ## 28. Included storage and temporary object links
 
-Every account has built-in storage ready to assign to apps. Resources shows its shared account storage meter and a separate monthly storage-write allowance, distinguishes it from external connections, and prevents disconnecting the built-in resource. These screenshots show the actual local Worker account on desktop and a narrow phone; no storage connector was added to make the example work.
+Every account has built-in storage ready to assign to apps. Resources shows its shared account storage meter and a one rolling daily and hourly activity allowance, distinguishes it from external connections, and prevents disconnecting the built-in resource. These screenshots show the actual local Worker account on desktop and a narrow phone; no storage connector was added to make the example work.
 
 ![Included account storage and quota](walkthrough-assets/built-in-storage-desktop.png)
 
@@ -234,4 +234,4 @@ Every account has built-in storage ready to assign to apps. Resources shows its 
 
 The browser test used an app's scoped resource token to mint a write-only URL for one object with a fixed size and create condition, uploaded raw bytes, then minted a read-only URL and downloaded the same bytes. Both used the required headers returned by the contract. Uploading through the read URL was denied; revoking the app grant immediately denied the provider-proxy download URL. Prefix confinement and the account quota remain enforced. Native provider URLs may remain usable until expiry, which is explained during consent.
 
-The write meter counts writes and replacements even when total stored bytes stay unchanged. Exhaustion explains that uploads and replacements pause while reading and deletion remain available. Separate browser fault fixtures verify Spanish labels and a 429 resource-save response: the form keeps its draft, displays a clear retry message, and sends no automatic second request.
+The activity meter combines covered changes and storage write attempts in one ledger. Each attempt uses a unit, so a single action can consume multiple units; replacements count even when stored bytes stay unchanged. Daily usage covers the preceding 24 hours and hourly usage the preceding hour. Plus and Pro share the same activity limits. Exhaustion pauses covered changes and uploads until earlier activity leaves the rolling window; reading, exporting, deleting and security controls remain available. Separate browser fault fixtures verify Spanish labels and a 429 resource-save response: the form keeps its draft, displays a clear retry message, and sends no automatic second request.

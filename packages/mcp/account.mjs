@@ -19,7 +19,6 @@ export async function mcpOperation(account,owner,clientId,tool,args){
    const resource=await account.metadata.get(`resource/${id}`);
    if(resource.provider==='hosted'){const item=await account.metadata.get(`hosted/${id}/${encodeURIComponent(args.key)}`);if(item?.size>65536)fail('result_too_large','Download this item through the account interface.',413);}
   }
-  if(tool==='item_delete'&&!await account.metadata.get(`rpc-journal/${encodeURIComponent(`mcp:${clientId}`)}/${args.requestId}`))await account.admitWork(owner);
   return account.federationRPC({subject:`${account.config.APP_ORIGIN}/entities/${owner}`,clientId:`mcp:${clientId}`,resource:`${account.config.APP_ORIGIN}/entities/${owner}/resources/${id}`,contract:'https://3sln.me/artefacts/contracts/object-storage/v1',method,args:input,tx:args.requestId??crypto.randomUUID()});
  }
  if(tool==='items_list')return account.messagePage(owner,{collection:id,limit:args.limit??20,cursor:args.cursor});
@@ -39,7 +38,7 @@ export async function mcpOperation(account,owner,clientId,tool,args){
   return {item:{id:record.id,mimeType:record.mimeType,size:record.size,tags:record.tags,classification:record.classification},dataBase64:btoa(String.fromCharCode(...payload.bytes))};
  }
  if(tool==='item_write'&&(!args.actions||Object.keys(args.actions).some(k=>!['tags','classification','quarantined','read'].includes(k))))fail('invalid_args','Only message metadata can be changed.',400);
- await account.admitWork(owner);await account.metadata.put(journal,{fingerprint,state:'reserved',createdAt:Date.now()});
+ if(tool==='item_write')await account.admitWork(owner,{clientId:`mcp:${clientId}`});await account.metadata.put(journal,{fingerprint,state:'reserved',createdAt:Date.now()});
  let result;
  if(tool==='item_write'){
   result=await account.updateMessage(owner,args.key,args.actions);

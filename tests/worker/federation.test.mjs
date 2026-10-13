@@ -34,12 +34,13 @@ test('actual account-local Federation alarm prunes expired credentials while ret
  const f=await fixture(t);await f.json(await f.preferences());assert.ok(await f.stub.alarmAt());await f.stub.expireEphemeral();await f.stub.fireAlarm();const rows=await f.stub.rows();assert.ok(rows.some(([key])=>key.startsWith('federation/preferences/')));assert.ok(rows.some(([key])=>key.startsWith('federation/grant/')));assert.equal(rows.some(([key])=>/^federation\/(?:request|code|token|journal|refresh|family)\//.test(key)),false);assert.equal(rows.find(([key])=>key==='@federation-owner')[1],f.owner);
  assert.equal((await f.preferences()).status,401);
 });
-test('actual Worker signed uploads share the physical write cap, return Retry-After and cannot charge completed replay again',async t=>{
- const f=await fixture(t,{STORAGE_WRITE_FREE_MONTHLY_LIMIT:'1'}),ref=(await f.json(await f.preferences())).result.values.files;
+test('actual Worker signed uploads share the unified activity cap, return Retry-After and cannot charge completed replay again',async t=>{
+ const f=await fixture(t,{STORAGE_WRITE_FREE_PER_DAY:'3'}),ref=(await f.json(await f.preferences())).result.values.files;
  const mint=async key=>(await f.json(await f.rpc(ref.token,ref.id,'presign',{key,operation:'write',size:1,condition:{absent:true}}))).result;
+ const beforeRows=await f.h.accounts.get(f.h.accounts.idFromName(f.owner)).rows();assert.equal(beforeRows.find(([key])=>key==='storage-write/v1')[1].foreground.used,1);
  const first=await mint('one'),route=url=>new URL(url).pathname+new URL(url).search,upload=link=>f.h.request(route(link.url),{method:'PUT',raw:'x',headers:link.requiredHeaders});
  await f.json(await upload(first));await f.json(await upload(first));
  const second=await mint('two'),denied=await upload(second);assert.equal(denied.status,429,await denied.clone().text());assert.ok(Number(denied.headers.get('Retry-After'))>0);assert.match(denied.headers.get('Access-Control-Expose-Headers'),/Retry-After/);
- const rows=await f.h.accounts.get(f.h.accounts.idFromName(f.owner)).rows(),meter=rows.find(([key])=>key==='storage-write/v1')[1];assert.equal(meter.foreground.used,1);const bucket=await f.h.mf.getR2Bucket('BLOBS'),objects=await bucket.list({prefix:'objects/'+f.owner+'/'});assert.equal(objects.objects.length,1);
+ const rows=await f.h.accounts.get(f.h.accounts.idFromName(f.owner)).rows(),meter=rows.find(([key])=>key==='storage-write/v1')[1];assert.equal(meter.foreground.used,3);const bucket=await f.h.mf.getR2Bucket('BLOBS'),objects=await bucket.list({prefix:'objects/'+f.owner+'/'});assert.equal(objects.objects.length,1);
  const read=(await f.json(await f.rpc(ref.token,ref.id,'get',{key:'one'}))).result;assert.equal(read.dataBase64,'eA==');assert.equal((await upload(second)).status,429);assert.equal((await bucket.list({prefix:'objects/'+f.owner+'/'})).objects.length,1);
 });

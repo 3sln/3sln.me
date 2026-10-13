@@ -1,10 +1,10 @@
-# Storage write budget review
+# Storage write and shared activity budget review
 
-Review date: 2026-10-12. Reviewer: independent code-review agent. Human reviewer/date/outcome: **pending**. Production release remains gated. This document records implementation evidence and remaining verification; it does not constitute release approval.
+Initial review date: 2026-10-12; rolling-window follow-up: 2026-10-13. Reviewer: independent code-review agent. Human reviewer/date/outcome: **pending**. Production release remains gated. This document records implementation evidence and remaining verification; it does not constitute release approval.
 
 ## Existing behavior and the requested change
 
-The existing `AccountWorkBudget` meters covered logical mutations and ingest attempts. It already uses durable owner debits, a fixed 16-shard service allocation, nonrefundable prepaid leases and fail-closed handling of uncertain allocation. Source review and independent execution of `node --test tests/work-budget.test.mjs` passed **8/8** checks, covering concurrency, restart, exact partition totals, uncertain allocation, owner binding, billing entitlement and continued reads/deletion/revocation after exhaustion.
+At the initial review, `AccountWorkBudget` metered covered logical mutations and ingest attempts separately. It used durable owner debits, a fixed 16-shard service allocation, nonrefundable prepaid leases and fail-closed handling of uncertain allocation. Source review and independent execution of `node --test tests/work-budget.test.mjs` passed **8/8** checks, covering concurrency, restart, exact partition totals, uncertain allocation, owner binding, billing entitlement and continued reads/deletion/revocation after exhaustion. The final 2026-10-13 follow-up below supersedes that separate active account meter with one shared activity allowance.
 
 That work budget is not a count of physical bucket writes. Hosted object writes, message delivery and conversation inbox ingestion debit work, but archive writes and large stored RPC results can cause additional bucket puts. `offloadMetadata` also contains a bucket-write path, although no active composition caller was found during this review. Updating the same logical key can maintain constant storage usage while causing repeated physical writes. Quota on retained bytes cannot bound this request churn.
 
@@ -12,17 +12,18 @@ The requested control therefore belongs immediately before the platform bucket's
 
 ## Agreed composition and limits
 
-The coordinator approved a separate physical-write meter with these initial defaults:
+The shared activity meter now uses the following requested policy. One covered logical mutation attempt consumes one unit; each actual application-controlled bucket put attempt consumes another. Earlier test evidence below records the initial separate monthly-owner policy; the final follow-up records its replacement.
 
 | Scope | Limit |
 | --- | --- |
-| Service monthly total | 250,000 admitted put attempts |
-| Foreground service pool | 225,000 per UTC month |
-| Archive maintenance service pool | 25,000 per UTC month |
-| Owner foreground monthly pool | Free 1,000; Plus 5,000; Pro 10,000 |
+| Service monthly total | 10,000,000 admitted activity units |
+| Foreground service pool | 9,000,000 units per UTC month |
+| Archive maintenance service pool | 1,000,000 units per UTC month |
+| Owner foreground rolling hour | Free 500 units; Plus and Pro 2,000 units |
+| Owner foreground rolling day | Free 1,000 units; Plus and Pro 10,000 units |
 | Owner archive maintenance pool | 16 per UTC month |
-| Owner rolling-minute burst | 10 |
-| App rolling-minute burst | 5 |
+| Owner rolling-minute burst | 240 units |
+| App rolling-minute burst | 120 units |
 | Retained app burst records | At most 64 per account |
 | Service allocation | Fixed 16 shards; prepaid leases of up to 16 |
 
@@ -48,7 +49,7 @@ Bucket refusal must leave existing objects and metadata intact. A hosted write t
 
 ## Meaning and verification boundaries
 
-This is a ceiling on **covered application-level platform bucket put attempts**. It is not a universal cloud invoice ceiling. Provider-internal retries, reads, listing, retained storage, account/worker compute, metadata persistence, third-party connectors and unrelated operator credentials require separate accounting or operational controls. No current provider prices were used to infer a monetary ceiling in this review.
+The final shared allowance bounds **covered logical admission and application-level platform bucket put attempts combined**. Physical puts are a subset of admitted units, so their ceiling cannot exceed the shared allowance. It is not a universal cloud invoice ceiling. Provider-internal retries, reads, listing, retained storage, account/worker compute, metadata persistence, third-party connectors and unrelated operator credentials require separate accounting or operational controls. No current provider prices were used to infer a monetary ceiling in this review.
 
 The application's current external S3/WebDAV write routes remain unavailable; native S3 write URLs remain disabled. Hosted writes and Google Drive writes already pass logical work admission. The physical platform bucket wrapper must not be described as a meter of every Google API request or a future external S3 upload path. Any future direct provider upload URL needs enforceable reservation before issuance, because its later requests bypass this bucket wrapper.
 
@@ -73,3 +74,27 @@ The final constructor guard rejects foreground bucket puts with `storage_write_u
 Independent execution of `node --test tests/storage-write-budget.test.mjs tests/storage-write-integration.test.mjs` after this change passed **17/17**: eleven budget tests and six integration tests. The new integration case sets the garbage-cleanup pause, rejects a replacement before another provider call, reads the prior object, deletes it, successfully archives and confirms that foreground usage did not increase. The second cleanup marker's equivalent admission branch was verified in source. No additional security probes were performed.
 
 The guard is an admission check, not cancellation of a write already admitted when cleanup later pauses. It applies only while physical metering is enabled. Paused cleanup records deliberately retain outstanding ownership and stop automatic retries; restoring foreground writes requires operator repair of the cleanup condition and retry state. This change does not add automatic unpausing. No blocker was identified in this narrow safety and availability review; production operational approval remains pending.
+
+### Rolling windows and unified activity follow-up — 2026-10-13
+
+The active account controller now aliases `workBudget` and `storageWriteBudget` to one instance. Logical admission and physical admission consume the same owner, writer, rolling-hour/day and shared-service counters. A simple hosted put normally consumes two foreground units; additional physical outcomes may consume more. A request can consume its logical unit and then be refused before its physical stage. Both admitted stages remain charged after failed I/O. This is admission accounting, not a claim that every request costs one unit or that every admitted unit reached a provider.
+
+The two configuration flags independently select logical and physical admission into that instance. Both enabled paths require a valid authority; explicit malformed flags are rejected. Physical wrappers still strip internal attribution when physical metering is disabled. Production compositions enable both paths; deliberately disabled fixture paths do not prove both are protected. The logical wrapper forwards only owner initialization and writer identity, so its callers cannot request archive admission or select their own unit count. Initialization binds an absent durable owner and refuses rebinding. Hosted, managed Drive, MCP, contact and conversation inbox logical admission now uses the same stable attribution as its corresponding physical stage. MCP deletion was exempted from logical admission to preserve deletion after exhaustion.
+
+Hour/day history uses at most 1,441 chronological minute buckets, with validated row shapes and bounded counts. A save exceeding 120,000 serialized JSON characters fails closed; generated state uses ASCII keys and numeric history. Buckets expire at the end of their minute plus the window, conservatively delaying allowance recovery by up to one minute. Exact timestamps still govern minute bursts. Review corrected early minute/cardinality exits that could return a shorter retry delay than a simultaneously exhausted hour/day window. Foreground retry timing now uses the longest applicable wait; exhausted archive-month admission also accounts for an overlapping burst wait. Status timestamps represent next bucket recovery, or one-unit eligibility within that individual window when exhausted; they do not promise a full reset or availability under every other control.
+
+Version 2 account state remains under `storage-write/v1`, preserving funded service leases and monthly accounting. Its rolling history survives month rollover, restart and paid-plan changes. Both paid plans use identical limits; current durable entitlement is checked on admission, and expiry applies Free limits to retained history without resetting usage. Migration imports the old retained minute events as minimum known history. Older hourly/daily activity cannot be reconstructed from monthly totals, and legacy maintenance events in that retained burst may be conservatively included. The old `work/month` record and old work-service credits remain untouched and are not converted into the shared meter. Earlier binaries do not understand version 2 state; counter deletion or rollback is not a supported downgrade.
+
+The shared service ledger and its pinned monthly allocation policy remain unchanged. Consequently, recovering account rolling allowance does not guarantee admission: a depleted service partition or archive reserve can still block activity until the UTC month boundary. Fixed partitions can exhaust while capacity remains elsewhere. Raising a configured ceiling does not reset a populated ledger or retroactively change its pinned policy. Active account monthly foreground quotas from the old logical and physical meters are no longer enforced; the retained legacy module and its tests are historical compatibility evidence.
+
+Independent final execution of `node --test tests/storage-write-budget.test.mjs tests/storage-write-integration.test.mjs tests/work-budget.test.mjs` passed **36/36**: sixteen rolling-accounting checks, twelve account/bucket integration checks and eight legacy/account/Node HTTP checks. Evidence covers combined two-unit admission, stable writer sharing, failed I/O without refund, completed hosted replay, read/delete availability, independent flags, missing authority, owner initialization, untouched legacy work credits, v1 lease migration, entitlement expiry, typed malformed-history rejection, conservative recovery boundaries and rolling history retained across a service-month transition. An earlier rolling-only run passed 22/22 before unified composition was added. No security attack probes were performed. No remaining blocker was identified in this focused review; full-suite, real Worker/browser verification and operational release approval remain separate coordinator gates.
+
+### Message API admission and HTTP response follow-up — 2026-10-13
+
+Signed-contact multipart delivery and bearer `POST /api/messages` converge on the same recipient `receive` method. Both logical and physical admission use `contact:<parent-grant-id>`; rotating the minted bearer or switching delivery routes does not create another allowance. Completed receipt lookup precedes admission, and replay still verifies current authority and the original content fingerprint. Conversation inbox storage similarly uses the verified source identity plus conversation ID, with durable event/receipt checks before logical and physical admission. Recipient limits are checked before a denied physical stage can call the bucket. Existing shared network ingress limits remain additional controls; rotating tokens does not change their network keys.
+
+Review identified and confirmed corrections to response propagation: recipient and network rate denials return HTTP **429**, with positive `Retry-After` seconds exposed to cross-origin capability clients. The HTTP ingress limiter reports the denied policy window conservatively because its Boolean authority does not expose the remaining window duration. It does not always report sixty seconds for an hourly denial. Public error CORS includes signed-contact delivery, bearer message routes and public conversation endpoints; cookie-only owner conversation errors do not gain public CORS.
+
+Same-origin conversation RPC retains typed retry hints. Configured HTTP peers preserve a 429 and bounded numeric retry hint for both conversation requests and the contact-token mint used by invitations, rather than converting them to gateway failures. Queue backoff uses the larger of its existing exponential delay and a valid hint of at most 31 days. Invalid hints fall back to existing bounded backoff. A source may correctly return 202 once an event is durably queued even if a recipient is subsequently limited; delivery receipts expose the pending/failed peer state. A 202 is not proof that every recipient inbox has accepted the event. The existing eight-failure pause and explicit retry behavior remain in place.
+
+Independent final execution of `node --test tests/conversations-audit.test.mjs tests/conversations.test.mjs tests/conversations-http.test.mjs tests/worker/message-budget.test.mjs` passed **19/19**, including two actual Worker message checks. The Worker cases verify a newly minted, different bearer replays the multipart message without additional activity or R2 objects, both routes reject new messages at the shared recipient limit with 429 and exposed retry timing, and ten same-network replay requests across both routes exhaust the same ingress window without storage churn. Domain/transport checks cover long recipient retry deferral and bounded 429 hints, including invitation token minting. Public-conversation error classification was also checked in source. The first sandbox run could not start Miniflare's loopback listener; the approved loopback rerun passed. No new security probes were added for this follow-up. No remaining focused blocker was identified; release approval remains pending.
