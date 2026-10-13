@@ -612,3 +612,7 @@ Production discount preparation identified two real-provider mismatches before l
 Discount follow-up final verification: core566/566 and independent billing/payment audit41/41 pass. Provider code entry is enabled; checkout response arithmetic remains bound to the quoted product/currency and authenticated owner. Positive discounted settlement qualifies for permanent paid-handle eligibility; zero-total/credit-only orders do not mint that marker. Negative credit invoices cannot hide an earlier qualifying payment, inclusive order amounts work without an invented tax_behavior field, and tax-only refunds end pending upgrade grace. No UI source changes, live checkout or provider mutations. Final packaging follow-up pending.
 
 Discount follow-up Wrangler deployment dry run passes. Billing remains disabled; ready for operator production catalog/secrets/webhook setup and read-only preflight.
+
+## 2026-10-13 — Operator production Polar product IDs
+
+Operator supplied Paid `c3d5fd76-8330-4e2c-b1ec-4ee90555b994`, Plus `21634e36-3690-4264-bd59-80a898e4f5a4`, Ultra `a494de77-5e43-4daa-8e9d-201866705d8a`; recorded in hosted wrangler.jsonc. Metadata discovery remains authoritative; these configured IDs are available for explicit static mode and operator reference, not proof of verified products. Local sandbox placeholders remain isolated. Organization ID is still unset in tracked hosted config; access token and webhook secret must be configured through secrets. BILLING_ENABLED remains false. No live catalog request or deployment performed.
