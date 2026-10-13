@@ -3,6 +3,7 @@
 // No network, billing calls, or runtime policy changes. See docs/architecture/unit-economics.md.
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { BILLING_PLANS } from '../packages/billing/catalog.mjs';
 
 export const rates = Object.freeze({
   r2GB: .015, r2A: 4.5 / 1e6, r2B: .36 / 1e6,
@@ -20,12 +21,13 @@ export const included = Object.freeze({
 });
 const rounding = { r2GB: 1, r2A: 1e6, r2B: 1e6, doRequests: 1e6,
   doGBSeconds: 1e6, sqlGB: 1, sqlReads: 1e6, sqlWrites: 1e6 };
-export const plans = { free: { gb: .5, annual: 0 }, plus: { gb: 5, annual: 5 }, pro: { gb: 100, annual: 30 } };
+export const plans = Object.fromEntries(Object.values(BILLING_PLANS).map(plan=>[plan.id,{gb:plan.storageBytes/1e9,annual:plan.annualAmount/100}]));
+// Ultra shares Plus's illustrative activity profile; storage size is not a traffic forecast.
 const profiles = {
-  idle: { occupancy: 1, physicalMultiplier: 1.05, requests: [0,0,0], mutations: [0,0,0], sqlGB: [.002,.02,.2], vectors: [0,0,0], queries: [0,0,0], cpuMs: 0, doMs: 0 },
-  typical: { occupancy: .2, physicalMultiplier: 1.1, requests: [1000,5000,20000], mutations: [100,500,2000], sqlGB: [.005,.03,.15], vectors: [1000,10000,50000], queries: [100,300,1000], cpuMs: 5, doMs: 20 },
-  heavy: { occupancy: 1, physicalMultiplier: 1.1, requests: [10000,50000,200000], mutations: [1000,5000,20000], sqlGB: [.03,.15,1], vectors: [5000,25000,100000], queries: [1000,3000,10000], cpuMs: 10, doMs: 50 },
-  abusive: { occupancy: 1, physicalMultiplier: 2, requests: [1e7,1e7,1e7], mutations: [1e7,1e7,1e7], sqlGB: [1,1,1], vectors: [1e6,1e6,1e6], queries: [1e6,1e6,1e6], cpuMs: 20, doMs: 0, alwaysActive: true },
+  idle: { occupancy: 1, physicalMultiplier: 1.05, requests: [0,0,0,0], mutations: [0,0,0,0], sqlGB: [.002,.02,.2,.2], vectors: [0,0,0,0], queries: [0,0,0,0], cpuMs: 0, doMs: 0 },
+  typical: { occupancy: .2, physicalMultiplier: 1.1, requests: [1000,5000,20000,20000], mutations: [100,500,2000,2000], sqlGB: [.005,.03,.15,.15], vectors: [1000,10000,50000,50000], queries: [100,300,1000,1000], cpuMs: 5, doMs: 20 },
+  heavy: { occupancy: 1, physicalMultiplier: 1.1, requests: [10000,50000,200000,200000], mutations: [1000,5000,20000,20000], sqlGB: [.03,.15,1,1], vectors: [5000,25000,100000,100000], queries: [1000,3000,10000,10000], cpuMs: 10, doMs: 50 },
+  abusive: { occupancy: 1, physicalMultiplier: 2, requests: [1e7,1e7,1e7,1e7], mutations: [1e7,1e7,1e7,1e7], sqlGB: [1,1,1,1], vectors: [1e6,1e6,1e6,1e6], queries: [1e6,1e6,1e6,1e6], cpuMs: 20, doMs: 0, alwaysActive: true },
 };
 export function usage(plan, profile, override = {}) {
   if (!plans[plan] || !profiles[profile]) throw new Error('Unknown plan or profile');
@@ -95,12 +97,12 @@ export function launchPolicy() {
   const override = { occupancy: 1, vectors: 1000, queries: 500, embeddingDocuments: 1000, documentTokens: 512, queryTokens: 512 };
   const accounts = Object.keys(plans).map(plan => account(plan, 'typical', override));
   const semantic = a => ['neurons','vectorQueriedDimensions','vectorStoredDimensions'].reduce((n,k)=>n+a.annualLineItems[k],0);
-  const previousPro = account('pro','typical',{occupancy:1});
+  const unrestrictedPlus = account('plus','typical',{occupancy:1});
   return { assumptions: 'Typical base activity at full storage; semantic meters at per-owner launch maxima; monthly document attempts remain conservatively saturated even after lifetime upsert reservations exhaust. Extra budget-authority SQL/DO overhead must be measured.',
     limits: { ownerLifetimeUpsertAttempts: 1000, ownerMonthlyDocumentEmbeddingAttempts: 1000, ownerMonthlyQueries: 500, excerptBytes: 480, reservedTokensPerEmbedding: 512, globalOwners: 1000, globalLifetimeUpserts: 2000000, globalMonthlyEstimatedUSD: 5, globalDailyEstimatedUSD: .5 },
     accounts, annualDirectSemanticPerOwner: semantic(accounts[0]),
-    annualDirectSemanticPreviousPro: semantic(previousPro),
-    annualDirectSemanticProSavings: semantic(previousPro)-semantic(accounts[2]),
+    annualDirectSemanticUnrestrictedPlus: semantic(unrestrictedPlus),
+    annualDirectSemanticPlusSavings: semantic(unrestrictedPlus)-semantic(accounts[2]),
     // Existing stock costs recur even with admission paused; do not confuse $5 work admissions with an invoice cap.
     globalMonthlyMarginalSemanticEstimateAtOneMillionStored: 5 + 1000000*384*rates.vectorQueriedDimensions + 1000000*384*rates.vectorStoredDimensions,
     globalMonthlyMarginalSemanticEstimateAtTwoMillionStored: 5 + 2000000*384*rates.vectorQueriedDimensions + 2000000*384*rates.vectorStoredDimensions };
@@ -109,12 +111,9 @@ export function report() {
   const accounts = Object.keys(plans).flatMap(p=>Object.keys(profiles).map(s=>account(p,s)));
   const ratios = ['typical','heavy'].map(profile=>{
     const free = account('free',profile).annualInfra;
-    return { profile, freeAnnualCost:free, plusFreeAccountsAtZeroMargin:positive(account('plus',profile).annualContribution)/free,
-      proFreeAccountsAtZeroMargin:positive(account('pro',profile).annualContribution)/free,
-      plusFreeAccountsAtHalfContribution:positive(account('plus',profile).annualContribution)/free/2,
-      proFreeAccountsAtHalfContribution:positive(account('pro',profile).annualContribution)/free/2 };
+    return { profile, freeAnnualCost:free, paidPlans:Object.fromEntries(['paid','plus','ultra'].map(plan=>{const contribution=positive(account(plan,profile).annualContribution);return [plan,{freeAccountsAtZeroMargin:contribution/free,freeAccountsAtHalfContribution:contribution/free/2}];})) };
   });
-  const cohorts = [{plan:'free',profile:'typical',count:1000},{plan:'plus',profile:'typical',count:100},{plan:'pro',profile:'typical',count:20}];
+  const cohorts = [{plan:'free',profile:'typical',count:1000},{plan:'paid',profile:'typical',count:100},{plan:'plus',profile:'typical',count:20},{plan:'ultra',profile:'typical',count:2}];
   return { pricingDate:'2026-10-12', currency:'USD', launchPolicy: launchPolicy(), rates, included, rounding, accounts, fullOccupancyTypical: Object.keys(plans).map(p=>account(p,'typical',{occupancy:1})), ratios,
     fleets: [fleet(cohorts),fleet(cohorts,{supportPerAccountYear:.25,otherAnnual:120}),
       fleet(cohorts.map(c=>({...c,profile:'heavy'}))), fleet([{plan:'free',profile:'heavy',count:10000}])] };

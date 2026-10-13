@@ -7,7 +7,7 @@ An account's stored-byte quota does not control request fees: replacing a one-by
 | One app or stable contact/conversation writer | 120 activity units in a rolling 60 seconds |
 | Account, across all writers and resources | 240 activity units in a rolling 60 seconds |
 | Free foreground activity | 500 per rolling hour; 1,000 per rolling day |
-| Plus and Pro foreground activity | 2,000 per rolling hour; 10,000 per rolling day |
+| Paid, Plus and Ultra foreground activity | 2,000 per rolling hour; 10,000 per rolling day |
 | Whole-service admitted activity units | 10,000,000 per UTC month |
 | Service allocation | 9,000,000 foreground activity units; 1,000,000 reserved for archives |
 | Account archive reserve | 16 attempts per UTC month |

@@ -13,6 +13,7 @@
   },
   "durable_objects": {
     "bindings": [
+      {"name":"PLAN_CATALOG","class_name":"PlanCatalogObject"},
       {
         "name": "IDENTITIES",
         "class_name": "IdentityDirectory"
@@ -65,7 +66,8 @@
       "new_sqlite_classes": [
         "FederationObject"
       ]
-    }
+    },
+    {"tag":"v5","new_sqlite_classes":["PlanCatalogObject"]}
   ],
   "r2_buckets": [
     {
@@ -88,8 +90,12 @@
     "RELEASE_READY": "false",
     "BILLING_ENABLED": "false",
     "POLAR_SERVER": "sandbox",
+    "POLAR_METADATA_PREFIX": "3sln_me_",
+    "POLAR_CATALOG_MODE": "metadata",
+    "POLAR_ORGANIZATION_ID": "",
+    "POLAR_PRODUCT_ID_PAID": "",
     "POLAR_PRODUCT_ID_PLUS": "",
-    "POLAR_PRODUCT_ID_PRO": "",
+    "POLAR_PRODUCT_ID_ULTRA": "",
     "VAPID_PUBLIC_KEY": "",
     "ALLOWED_CONNECTOR_HOSTS": "",
     "SEMANTIC_SEARCH_ENABLED": "false",

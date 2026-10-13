@@ -18,7 +18,7 @@ function valid(record){return record?.version===WORK_LAYOUT.version&&typeof reco
  * The immutable 16-way partition can strand capacity in less-active shards. */
 export class AccountWorkBudget{
  constructor({metadata,authority,config={},clock=()=>Date.now()}){Object.assign(this,{metadata,authority,clock});this.limits=workLimits(config);this.tail=Promise.resolve();}
- async status(owner){assertOwner(owner);return this.metadata.transaction(async tx=>{const storedOwner=await tx.get('owner');if(storedOwner&&storedOwner!==owner)fail('forbidden','Account owner mismatch.',403);const now=this.clock(),month=monthAt(now),record=await tx.get(STATE);if(record&&(!valid(record)||record.month>month))fail();const billing=await tx.get(BILLING_STATE_KEY),plan=entitlementFromState(billing?.owner===owner?billing:null,now).plan,used=record?.month===month?record.used:0,limit=this.limits[plan],date=new Date(now);return {enabled:true,month,used,limit,remaining:Math.max(0,limit-used),resetsAt:Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,1),unit:'covered-changes'};});}
+ async status(owner){assertOwner(owner);return this.metadata.transaction(async tx=>{const storedOwner=await tx.get('owner');if(storedOwner&&storedOwner!==owner)fail('forbidden','Account owner mismatch.',403);const now=this.clock(),month=monthAt(now),record=await tx.get(STATE);if(record&&(!valid(record)||record.month>month))fail();const billing=await tx.get(BILLING_STATE_KEY),plan=entitlementFromState(billing?.owner===owner?billing:null,now).plan,used=record?.month===month?record.used:0,limit=this.limits[plan==='paid'?'plus':plan==='plus'||plan==='ultra'?'pro':plan],date=new Date(now);return {enabled:true,month,used,limit,remaining:Math.max(0,limit-used),resetsAt:Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,1),unit:'covered-changes'};});}
  async admit(owner,{initialize=false}={}){const previous=this.tail;let release;this.tail=new Promise(resolve=>release=resolve);await previous;try{return await this.admitSerial(owner,initialize);}finally{release();}}
  async admitSerial(owner,initialize){
   assertOwner(owner);const month=monthAt(this.clock());
@@ -26,7 +26,7 @@ export class AccountWorkBudget{
    const storedOwner=await tx.get('owner');if(storedOwner!==owner){if(storedOwner||!initialize)fail('forbidden','Account owner mismatch.',403);await tx.put('owner',owner);}
    let record=await tx.get(STATE);if(record&&(!valid(record)||record.month>month))fail();if(!record||record.month!==month)record={version:WORK_LAYOUT.version,month,used:0,remaining:0};
    const billing=await tx.get(BILLING_STATE_KEY),plan=entitlementFromState(billing?.owner===owner?billing:null,this.clock()).plan;
-   if(record.used>=this.limits[plan])fail('owner_work_exceeded','The account monthly work limit has been reached. Try again next month.',429);
+   if(record.used>=this.limits[plan==='paid'?'plus':plan==='plus'||plan==='ultra'?'pro':plan])fail('owner_work_exceeded','The account monthly work limit has been reached. Try again next month.',429);
    await tx.put(STATE,{...record,used:record.used+1,remaining:Math.max(0,record.remaining-1)});return record.remaining;
   });
   if(monthAt(this.clock())!==month)fail();if(remaining>0)return true;

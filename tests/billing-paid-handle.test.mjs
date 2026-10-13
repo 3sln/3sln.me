@@ -4,13 +4,13 @@ import {BillingService,PAID_HANDLE_MARKER_PREFIX} from '../packages/billing/serv
 import {BILLING_PLANS,BILLING_STATE_KEY} from '../packages/billing/catalog.mjs';
 import {SqliteMetadata} from '../apps/node/resources.mjs';
 const owner='aa111111-1111-4111-8111-111111111111';
-const config={BILLING_ENABLED:'true',POLAR_SERVER:'sandbox',POLAR_ACCESS_TOKEN:'offline-token',POLAR_WEBHOOK_SECRET:'offline-secret',POLAR_PRODUCT_ID_PLUS:'plus-product',POLAR_PRODUCT_ID_PRO:'pro-product',APP_ORIGIN:'https://billing.example'};
+const config={BILLING_ENABLED:'true',POLAR_SERVER:'sandbox',POLAR_ACCESS_TOKEN:'offline-token',POLAR_WEBHOOK_SECRET:'offline-secret',POLAR_PRODUCT_ID_PAID:'paid-product',POLAR_PRODUCT_ID_PLUS:'plus-product',POLAR_PRODUCT_ID_ULTRA:'ultra-product',APP_ORIGIN:'https://billing.example'};
 const markerKey=PAID_HANDLE_MARKER_PREFIX+'sandbox/'+owner;
 function fixture(){
  const metadata=new SqliteMetadata(':memory:'),calls=[];
- const products=Object.fromEntries(['plus','pro'].map(plan=>{const id=config[`POLAR_PRODUCT_ID_${plan.toUpperCase()}`];return[id,{id,is_archived:false,is_recurring:true,recurring_interval:'year',recurring_interval_count:1,organization_id:'org',prices:[{id:plan+'-price',product_id:id,source:'catalog',is_archived:false,amount_type:'fixed',price_currency:'usd',price_amount:BILLING_PLANS[plan].annualAmount}]}];}));
+ const products=Object.fromEntries(['paid','plus','ultra'].map(plan=>{const id=config[`POLAR_PRODUCT_ID_${plan.toUpperCase()}`];return[id,{id,is_archived:false,is_recurring:true,recurring_interval:'year',recurring_interval_count:1,organization_id:'org',prices:[{id:plan+'-price',product_id:id,source:'catalog',is_archived:false,amount_type:'fixed',price_currency:'usd',price_amount:BILLING_PLANS[plan].annualAmount}]}];}));
  const customer={id:'customer',external_id:owner,organization_id:'org',deleted_at:null,active_subscriptions:[]};
- const order={id:'order',created_at:'2020-01-01T00:00:00Z',paid:true,status:'paid',currency:'usd',net_amount:500,total_amount:550,refunded_amount:0,customer_id:'customer',customer:{...customer},product_id:'plus-product',product:{id:'plus-product',organization_id:'org',is_recurring:true,recurring_interval:'year',recurring_interval_count:1},subscription_id:'subscription',subscription:{id:'subscription',customer_id:'customer',product_id:'plus-product',currency:'usd',amount:500,recurring_interval:'year',recurring_interval_count:1,status:'canceled'}};
+ const order={id:'order',created_at:'2020-01-01T00:00:00Z',paid:true,status:'paid',currency:'usd',net_amount:500,total_amount:550,refunded_amount:0,customer_id:'customer',customer:{...customer},product_id:'paid-product',product:{id:'paid-product',organization_id:'org',is_recurring:true,recurring_interval:'year',recurring_interval_count:1},subscription_id:'subscription',subscription:{id:'subscription',customer_id:'customer',product_id:'paid-product',currency:'usd',amount:500,recurring_interval:'year',recurring_interval_count:1,status:'canceled'}};
  const pages=[{items:[order],pagination:{total_count:1,max_page:1}}];
  const client={products:{get:async id=>{calls.push(['product',id]);return structuredClone(products[id]);}},orders:{list:async query=>{calls.push(['orders',query]);return structuredClone(pages[query.page-1]);}},customers:{getStateExternal:async()=>structuredClone(customer)},subscriptions:{get:async()=>{throw new Error('No active subscriptions should be inspected.');}}};
  const service=new BillingService({metadata,client,config,now:()=>123456});
@@ -18,23 +18,23 @@ function fixture(){
 }
 test('actual historical paid order grants immutable eligibility after cancellation and survives service restart',async()=>{
  const f=fixture();try{
-  assert.equal((await f.service.status(owner)).paidHandleEligible,false);assert.equal(f.calls.length,0);
+  assert.equal((await f.service.status(owner)).paidHandleEligible,false);assert.equal(f.calls.filter(([kind])=>kind==='orders').length,0);
   assert.equal(await f.service.paidHandleEligibility(owner),true);
-  assert.deepEqual(f.calls.find(([kind])=>kind==='orders')[1],{external_customer_id:owner,organization_id:'org',product_id:['plus-product','pro-product'],status:'paid',limit:100,page:1});
+  assert.deepEqual(f.calls.find(([kind])=>kind==='orders')[1],{external_customer_id:owner,organization_id:'org',product_id:['paid-product','plus-product','ultra-product'],status:'paid',limit:100,page:1});
   const marker=await f.metadata.get(markerKey);assert.equal(marker.source,'polar');assert.equal(marker.orderId,'order');
   await f.service.reconcile(owner);assert.equal((await f.service.entitlement(owner)).plan,'free');
   const afterReconcile=f.calls.length;
   f.client.orders.list=async()=>{throw new Error('must use retained marker');};
   const restarted=new BillingService({metadata:f.metadata,client:f.client,config,now:()=>999999999});
   assert.equal(await restarted.paidHandleEligibility(owner),true);assert.equal((await restarted.status(owner)).paidHandleEligible,true);
-  assert.equal(f.calls.length,afterReconcile);assert.deepEqual(await f.metadata.get(markerKey),marker);
+  assert.equal(f.calls.filter(([kind])=>kind==='orders').length,1);assert.deepEqual(await f.metadata.get(markerKey),marker);
  }finally{f.close();}
 });
 test('active plan fixtures, unpaid zero-value discounted refunded and wrong-currency orders cannot create eligibility',async()=>{
  for(const patch of [{paid:false},{status:'pending'},{net_amount:0},{net_amount:499},{refunded_amount:1},{currency:'eur'},{total_amount:499}]){
   const f=fixture();try{
-   await f.metadata.put(BILLING_STATE_KEY,{owner,source:'polar',plan:'pro',validUntil:999999999,status:'active'});
-   Object.assign(f.order,patch);assert.equal(await f.service.paidHandleEligibility(owner),false);assert.equal(await f.metadata.get(markerKey),undefined);
+   await f.metadata.put(BILLING_STATE_KEY,{owner,source:'polar',catalogVersion:2,plan:'plus',validUntil:999999999,status:'active'});
+   Object.assign(f.order,patch);if(patch.currency)await assert.rejects(f.service.paidHandleEligibility(owner),{code:'billing_provider_unavailable'});else assert.equal(await f.service.paidHandleEligibility(owner),false);assert.equal(await f.metadata.get(markerKey),undefined);
    assert.equal((await f.service.status(owner)).paidHandleEligible,false);
   }finally{f.close();}
  }
@@ -80,7 +80,7 @@ test('verified past payment survives billing disablement and later catalog rotat
  const f=fixture();try{
   assert.equal(await f.service.paidHandleEligibility(owner),true);
   const marker=await f.metadata.get(markerKey),count=f.calls.length;
-  const disabled=new BillingService({metadata:f.metadata,client:f.client,config:{...config,BILLING_ENABLED:'false',POLAR_ACCESS_TOKEN:'',POLAR_PRODUCT_ID_PLUS:'replacement-plus',POLAR_PRODUCT_ID_PRO:'replacement-pro'}});
+  const disabled=new BillingService({metadata:f.metadata,client:f.client,config:{...config,BILLING_ENABLED:'false',POLAR_ACCESS_TOKEN:'',POLAR_PRODUCT_ID_PAID:'replacement-plus',POLAR_PRODUCT_ID_PLUS:'replacement-pro'}});
   assert.equal(await disabled.paidHandleEligibility(owner),true);
   assert.equal((await disabled.status(owner)).paidHandleEligible,true);
   assert.equal(f.calls.length,count);assert.deepEqual(await f.metadata.get(markerKey),marker);
@@ -88,3 +88,7 @@ test('verified past payment survives billing disablement and later catalog rotat
   await assert.rejects(disabled.paidHandleEligibility(fresh),{code:'billing_disabled'});assert.equal(f.calls.length,count);
  }finally{f.close();}
 });
+
+test('legacy v1 ever-paid markers retain permanent handle eligibility without granting a larger storage tier',async()=>{const f=fixture();try{await f.service.paidHandleEligibility(owner);const marker=await f.metadata.get(markerKey);for(const plan of ['plus','pro']){await f.metadata.put(markerKey,{...marker,version:1,plan});const disabled=new BillingService({metadata:f.metadata,config:{...config,BILLING_ENABLED:'false',POLAR_ACCESS_TOKEN:''},client:{}});assert.equal(await disabled.paidHandleEligibility(owner),true);assert.equal((await disabled.entitlement(owner)).plan,'free');}}finally{f.metadata.close();}});
+
+test('foreign tax-inclusive paid orders use verified configured currency rather than comparing net to USD cents',async()=>{const f=fixture();try{for(const product of Object.values(f.products))product.prices.push({...product.prices[0],id:product.id+'-eur',price_currency:'eur',price_amount:450});Object.assign(f.order,{currency:'eur',net_amount:375,total_amount:450,tax_amount:75,tax_behavior:'inclusive'});Object.assign(f.order.subscription,{currency:'eur',amount:450});assert.equal(await f.service.paidHandleEligibility(owner),true);}finally{f.close();}});

@@ -53,7 +53,8 @@ async function ownerAPI(page,path,body,method='POST'){
 }
 test('real passkey signup, confirmation gate, sign out and assertion login',async t=>{
   const {page,context}=await setup(t);await virtualAuthenticator(context,page);
-  assert.equal(await page.getByLabel('Your handle').count(),0);
+  await page.locator('.auth-card').getByRole('button',{name:'Sign in',exact:true}).click();await page.getByRole('heading',{name:'Good to see you.',exact:true}).waitFor();await page.getByRole('button',{name:'Create a 3sln.me account',exact:true}).click();await page.getByRole('heading',{name:'Your space starts here.',exact:true}).waitFor();
+  assert.equal(await page.getByLabel('Your handle').count(),0);assert.equal(await page.locator('input[type=email]').count(),0);
   await page.getByRole('checkbox').check();await page.getByRole('button',{name:'Create my account'}).click();
   await page.getByRole('heading',{name:'Keep a way back in.'}).waitFor();
   assert.equal((await context.request.get(`${baseURL}/api/session`)).status(),200);

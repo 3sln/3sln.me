@@ -1,6 +1,6 @@
 # Storage, search and operating cost
 
-Status: proposed target architecture, reviewed against source and official provider documentation on 2026-10-11. This document does not establish deployed capacity, live Polar integration, semantic relevance, or production readiness. The user-requested plans remain **500 MB (0.5 GB) free, 5 GB for $5/year, and 100 GB for $30/year**. Use decimal GB (1,000,000,000 bytes), versioned configuration and explicit annual billing. Prices are a product requirement; financial viability is provisional. Decisions and implementation reconciliation belong in [DEVLOG](../../DEVLOG.md); independent findings are in [scaling review](../release/scaling-review.md).
+Status: proposed target architecture, reviewed against source and official provider documentation on 2026-10-11. This document does not establish deployed capacity, live Polar integration, semantic relevance, or production readiness. The user-requested plans remain **500 MB (0.5 GB) free, Paid 5 GB for $5/year, Plus 100 GB for $35/year, and Ultra 1 TB for $250/year**. Use decimal GB (1,000,000,000 bytes), versioned configuration and explicit annual billing. Prices are a product requirement; financial viability is provisional. Decisions and implementation reconciliation belong in [DEVLOG](../../DEVLOG.md); independent findings are in [scaling review](../release/scaling-review.md).
 
 ## Current implementation and limits
 
@@ -114,9 +114,10 @@ Polar Starter is 5% + $0.50 per transaction. This model assumes one domestic ann
 | --- | ---: | ---: | ---: | ---: |
 | 500 MB free | $0 | $0 | $0.09 | **−$0.09** |
 | 5 GB | $5 | $0.75 | $0.90 | **$3.35** |
-| 100 GB | $30 | $2.00 | $18.00 | **$10.00** |
+| Plus 100 GB | $35 | $2.25 | $18.00 | **$14.75** |
+| Ultra 1 TB | $250 | $13.00 | $180.00 | **$57.00** |
 
-Arithmetic: `annualPayload = quotaGB × occupancy × 0.015 × 12`. Full 100 GB is $18/year before operations, metadata, search, embeddings, backups, email, support and billing extras. A second full retained copy doubles that payload cost to $36, already exceeding $30 gross. At 20% occupancy the R2 terms are $0.018/$0.18/$3.60, but average underuse is not a guarantee against full-use customers or abuse. One fully occupied free account costs real money. Subsidy must be explicit: at most about 37 full free accounts consume a small paid account's entire $3.35 residual, leaving nothing for operations.
+Arithmetic: `annualPayload = quotaGB × occupancy × 0.015 × 12`. Full 100 GB is $18/year before operations, metadata, search, embeddings, backups, email, support and billing extras. A second full retained copy doubles that payload cost to $36, exceeding the new $35 gross. At 20% occupancy the R2 terms are $0.018/$0.18/$3.60/$36.00, but average underuse is not a guarantee against full-use customers or abuse. One fully occupied free account costs real money. Subsidy must be explicit: at most about 37 full free accounts consume a small paid account's entire $3.35 residual, leaving nothing for operations.
 
 Vectorize's current formula is based on dimensions and stored vectors plus query count, **not a scan of every stored vector per query**. Before allowances, for `N` vectors, `Q` monthly queries and `D` dimensions: `monthlyVectorUSD = (N+Q)×D×0.01/1e6 + N×D×0.05/1e8`. Paid included allocations are shared. Embedding inference is separate. Recheck actual invoice behavior against this estimate. [Vectorize pricing](https://developers.cloudflare.com/vectorize/platform/pricing/)
 

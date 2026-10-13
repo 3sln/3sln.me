@@ -1,3 +1,5 @@
+import {workerCatalogPort} from './plan-catalog.mjs';
+export {PlanCatalogObject} from './plan-catalog.mjs';
 import {identityBackupPort} from '../../packages/runtime/identity-backup.mjs';
 import {ShardedIdentityRepository} from '../../packages/runtime/identity-shards.mjs';
 import application from '../../packages/runtime/http.mjs';
@@ -31,7 +33,7 @@ function resources(env){
  const devices=repository;
  const deviceRequests={create:r=>devices.createDevice(r),get:id=>devices.getDevice(id),findByUserCode:code=>devices.findDeviceByCode(code),compareAndSwap:(id,revision,r)=>devices.compareAndSwapDevice(id,revision,r)};
  const mailer=mailTransport(env);
- const value={...env,ASSETS:assetResource(env.ASSETS),EMAIL_AVAILABLE:Boolean(mailer),IDENTITY_REPOSITORY:repository,ACCOUNTS:{get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))},ABUSE:{consume:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).consume(limits)}};
+ const value={...env,BILLING_CATALOG:workerCatalogPort(env),ASSETS:assetResource(env.ASSETS),EMAIL_AVAILABLE:Boolean(mailer),IDENTITY_REPOSITORY:repository,ACCOUNTS:{get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))},ABUSE:{consume:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).consume(limits)}};
  if(env.MCP_AUTH)value.MCP_AUTHORITY=mcpAuthorities(shard=>({invoke:(method,args)=>env.MCP_AUTH.get(env.MCP_AUTH.idFromName(`${MCP_LAYOUT}-${shard}`)).invoke(shard,method,args)}));
  if(env.FEDERATION)value.FEDERATION_AUTHORITY=federationAuthority({config:env,repository,shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
  value.IDENTITY_ENGINE=async()=>createIdentityEngine({repository,deviceRequests,crypto,mailer,identityBackup:identityBackupPort({config:env,accounts:value.ACCOUNTS}),paidHandleEligibility:async owner=>{const result=await value.ACCOUNTS.get(owner).invoke({method:'paidHandleEligibility',args:[owner]});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),result.$fault);return result===true;},turnstile:{verify:input=>application.turnstile(value,input)},rateLimiter:{check:input=>application.rateLimit(value,input)},webauthn:await createWebAuthnAdapter(),passwordHasher:createWorkerArgon2Hasher(),config:{origin:env.APP_ORIGIN,rpID:env.RP_ID,rpName:env.BRAND_NAME||'3sln.me',termsVersion:env.TERMS_VERSION,allowInsecureLocalhost:env.LOCAL_DEVELOPMENT==='true'}});

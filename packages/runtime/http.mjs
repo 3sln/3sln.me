@@ -80,7 +80,7 @@ export default {
    }
    if(path==='/api/billing/webhook'){
     if(request.method!=='POST')return json({error:'method_not_allowed'},405,{Allow:'POST'});
-    const verified=await verifyPolarWebhook(request,env);if(verified.ignored)return json({accepted:true,ignored:true});
+    const verified=await verifyPolarWebhook(request,env);if(verified.ignored)return json({accepted:true,ignored:true});if(verified.catalog){if(!env.BILLING_CATALOG)throw Object.assign(new Error('Catalog registry is unavailable.'),{code:'billing_unconfigured',status:503});return json(await env.BILLING_CATALOG.applyWebhook(verified));}if(verified.refund){if(!env.BILLING_CATALOG)throw Object.assign(new Error('Catalog registry is unavailable.'),{code:'billing_unconfigured',status:503});verified.owner=await env.BILLING_CATALOG.resolveRefund(verified);}
     const account=await env.IDENTITY_REPOSITORY.get(verified.owner);if(!account||account.status!=='active')return json({error:'billing_account_unavailable'},409);
     return json(await accountHandle(env,verified.owner).billingWebhookVerified(verified.owner,verified));
    }
@@ -154,9 +154,10 @@ export default {
       if(['credentialBegin','credentialFinish','renamePasskey','renameSession','approveDeviceLogin','emailStart','emailConfirm','configureEmailLogin'].includes(authMethods[path])){
         const authenticated=await engine.query(new OwnerQuery(context)).peek();
         if(context.csrfToken!==authenticated.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
-        await accountHandle(env,authenticated.account.id).admitWork(authenticated.account.id,{initialize:true});
+        await accountHandle(env,authenticated.account.id).touch(authenticated.account.id);
       }
       const event=await engine.dispatch(new IdentityAction(authMethods[path],input,context)).next('result');const result=event.detail;
+      if(result.sessionToken&&result.account?.id){try{await accountHandle(env,result.account.id).touch(result.account.id);result.billingSync=await accountHandle(env,result.account.id).billingRefresh(result.account.id,{force:true});}catch{result.billingSync={checked:false,error:'billing_provider_unavailable'};}}
       const headers={};if(result.sessionToken){headers['Set-Cookie']=cookie(result.sessionToken,local);delete result.sessionToken;}if(path==='/api/auth/logout')headers['Set-Cookie']=cookie('',local,0);
       if(path==='/api/auth/device/start')headers['Set-Cookie']=`${local?'bindle_device':'__Host-bindle_device'}=${context.deviceBinding}; Path=/; HttpOnly; SameSite=Strict; Max-Age=300${local?'':'; Secure'}`;
       return json(result,200,headers);
@@ -173,14 +174,16 @@ export default {
     const appDisconnect=/^\/api\/apps\/([a-f0-9-]{36})$/.exec(path);if(appDisconnect&&request.method==='DELETE')return json(await object.appDisconnect(id,appDisconnect[1]));
     let protective=false;
     if(mutation&&(['/api/search/preferences','/api/profile','/api/notifications'].includes(path)||request.method==='PUT'&&/^\/api\/contacts\/[^/]+\/beam$/.test(path))){const change=await body(request.clone());protective=path==='/api/search/preferences'&&change.enabled===false||path==='/api/profile'&&change.discloseToContacts===false||path==='/api/notifications'||/^\/api\/contacts\/[^/]+\/beam$/.test(path)&&(change.beamEnabled===false||Array.isArray(change.profileFields)&&change.profileFields.length===0&&change.beamEnabled!==true);}
-    const capacityExempt=protective||['/api/billing/checkout','/api/billing/portal','/api/notifications/unsubscribe','/api/notifications/unsubscribe-link'].includes(path)||/^\/api\/contacts\/[^/]+\/quarantine$/.test(path);
+    const capacityExempt=protective||['/api/billing/checkout','/api/billing/change-plan','/api/billing/cancel-change','/api/billing/portal','/api/notifications/unsubscribe','/api/notifications/unsubscribe-link'].includes(path)||/^\/api\/contacts\/[^/]+\/quarantine$/.test(path);
     if(mutation&&!capacityExempt&&!path.startsWith('/api/conversations')&&request.method!=='DELETE'&&(!path.startsWith('/api/beams/')||['/api/beams/invites','/api/beams/invites/redeem'].includes(path))&&allowedMethods(path))await object.admitWork(id,{initialize:true});
     await object.touch(id);
     const beamResponse=await beamRoutes({path,url,request,env,owner,object,accountHandle,body,json});if(beamResponse)return beamResponse;
     if(path==='/api/account'&&request.method==='GET')return json({...await object.snapshot(id),account:owner.account,credentials:owner.credentials,devices:owner.devices,audit:owner.audit,grants:[]});
     if(path==='/api/storage/usage')return json(await object.storageUsage(id));
-    if(path==='/api/billing'&&request.method==='GET')return json(await object.billingStatus(id));
-    if(path==='/api/billing/checkout'&&request.method==='POST')return json(await object.billingCheckout(id,(await body(request)).plan));
+    if(path==='/api/billing'&&request.method==='GET'){if([...url.searchParams.keys()].some(key=>!['currency','txId'].includes(key))||url.searchParams.getAll('currency').length>1||url.searchParams.getAll('txId').length>1)throw Object.assign(new Error('Choose a supported payment currency.'),{code:'invalid_currency',status:400});return json(await object.billingStatus(id,{country:context.region,...url.searchParams.has('currency')?{currency:url.searchParams.get('currency')}:{},...url.searchParams.has('txId')?{txId:url.searchParams.get('txId')}:{}}));}
+    if(path==='/api/billing/cancel-change'&&request.method==='POST'){if(!await limit(env,{operation:'billing',remoteIP:context.remoteIP}))return json({error:'rate_limited'},429,{'Retry-After':'3600'});const input=await body(request);if(Object.keys(input).some(key=>!['txId','scheduledTxId'].includes(key)))throw Object.assign(new Error('Confirm the scheduled change to cancel.'),{code:'invalid_args',status:400});return json(await object.billingCancelChange(id,input));}
+    if(path==='/api/billing/change-plan'&&request.method==='POST'){if(!await limit(env,{operation:'billing',remoteIP:context.remoteIP}))return json({error:'rate_limited'},429,{'Retry-After':'3600'});const input=await body(request);if(Object.keys(input).some(key=>!['plan','txId','priceDigest'].includes(key)))throw Object.assign(new Error('Review the target plan before confirming.'),{code:'invalid_args',status:400});return json(await object.billingChangePlan(id,input));}
+    if(path==='/api/billing/checkout'&&request.method==='POST'){const input=await body(request);if(Object.keys(input).some(key=>!['plan','currency','locale'].includes(key)))throw Object.assign(new Error('Choose a plan and payment currency.'),{code:'invalid_args',status:400});return json(await object.billingCheckout(id,input.plan,{country:context.region,customerIpAddress:context.remoteIP,...Object.hasOwn(input,'currency')?{currency:input.currency}:{},...Object.hasOwn(input,'locale')?{locale:input.locale}:{}}));}
     if(path==='/api/billing/portal'&&request.method==='POST')return json(await object.billingPortal(id));
     if(path==='/api/messages/page'){const p=url.searchParams;return json(await object.messagePage(id,{limit:Number(p.get('limit')||100),...p.has('collection')?{collection:p.get('collection')}:{},...p.has('unread')?{unread:p.get('unread')==='true'}:{},...p.has('quarantined')?{quarantined:p.get('quarantined')==='true'}:{},cursor:p.get('cursor')||undefined}));}
     if(path==='/api/search/preferences'){if(request.method==='PUT')return json(await object.updateSearchPreferences(id,await body(request)));return json(await object.searchPreferences(id));}
@@ -248,7 +251,7 @@ function allowedMethods(path){
  const conversation=conversationAllowedMethods(path);if(conversation)return conversation;
  const beam=beamAllowedMethods(path);if(beam)return beam;
  if(path.startsWith('/api/auth/'))return ['POST'];
- if(['/api/billing/checkout','/api/billing/portal'].includes(path))return ['POST'];
+ if(['/api/billing/checkout','/api/billing/change-plan','/api/billing/cancel-change','/api/billing/portal'].includes(path))return ['POST'];
  if(['/api/storage/usage','/api/billing','/api/messages/page','/api/search'].includes(path))return ['GET'];
  if(['/api/config','/api/session','/api/account'].includes(path))return ['GET'];
  if(['/api/collections','/api/contacts','/api/resources'].includes(path))return ['GET','POST'];

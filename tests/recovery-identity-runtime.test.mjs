@@ -214,7 +214,7 @@ test('legacy recovery can resume after issuing its signed upgrade, then requires
 });
 
 test('a retained verified-payment marker permits one numeric custom name after cancellation without replacing identity recovery', async t => {
-  const f = await fixture(t, { BILLING_ENABLED: 'true', POLAR_SERVER: 'sandbox', POLAR_PRODUCT_ID_PLUS: 'fixture-plus', POLAR_PRODUCT_ID_PRO: 'fixture-pro', POLAR_ACCESS_TOKEN: 'fixture-only-access', POLAR_WEBHOOK_SECRET: 'fixture-only-webhook' });
+  const f = await fixture(t, { BILLING_ENABLED: 'true', POLAR_SERVER: 'sandbox', POLAR_PRODUCT_ID_PAID: 'fixture-paid', POLAR_PRODUCT_ID_PLUS: 'fixture-plus', POLAR_PRODUCT_ID_ULTRA: 'fixture-ultra', POLAR_ACCESS_TOKEN: 'fixture-only-access', POLAR_WEBHOOK_SECRET: 'fixture-only-webhook' });
   const pending = await f.signup(), file = await f.download(pending.pendingToken), owner = await f.activate(pending.pendingToken, file.recoveryToken);
   const id = owner.account.id, controller = f.app.resources.accounts.get(id), repository = f.app.resources.repository;
   // This is a local persisted-evidence fixture. Provider-order verification is

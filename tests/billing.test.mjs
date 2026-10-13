@@ -5,7 +5,7 @@ import {BillingService,verifyBillingCatalog,BILLING_PLANS,BILLING_STATE_KEY,enti
 
 const owner='aa111111-1111-4111-8111-111111111111',other='bb222222-2222-4222-8222-222222222222';
 const secret='whsec_'+Buffer.alloc(32,39).toString('base64');
-const config={BILLING_ENABLED:'true',POLAR_SERVER:'sandbox',POLAR_ACCESS_TOKEN:'offline-only',POLAR_WEBHOOK_SECRET:secret,POLAR_PRODUCT_ID_PLUS:'plus-product',POLAR_PRODUCT_ID_PRO:'pro-product',APP_ORIGIN:'https://3sln.example'};
+const config={BILLING_ENABLED:'true',POLAR_SERVER:'sandbox',POLAR_ACCESS_TOKEN:'offline-only',POLAR_WEBHOOK_SECRET:secret,POLAR_PRODUCT_ID_PAID:'paid-product',POLAR_PRODUCT_ID_PLUS:'plus-product',POLAR_PRODUCT_ID_ULTRA:'ultra-product',APP_ORIGIN:'https://3sln.example'};
 class Metadata {
   constructor(){this.rows=new Map();this.tail=Promise.resolve();}
   async get(k){return structuredClone(this.rows.get(k));}
@@ -16,10 +16,10 @@ class Metadata {
 }
 function fixture(){
   const now=Date.now(),metadata=new Metadata(),calls=[];
-  const products=Object.fromEntries(['plus','pro'].map(plan=>{const id=config[`POLAR_PRODUCT_ID_${plan.toUpperCase()}`];return [id,{id,is_archived:false,is_recurring:true,recurring_interval:'year',recurring_interval_count:1,organization_id:'org',prices:[{id:plan+'-price',product_id:id,source:'catalog',is_archived:false,amount_type:'fixed',price_currency:'usd',price_amount:BILLING_PLANS[plan].annualAmount}]}];}));
+  const products=Object.fromEntries(['paid','plus','ultra'].map(plan=>{const id=config[`POLAR_PRODUCT_ID_${plan.toUpperCase()}`];return [id,{id,is_archived:false,is_recurring:true,recurring_interval:'year',recurring_interval_count:1,organization_id:'org',prices:[{id:plan+'-price',product_id:id,source:'catalog',is_archived:false,amount_type:'fixed',price_currency:'usd',price_amount:BILLING_PLANS[plan].annualAmount}]}];}));
   const customer={id:'customer',external_id:owner,organization_id:'org',deleted_at:null,active_subscriptions:[]};
-  const subscription={id:'subscription',customer_id:customer.id,customer:{...customer},product_id:config.POLAR_PRODUCT_ID_PRO,amount:3000,currency:'usd',recurring_interval:'year',recurring_interval_count:1,status:'active',current_period_start:new Date(now-1000).toISOString(),current_period_end:new Date(now+365*86400000).toISOString(),cancel_at_period_end:false,ended_at:null,ends_at:null};
-  const client={products:{get:async id=>{calls.push(['product',id]);return structuredClone(products[id]);}},customers:{getStateExternal:async id=>{calls.push(['customer',id]);return structuredClone(customer);}},subscriptions:{get:async id=>{calls.push(['subscription',id]);return structuredClone(subscription);}},checkouts:{create:async body=>{calls.push(['checkout',body]);return {url:'https://sandbox.polar.sh/checkout/test'};}},customerSessions:{create:async body=>{calls.push(['portal',body]);return {customer_id:customer.id,customer:structuredClone(customer),customer_portal_url:'https://sandbox.polar.sh/test/portal'};}}};
+  const subscription={id:'subscription',customer_id:customer.id,customer:{...customer},product_id:config.POLAR_PRODUCT_ID_PLUS,amount:3500,currency:'usd',recurring_interval:'year',recurring_interval_count:1,status:'active',current_period_start:new Date(now-1000).toISOString(),current_period_end:new Date(now+365*86400000).toISOString(),cancel_at_period_end:false,ended_at:null,ends_at:null};
+  const client={products:{get:async id=>{calls.push(['product',id]);return structuredClone(products[id]);}},customers:{getStateExternal:async id=>{calls.push(['customer',id]);return structuredClone(customer);}},subscriptions:{get:async id=>{calls.push(['subscription',id]);return structuredClone(subscription);}},checkouts:{create:async body=>{calls.push(['checkout',body]);const selected=products[body.products[0]].prices.find(price=>price.price_currency===body.currency);return {url:'https://sandbox.polar.sh/checkout/test',currency:body.currency,amount:selected.price_amount,product_id:body.products[0],organization_id:'org',external_customer_id:body.external_customer_id};}},customerSessions:{create:async body=>{calls.push(['portal',body]);return {customer_id:customer.id,customer:structuredClone(customer),customer_portal_url:'https://sandbox.polar.sh/test/portal'};}}};
   let clock=now;return {metadata,products,customer,subscription,client,calls,now,advance:ms=>clock+=ms,service:new BillingService({config,metadata,client,now:()=>clock})};
 }
 function eventRequest({event={type:'customer.state_changed',timestamp:new Date().toISOString(),api_version:'2026-10',data:{external_id:owner}},id='evt_test',date=new Date(),tamper,headers={}}={}){
@@ -27,20 +27,20 @@ function eventRequest({event={type:'customer.state_changed',timestamp:new Date()
   return new Request('https://3sln.example/api/billing/webhook',{method:'POST',body:tamper??body,headers:{'content-type':'application/json','webhook-id':id,'webhook-timestamp':String(Math.floor(date.getTime()/1000)),'webhook-signature':signer.sign(id,date,body),...headers}});
 }
 test('plan quotas use decimal bytes and expired entitlements fall back to the 500 MB free plan',()=>{
-  assert.deepEqual(Object.values(BILLING_PLANS).map(p=>[p.storageBytes,p.annualAmount]),[[500000000,0],[5000000000,500],[100000000000,3000]]);
-  assert.equal(entitlementFromState({source:'polar',plan:'pro',validUntil:5},5).storageBytes,500000000);
-  assert.equal(entitlementFromState({source:'browser',plan:'pro',validUntil:Infinity},0).plan,'free');
+  assert.deepEqual(Object.values(BILLING_PLANS).map(p=>[p.storageBytes,p.annualAmount]),[[500000000,0],[5000000000,500],[100000000000,3500],[1000000000000,25000]]);
+  assert.equal(entitlementFromState({source:'polar',catalogVersion:2,plan:'plus',validUntil:5},5).storageBytes,500000000);
+  assert.equal(entitlementFromState({source:'browser',plan:'plus',validUntil:Infinity},0).plan,'free');
 });
 test('disabled or incomplete billing never invokes the provider',async()=>{
   const f=fixture(),service=new BillingService({config:{...config,BILLING_ENABLED:'false'},metadata:f.metadata,client:f.client});
   assert.equal((await service.status(owner)).enabled,false);
-  await assert.rejects(service.checkout(owner,'plus'),{code:'billing_disabled'});
+  await assert.rejects(service.checkout(owner,'paid'),{code:'billing_disabled'});
   await assert.rejects(verifyPolarWebhook(eventRequest(),{...config,POLAR_ACCESS_TOKEN:''}),{code:'billing_unconfigured'});
   assert.equal(f.calls.length,0);
 });
-test('explicit operator preflight verifies both products while app billing remains disabled and creates no effects',async()=>{
+test('explicit operator preflight verifies all three products while app billing remains disabled and creates no effects',async()=>{
   const f=fixture(),settings={...config,BILLING_ENABLED:'false'};
-  const result=await verifyBillingCatalog(settings,{client:f.client});assert.equal(settings.BILLING_ENABLED,'false');assert.equal(result.organizationId,'org');assert.deepEqual(result.plans.map(p=>p.annualAmount),[500,3000]);assert.deepEqual(f.calls,[['product','plus-product'],['product','pro-product']]);assert.equal(f.metadata.rows.size,0);
+  const result=await verifyBillingCatalog(settings,{client:f.client});assert.equal(settings.BILLING_ENABLED,'false');assert.equal(result.organizationId,'org');assert.deepEqual(result.plans.map(p=>p.annualAmount),[500,3500,25000]);assert.deepEqual(f.calls,[['product','paid-product'],['product','plus-product'],['product','ultra-product']]);assert.equal(f.metadata.rows.size,0);
   await assert.rejects(verifyBillingCatalog({...settings,POLAR_ACCESS_TOKEN:''},{client:f.client}),{code:'billing_unconfigured'});
 });
 test('actual SDK verifies offline Standard Webhooks signatures, timestamp, exact body and API version',async()=>{
@@ -57,11 +57,11 @@ test('routing never falls back to customer metadata or email and rejects oversiz
   assert.equal((await verifyPolarWebhook(eventRequest({event:subscriptionEvent}),config)).owner,owner);
 });
 test('catalog is checked against provider products before checkout and owner UUID is server supplied',async()=>{
-  const f=fixture();await f.service.checkout(owner,'plus');
-  const body=f.calls.find(([kind])=>kind==='checkout')[1];assert.deepEqual(body.products,['plus-product']);assert.equal(body.external_customer_id,owner);assert.equal(body.allow_trial,false);assert.equal(body.allow_discount_codes,false);assert.equal(body.success_url,'https://3sln.example/');
+  const f=fixture();await f.service.checkout(owner,'paid');
+  const body=f.calls.find(([kind])=>kind==='checkout')[1];assert.deepEqual(body.products,['paid-product']);assert.equal(body.external_customer_id,owner);assert.equal(body.allow_trial,false);assert.equal(body.allow_discount_codes,false);assert.equal(body.success_url,'https://3sln.example/');
   assert(!Object.hasOwn(body,'customer_metadata'));assert.equal((await f.service.entitlement(owner)).plan,'free');
   const bad=fixture();bad.products['plus-product'].prices[0].price_amount=501;
-  await assert.rejects(bad.service.checkout(owner,'plus'),{code:'billing_catalog_mismatch'});assert(!bad.calls.some(([kind])=>kind==='checkout'));
+  await assert.rejects(bad.service.checkout(owner,'paid'),{code:'billing_catalog_mismatch'});assert(!bad.calls.some(([kind])=>kind==='checkout'));
 });
 test('portal uses a verified provider customer and refuses mismatched external identity',async()=>{
   const f=fixture();assert.match((await f.service.portal(owner)).url,/^https:\/\/sandbox.polar.sh\//);assert.equal(f.calls.find(([kind])=>kind==='portal')[1].customer_id,'customer');
@@ -69,16 +69,16 @@ test('portal uses a verified provider customer and refuses mismatched external i
   await assert.rejects(f.service.reconcile(owner),{code:'billing_provider_unavailable'});
 });
 test('checkout and portal reject unexpected hosted URLs and browser-derived return origins',async()=>{
-  const f=fixture();f.client.checkouts.create=async()=>({url:'https://checkout.evil.example/'});
-  await assert.rejects(f.service.checkout(owner,'plus'),{code:'billing_provider_unavailable'});
+  const f=fixture(),create=f.client.checkouts.create;f.client.checkouts.create=async input=>({...await create(input),url:'https://checkout.evil.example/'});
+  await assert.rejects(f.service.checkout(owner,'paid'),{code:'billing_provider_unavailable'});
   f.client.customerSessions.create=async()=>({customer_id:f.customer.id,customer:f.customer,customer_portal_url:'https://sandbox.polar.sh.evil.example/portal'});
   await assert.rejects(f.service.portal(owner),{code:'billing_provider_unavailable'});
   const bad=new BillingService({config:{...config,APP_ORIGIN:'https://3sln.example/path'},metadata:f.metadata,client:f.client});
-  await assert.rejects(bad.checkout(owner,'plus'),{code:'billing_unconfigured'});
+  await assert.rejects(bad.checkout(owner,'paid'),{code:'billing_unconfigured'});
 });
 test('signed notifications reconcile fresh provider state, replay idempotently and survive recreation',async()=>{
   const f=fixture();f.customer.active_subscriptions=[{id:f.subscription.id}];const verified=await verifyPolarWebhook(eventRequest(),config);
-  assert.equal((await f.service.applyWebhook(verified)).plan,'pro');assert.equal((await f.metadata.get(BILLING_STATE_KEY)).owner,owner);
+  assert.equal((await f.service.applyWebhook(verified)).plan,'plus');assert.equal((await f.metadata.get(BILLING_STATE_KEY)).owner,owner);
   const calls=f.calls.length;const restarted=new BillingService({config,metadata:f.metadata,client:f.client,now:()=>f.now});
   assert.equal((await restarted.applyWebhook(verified)).duplicate,true);assert.equal(f.calls.length,calls);
   await assert.rejects(restarted.applyWebhook({...verified,bodyHash:'0'.repeat(64)}),{code:'webhook_id_conflict'});
@@ -89,7 +89,7 @@ test('signed notifications reconcile fresh provider state, replay idempotently a
 test('cancellation keeps paid access until expiry, past_due cannot extend and revocation removes access',async()=>{
   const f=fixture();f.customer.active_subscriptions=[{id:f.subscription.id}];const paid=await f.service.reconcile(owner),deadline=paid.validUntil;
   f.customer.active_subscriptions=[];f.subscription.status='canceled';f.subscription.cancel_at_period_end=true;
-  assert.equal((await f.service.reconcile(owner)).plan,'pro');
+  assert.equal((await f.service.reconcile(owner)).plan,'plus');
   f.subscription.status='past_due';f.subscription.current_period_end=new Date(deadline+365*86400000).toISOString();
   assert.equal((await f.service.reconcile(owner)).validUntil,deadline);
   f.advance(deadline-f.now+1);assert.equal((await f.service.entitlement(owner)).plan,'free');
@@ -119,3 +119,13 @@ test('replay history capacity fails closed and expired history is cleaned within
   f.advance(36*86400000);await f.service.applyWebhook(verified);
   assert.equal((await f.metadata.list({prefix:'billing/event/'})).size,1);
 });
+
+test('versioned catalog preserves legacy bytes and rejects unknown versions without automatic tier escalation',()=>{for(const [old,plan,bytes]of [['plus','paid',5000000000],['pro','plus',100000000000]])assert.deepEqual(entitlementFromState({source:'polar',plan:old,validUntil:1000},0),{plan,storageBytes:bytes,validUntil:1000});for(const state of [{catalogVersion:3,plan:'ultra'},{catalogVersion:2,plan:'pro'},{plan:'ultra'},{plan:'paid'}])assert.equal(entitlementFromState({source:'polar',validUntil:1000,...state},0).plan,'free');for(const plan of ['paid','plus','ultra'])assert.equal(entitlementFromState({source:'polar',catalogVersion:2,plan,validUntil:1000},0).plan,plan);});
+test('verified legacy prepaid Pro period survives reconcile/restart without extending oldprice deadline',async()=>{const f=fixture(),deadline=f.now+100000;f.customer.active_subscriptions=[{id:'subscription'}];Object.assign(f.subscription,{product_id:'legacy-pro-product',amount:3000,current_period_end:new Date(f.now+86400000).toISOString()});await f.metadata.put(BILLING_STATE_KEY,{owner,source:'polar',plan:'pro',customerId:'customer',subscriptionId:'subscription',validUntil:deadline});assert.equal((await f.service.reconcile(owner)).plan,'plus');const migrated=await f.metadata.get(BILLING_STATE_KEY);assert.equal(migrated.catalogVersion,3);assert.equal(migrated.legacyPaidUntil,deadline);assert.equal(migrated.validUntil,deadline);const restarted=new BillingService({config,metadata:f.metadata,client:f.client,now:()=>f.now+1000});f.subscription.current_period_end=new Date(f.now+2*86400000).toISOString();assert.equal((await restarted.reconcile(owner)).validUntil,deadline);f.subscription.ended_at=new Date(f.now).toISOString();assert.equal((await restarted.reconcile(owner)).plan,'free');});
+test('unknown oldprice subscriptions cannot create migrated entitlement without a pinned prior verified subscription',async()=>{const f=fixture();f.customer.active_subscriptions=[{id:'subscription'}];Object.assign(f.subscription,{product_id:'legacy-pro-product',amount:3000});assert.equal((await f.service.reconcile(owner)).plan,'free');});
+
+function currencies(f){for(const [id,product] of Object.entries(f.products))for(const [currency,amount] of [['eur',id==='paid-product'?450:id==='plus-product'?3200:23000],['jpy',id==='paid-product'?800:id==='plus-product'?5500:38000],['isk',id==='paid-product'?65000:id==='plus-product'?450000:3200000]])product.prices.push({...product.prices[0],id:id+'-'+currency,price_currency:currency,price_amount:amount});}
+test('regional prices read Polar fixed catalog without checkout side effects and use provider decimal factors',async()=>{const f=fixture();currencies(f);for(const [country,currency,amount,exponent]of [['DE','eur',450,2],['JP','jpy',800,0],['IS','isk',65000,2],['ZZ','usd',500,2]]){const status=await f.service.status(owner,{country});assert.equal(status.selectedCurrency,currency);assert.deepEqual(status.plans.find(p=>p.id==='paid').price,{currency,amount,exponent,source:'polar',taxBehavior:'checkout',available:true});}assert.equal(f.calls.filter(([kind])=>kind==='product').length,3);assert.equal(f.calls.filter(([kind])=>kind==='checkout').length,0);assert.equal((await f.service.status(owner,{country:'JP',currency:'eur'})).selectedCurrency,'eur');await assert.rejects(f.service.status(owner,{currency:'kwd'}),{code:'invalid_currency'});});
+test('checkout forwards exact selected catalog currency and trusted hints and rejects stale returned price',async()=>{const f=fixture();currencies(f);await f.service.checkout(owner,'paid',{country:'JP',customerIpAddress:'203.0.113.8',locale:'ja-JP'});const body=f.calls.find(([kind])=>kind==='checkout')[1];assert.equal(body.currency,'jpy');assert.equal(body.customer_ip_address,'203.0.113.8');assert.equal(body.locale,'ja-JP');assert.equal(body.amount,undefined);const create=f.client.checkouts.create;f.client.checkouts.create=async input=>({...await create(input),currency:'usd'});await assert.rejects(f.service.checkout(owner,'paid',{currency:'jpy'}),{code:'billing_checkout_mismatch'});});
+test('catalog refuses duplicate currency, unsupported provider currency or invalid amount rather than quoting a fallback',async()=>{for(const mutate of [p=>p.prices.push({...p.prices[0],id:'duplicate'}),p=>p.prices.push({...p.prices[0],id:'kwd',price_currency:'kwd'}),p=>p.prices.push({...p.prices[0],id:'eur',price_currency:'eur',price_amount:0})]){const f=fixture();mutate(f.products['paid-product']);const status=await f.service.status(owner,{country:'JP'});assert.equal(status.pricingUnavailable,true);assert.equal(status.plans.find(p=>p.id==='paid').price,null);await assert.rejects(f.service.checkout(owner,'paid'),{code:'billing_catalog_mismatch'});}});
+test('configured foreign subscription amounts grant verified product capacity and do not reuse USD-only legacy prices',async()=>{const f=fixture();currencies(f);f.customer.active_subscriptions=[{id:'subscription'}];Object.assign(f.subscription,{product_id:'paid-product',currency:'jpy',amount:800});assert.equal((await f.service.reconcile(owner)).plan,'paid');assert.equal((await f.metadata.get(BILLING_STATE_KEY)).currency,'jpy');Object.assign(f.subscription,{amount:801});await assert.rejects(f.service.reconcile(owner),{code:'billing_provider_unavailable'});});

@@ -43,7 +43,7 @@ The following is arithmetic using the published $0.05/GB rate; it is not a measu
 | 5 GB | $3.00 | $6.00 |
 | 100 GB | $60.00 | $120.00 |
 
-At **$5/year for 5 GB storage**, 5 GB/month of relayed file traffic already costs $3/year before overhead and all existing storage/payment costs. At **$30/year for 100 GB storage**, 100 GB/month of relayed traffic exceeds gross annual revenue. Storage quota must never automatically become a monthly relay entitlement. The shared free tier can reduce a small deployment's invoice, but cannot fund an uncapped promise to every subscriber.
+At **$5/year for 5 GB storage**, 5 GB/month of relayed file traffic already costs $3/year before overhead and all existing storage/payment costs. At **$35/year for 100 GB storage**, 100 GB/month of relayed traffic exceeds gross annual revenue. Storage quota must never automatically become a monthly relay entitlement. The shared free tier can reduce a small deployment's invoice, but cannot fund an uncapped promise to every subscriber.
 
 Direct traffic still incurs authentication, mailbox polling, signaling and database costs. Reserve those separately; a disabled relay does not establish a zero-cost feature. Existing annual-plan contribution estimates do not yet include measured beaming control-plane amplification. Publish no unlimited beaming/relay promise until the funding envelope and operational caps are approved.
 

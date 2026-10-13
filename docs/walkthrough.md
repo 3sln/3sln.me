@@ -82,11 +82,11 @@ The isolated browser suite exercises maintained Argon2id in a dedicated worker, 
 
 ## 13. See storage usage and annual plans
 
-The visible account meter shows 500 MB on the free plan, reserved uploads and a messages/files breakdown. Plus is 5 GB for $5/year; Pro is 100 GB for $30/year. Checkout remains disabled until Polar setup and verification. These additional screenshots use the actual Chrome-rendered portal with explicitly mocked account/API data to exercise UI states; they do not prove live billing or deployed storage capacity.
+The visible account meter shows 500 MB on the free plan, reserved uploads and a messages/files breakdown. Paid is 5 GB for $5/year; Plus is 100 GB for $35/year; Ultra is 1 TB for $250/year. All three paid tiers share the same activity limits. Checkout remains disabled until Polar setup and verification. These additional screenshots use the actual Chrome-rendered portal with explicitly mocked account/API data to exercise UI states; they do not prove live billing or deployed storage capacity.
 
-![Storage usage and annual plans](walkthrough-assets/storage-desktop.png)
+![Storage usage and annual plans](walkthrough-assets/plans-catalog-desktop.png)
 
-![Storage on a narrow phone](walkthrough-assets/storage-mobile.png)
+![Storage on a narrow phone](walkthrough-assets/plans-catalog-mobile.png)
 
 ## 14. Search messages across the account
 
@@ -234,4 +234,4 @@ Every account has built-in storage ready to assign to apps. Resources shows its 
 
 The browser test used an app's scoped resource token to mint a write-only URL for one object with a fixed size and create condition, uploaded raw bytes, then minted a read-only URL and downloaded the same bytes. Both used the required headers returned by the contract. Uploading through the read URL was denied; revoking the app grant immediately denied the provider-proxy download URL. Prefix confinement and the account quota remain enforced. Native provider URLs may remain usable until expiry, which is explained during consent.
 
-The activity meter combines covered changes and storage write attempts in one ledger. Each attempt uses a unit, so a single action can consume multiple units; replacements count even when stored bytes stay unchanged. Daily usage covers the preceding 24 hours and hourly usage the preceding hour. Plus and Pro share the same activity limits. Exhaustion pauses covered changes and uploads until earlier activity leaves the rolling window; reading, exporting, deleting and security controls remain available. Separate browser fault fixtures verify Spanish labels and a 429 resource-save response: the form keeps its draft, displays a clear retry message, and sends no automatic second request.
+The activity meter combines covered changes and storage write attempts in one ledger. Each attempt uses a unit, so a single action can consume multiple units; replacements count even when stored bytes stay unchanged. Daily usage covers the preceding 24 hours and hourly usage the preceding hour. Paid, Plus and Ultra share the same activity limits. Exhaustion pauses covered changes and uploads until earlier activity leaves the rolling window; reading, exporting, deleting and security controls remain available. Separate browser fault fixtures verify Spanish labels and a 429 resource-save response: the form keeps its draft, displays a clear retry message, and sends no automatic second request.
