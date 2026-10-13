@@ -4,8 +4,8 @@ An account's stored-byte quota does not control request fees: replacing a one-by
 
 | Default | Limit |
 | --- | --- |
-| One app or stable contact/conversation writer | 5 attempts in a rolling 60 seconds |
-| Account, across all writers and resources | 10 attempts in a rolling 60 seconds |
+| One app or stable contact/conversation writer | 120 attempts in a rolling 60 seconds |
+| Account, across all writers and resources | 240 attempts in a rolling 60 seconds |
 | Free / Plus / Pro foreground writes | 1,000 / 5,000 / 10,000 per UTC month |
 | Whole-service admitted bucket attempts | 250,000 per UTC month |
 | Service allocation | 225,000 foreground; 25,000 reserved for archives |
