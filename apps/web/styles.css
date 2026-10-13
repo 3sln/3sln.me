@@ -62,3 +62,15 @@
 @media(max-width:480px){.landing-nav:has(.language-switch){display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px 16px}.landing-nav:has(.language-switch)>.logo{grid-column:1;grid-row:1;min-width:0;max-width:100%}.landing-nav:has(.language-switch)>nav{display:contents}.landing-nav:has(.language-switch)>nav>.button{grid-column:2;grid-row:1;white-space:nowrap}.landing-nav:has(.language-switch)>nav>.docs-link{grid-column:1;grid-row:2;justify-self:start}.landing-nav:has(.language-switch)>nav>.language-switch{grid-column:2;grid-row:2;justify-self:end}}
 .landing-nav .logo>.logo-suffix{white-space:nowrap;overflow-wrap:normal;flex-shrink:0}.logo img{flex-shrink:0}
 @media(max-width:380px){.landing-nav:has(.language-switch)>nav>.button{padding:10px 12px;font-size:12px}}
+
+/* Keep the text and chevron equally inset; native arrows ignore select padding. */
+.language-switch{appearance:none;-webkit-appearance:none;padding-left:12px;padding-right:32px;min-width:100px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='m1 4 5 5 5-5' fill='none' stroke='%23617653' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;background-size:12px 12px}
+@media(forced-colors:active){.language-switch{appearance:auto;-webkit-appearance:auto;background-image:none;padding-right:12px}}
+
+/* Keep security challenges rectangular and fully visible at their supported minimum width. */
+.auth-card .cf-turnstile{width:100%;min-width:300px}
+@media(max-width:420px){.landing-main,.public-main{padding-left:8px;padding-right:8px}.auth-card{padding:20px}.auth-card .cf-turnstile{width:calc(100% + 40px);margin-left:-20px;margin-right:-20px}}
+
+.auth-card .form>.cf-turnstile[data-interactive=false]{margin-top:-17px}
+
+@media(max-width:420px){.landing-story{padding-left:12px;padding-right:12px}}
