@@ -123,6 +123,11 @@
 <p><img src="walkthrough-assets/account-contact-native-password.png" alt="Pending account email verification"></p>
 <p><img src="walkthrough-assets/account-contact-native-active-password.png" alt="Activated account after contact and recovery verification"></p>
 <p>These contact screenshots use the actual built portal, durable local Node identity adapter and real Chrome, with a process-local mail transport capturing the actual generated verification code. Password and virtual-passkey flows both verified the email, downloaded and tested the encrypted recovery file, then activated the same account. Losing pending browser storage resumed setup through the primary credential without issuing a normal session prematurely. This demonstrates local enforcement; it does not claim external email delivery or live browser push-provider conformance. Separate service-worker and UI tests cover bounded challenge handling, early delivery, outdated workers and explicit permission controls.</p>
+<h2>30. Published landing polish</h2>
+<p>Captured from <a href="https://3sln.me">https://3sln.me</a> on2026-10-13 after deployment of sourcea54eff8, Worker48789f11-635c-480b-8ecf-8a05bc437ec7. The redundant “The Idea” navigation link is removed; its explanatory section remains. Header selectors, touch targets and narrow layout are polished. The real compact Turnstile widget is mounted and fully visible, with no horizontal overflow at320px or1440px and no browser runtime errors. The challenge shown here has not been solved, and no account or payment was created for these screenshots.</p>
+<p><img src="walkthrough-assets/deployed-polished-landing-1440.png" alt="Published landing on desktop"></p>
+<p><img src="walkthrough-assets/deployed-polished-landing-320.png" alt="Published landing at320pixels"></p>
+<p>Public documentation is an explicit31-page English developer set plus canonical artefacts; project tracking, audits and this walkthrough stay in the repository. Signup is open with Turnstile, verified email or acknowledged push, credentials and tested recovery required. Routine notifications and automatic retention suspension/deletion remain unfinished; this landing deployment does not certify the whole release.</p>
 </main>
 </body>
 </html>
