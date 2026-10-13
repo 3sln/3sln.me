@@ -78,3 +78,42 @@
 .contact-recipient-profile{margin:18px 0;padding:16px;border:1px solid var(--line);border-radius:10px;background:#f8faf4}.contact-recipient-profile .field-help{margin:0 0 8px}.contact-recipient-profile strong,.contact-profile-bio{overflow-wrap:anywhere;white-space:pre-wrap}.contact-profile-bio{margin:8px 0}
 
 .contact-recipient-heading{overflow-wrap:anywhere}
+
+:root{color-scheme:light}.logo picture{display:flex;flex-shrink:0}.logo:has(picture){gap:4px}
+/* Public identity pages follow the device preference. The signed-in console retains its reviewed light palette. */
+@media(prefers-color-scheme:dark){
+ :root:has(#app):not(:has(.app-shell)){color-scheme:dark;color:#e4ece5;background:#111b18;--forest:#c7e6ac;--muted:#b2c1b5;--line:#425447;--surface:#1b2821;--lime:#314931;--public-surface:#1b2821;--public-raised:#24352b;--public-muted:#b2c1b5}
+ :root:has(#app):not(:has(.app-shell)) :is(.auth-card,.panel,.modal,.language-switch){background:var(--public-surface);color:#e4ece5;border-color:var(--line)}
+ :root:has(#app):not(:has(.app-shell)) :is(.button,.button.secondary){background:var(--public-raised);color:#d6ead0;border-color:var(--line)}
+ :root:has(#app):not(:has(.app-shell)) .button:hover{background:#304735}
+ :root:has(#app):not(:has(.app-shell)) .button.primary{background:#c7e6ac;color:#122219;border-color:#c7e6ac}
+ :root:has(#app):not(:has(.app-shell)) .button.primary:hover{background:#dbefc9}
+ :root:has(#app):not(:has(.app-shell)) .button.danger-button{background:#873b39;color:#fff;border-color:#b76a60}
+ :root:has(#app):not(:has(.app-shell)) :is(.field-help,.hero-copy,.hero-points,.feature-grid p,.landing-footer,.auth-note,.auth-switch,.checkbox-field,.passkey-hint,.security-note,.floating-tile b,.auth-card>.pill,.logo-suffix){color:var(--public-muted)}
+ :root:has(#app):not(:has(.app-shell)) :is(.eyebrow,.landing-story h1 em,.landing-footer>span:first-child,.question-toolbar>strong){color:#b9d69d}
+ :root:has(#app):not(:has(.app-shell)) :is(.passkey-hint,.security-note,.signup-contact-choice,.contact-recipient-profile,.recovery-question){background:#213128;border-color:var(--line)}
+ :root:has(#app):not(:has(.app-shell)) .security-note strong{color:#d6e9c7}
+ :root:has(#app):not(:has(.app-shell)) .input{background:#122018;color:#e3eddf;border-color:#586c5b}
+ :root:has(#app):not(:has(.app-shell)) .input::placeholder{color:#a9baab;opacity:1}
+ :root:has(#app):not(:has(.app-shell)) .method-tabs{background:#122018}
+ :root:has(#app):not(:has(.app-shell)) .method-tab{color:#b2c1b5}
+ :root:has(#app):not(:has(.app-shell)) .method-tab.active{background:#344b36;color:#e2f0d7;box-shadow:none}
+ :root:has(#app):not(:has(.app-shell)) :is(.auth-note,.setup-code-form){border-color:var(--line)}
+ :root:has(#app):not(:has(.app-shell)) .identity-tile{background:linear-gradient(140deg,#294032,#213529);border-color:#586f49}
+ :root:has(#app):not(:has(.app-shell)) :is(.identity-tile>span,.identity-tile p,.identity-tile strong span){color:#bdcfac}
+ :root:has(#app):not(:has(.app-shell)) .floating-tile{background:#213128;border-color:#526749}
+ :root:has(#app):not(:has(.app-shell)) :is(.floating-tile .icon,.feature-grid article>.icon){color:#bfd89f}
+ :root:has(#app):not(:has(.app-shell)) .orb{border-color:#627953}
+ :root:has(#app):not(:has(.app-shell)) .live-dot{background:#b9d69d;box-shadow:0 0 0 4px #293d25}
+ :root:has(#app):not(:has(.app-shell)) .pill{background:#2a3c2b;color:#d1e1c7}
+ :root:has(#app):not(:has(.app-shell)) .auth-card>.pill{background:transparent}
+ :root:has(#app):not(:has(.app-shell)) .alert.error{background:#46221e;color:#ffb8a8;border-color:#865149}
+ :root:has(#app):not(:has(.app-shell)) .alert.success{background:#25412d;color:#cbeebc;border-color:#52714a}
+ :root:has(#app):not(:has(.app-shell)) .offline-banner{background:#40341d;color:#f0d58f}
+ :root:has(#app):not(:has(.app-shell)) :is(button,a,input,select,textarea):focus-visible{outline-color:#bee690}
+ :root:has(#app):not(:has(.app-shell)) .language-switch{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='m1 4 5 5 5-5' fill='none' stroke='%23b2c1b5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;background-size:12px 12px}
+}
+@media(prefers-color-scheme:dark) and (forced-colors:active){:root:has(#app):not(:has(.app-shell)) .language-switch{background-image:none}}
+
+/* Theme changes must not briefly animate a dark label across the old dark button fill. */
+:root:has(#app):not(:has(.app-shell)) .button{transition:transform .16s}
