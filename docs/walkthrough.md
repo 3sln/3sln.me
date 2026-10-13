@@ -300,3 +300,59 @@ Published source52bb3bc, Workerda76c802-982b-43d8-b164-adadbaac4416. Landing and
 ![Production dark entry at320pixels](walkthrough-assets/live-system-theme-dark-320.png)
 
 Fresh productionChrome checks cover light/dark at320/1440pixels: correct palette/logo,12pxselectorarrow, stable widget identity through preference switches, no horizontal overflow or runtime errors. Local browser checks additionally cover Spanish, contrast, focus, contact/recovery/MCP pages and the console. No production account or message was created.
+
+
+## 34. Guided signup, neutral dark mode, and automatic TV sign-in
+
+Source7be2b62, assetbuild1fcee438b80c6a9d365a, Worker18430d4c-1ccf-49df-b21d-1e083b67e02f. The public page now explains three practical benefits: one account for compatible apps, storage you choose, and controlled contact links. Recovery details remain in setup. The misleading Service status placeholder has been removed from the landing footer. Dark surfaces are neutral charcoal; this supersedes the green-tinted dark palette in appendix33.
+
+### Signup asks one question at a time
+
+Choose a sign-in method, a contact channel, an email address when relevant, accept terms, then create the credential. Verification and the downloaded/tested recovery file still gate activation. Back navigation preserves relevant choices and private email drafts; changing language or theme preserves native inputs. A failed submitted signup requires a fresh security proof. No request is sent while the automatic security check is still running.
+
+![Signup method on desktop](walkthrough-assets/signup-wizard-method-en-light-1440.png)
+
+![Charcoal signup on a small screen](walkthrough-assets/signup-wizard-method-en-dark-320.png)
+
+![Choose a contact channel](walkthrough-assets/signup-wizard-contact-en-light-320.png)
+
+![Enter the email to verify](walkthrough-assets/signup-wizard-email-en-dark-320.png)
+
+![Terms as a separate step](walkthrough-assets/signup-wizard-terms-en-light-320.png)
+
+![Credential as a separate step](walkthrough-assets/signup-wizard-credential-en-dark-320.png)
+
+![Spanish credential step](walkthrough-assets/signup-wizard-password-es-dark-320.png)
+
+These staged screenshots use controlled local browser fixtures. Actual local Node and Worker checks separately exercise passkey/password setup, mandatory email proof, recovery download/test, pending resume and assertion login. Pause clears local authority and cancels KDF work; late completions cannot restore it. It does not undo an activation already submitted with the user's confirmation.
+
+### Phone and TV sign-in advances automatically
+
+After choosing phone/TV sign-in, the page displays a spinner while Turnstile checks and the QR request is prepared. Turnstile remains interaction-only. The QR appears without a second Show QR click. Request errors require explicit retry; failed polling cannot create an automatic retry loop. The phone still requires explicit approval after comparing the code on both screens.
+
+![Actual local Worker automatically generated TV QR](walkthrough-assets/live-automatic-tv-qr.png)
+
+![Actual local Worker TV signed in after explicit phone approval](walkthrough-assets/live-automatic-tv-approved.png)
+
+The TV screenshots use real local Worker authentication with test accounts, rather than a production phone approval. Deterministic backend race tests separately establish that successful cancellation fences pending session issuance or revokes only the linked session, preserving other devices. A late cookie may arrive but the revoked token has no authority. Failed/uncertain cancellation is reported honestly; legacy unlinked consumed requests cannot claim targeted revocation.
+
+### Receipt protection and CI
+
+The same deployment includes supplemental recipient-wide and contact-parent count/byte admission limits, documented in the public messaging specification. Confirmed plan capacity, stable parent-token identity, durable counters and authorized matching-replay behavior are tested. Failed downstream attempts can conservatively consume an admission. Automated multi-label classification and rejection-summary delivery remain separately designed features, with independent budgets and paid per-ingress opt-in proposed.
+
+Final evidence: local core637/637 (includes12 isolated lifecycle draft tests outside the commit), actualworkerd37/37, UIstate82/82 and focusedChrome18/18. Independent reviewer action/provider28/28 and backend cancellation9/9 passed. Linux notification fixtures now set their permission state explicitly, retaining denied/unsupported and old-service-worker safety checks. [GitHub Checks succeeded for the published source](https://github.com/3sln/3sln.me/actions/runs/38476903697).
+
+
+### Production screenshots and checks
+
+Fresh anonymous Chrome checks confirm the published benefit copy, removed status placeholder, light/charcoal surfaces,12pxselectorarrow, no horizontal overflow at320/1440pixels, and no runtime errors. Guided signup reaches the credential screen one question at a time; returning to the email step preserves the draft. The test did not submit signup, send mail, create an account or approve a login.
+
+![Published neutral dark landing](walkthrough-assets/live-portal-neutral-dark-1440.png)
+
+![Published light landing](walkthrough-assets/live-portal-neutral-light-1440.png)
+
+![Published signup on a small screen](walkthrough-assets/live-portal-signup-dark-320.png)
+
+![Production device flow waiting for its security check](walkthrough-assets/live-portal-device-check.png)
+
+The production headless device probe remained at the security check and was cancelled through the UI; no device-start response or phone approval was observed. It therefore establishes the waiting/cancel interface rather than a positive production QR/login. Automatic QR and explicit approval are established by the actual localWorker screenshots/tests above. No security check was bypassed.
