@@ -144,10 +144,10 @@ test('missing provider acceptance result fails safely', async () => {
   }
 });
 
-test('checked-in Cloudflare config disables mail and restricts the binding to five senders', async () => {
+test('checked-in Cloudflare config enables authorized mail and restricts the binding to five senders', async () => {
   const production = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   const local = JSON.parse(await readFile(new URL('../wrangler.local.jsonc', import.meta.url), 'utf8'));
-  assert.equal(production.vars.MAIL_ENABLED, 'false');
+  assert.equal(production.vars.MAIL_ENABLED, 'true');
   assert.equal(production.vars.MAIL_SENDER_DOMAIN, 'sys.3sln.me');
   assert.deepEqual(production.send_email, [{ name: 'EMAIL', allowed_sender_addresses: ['verify@sys.3sln.me', 'login@sys.3sln.me', 'notify@sys.3sln.me', 'accounts@sys.3sln.me', 'security@sys.3sln.me'] }]);
   assert.equal(local.send_email, undefined, 'local development cannot deliver remote mail');
@@ -176,3 +176,8 @@ test('self-hosted Cloudflare mail uses operator domain and brand with fixed role
   for (const domain of ['localhost', '127.0.0.1', 'https://sender.example', 'sender.example/path', 'sender.example:443', 'other@sender.example', 'sender.example\r\nBcc: stolen', '-sender.example', 'sender..example', 'sender.example.', `${'x'.repeat(64)}.example`, '']) assert.equal(mailTransport({ ...env, MAIL_SENDER_DOMAIN: domain }), null);
   for (const brand of ['\r\nSubject: forged', ' ', '', 'x'.repeat(81)]) assert.equal(mailTransport({ ...env, BRAND_NAME: brand }), null);
 });
+
+test('signup codes use the verified sender and reject malformed proof envelopes before delivery',async()=>{const {transport,sent}=fixture();await transport.sendSetupCode({email,code:'01234567',issuer:origin});assert.equal(sent[0].from,'verify@sys.3sln.me');assert.match(sent[0].text,/01234567/);assert.match(sent[0].text,/does not sign you in/);for(const code of ['1234567','123456789','1234\n567','abcdefgh'])await assert.rejects(transport.sendSetupCode({email,code,issuer:origin}),/Invalid setup verification request/);await assert.rejects(transport.sendSetupCode({email,code:'01234567',issuer:'https://attacker.example'}));assert.equal(sent.length,1);});
+test('unpaid suspension and deletion notices have bounded countdowns and preserve external-storage distinction',async()=>{const {transport,sent}=fixture();await transport.sendAccountNotice({email,type:'suspension-warning',days:7});await transport.sendAccountNotice({email,type:'deletion-warning',days:30});assert.equal(sent[0].from,'accounts@sys.3sln.me');assert.match(sent[0].subject,/Action required.*suspended in 7 days/);assert.match(sent[1].subject,/Action required.*deleted in 30 days/);assert.match(sent[1].text,/external storage providers will not be deleted/);for(const days of [0,-1,1.5,3651,'7'])await assert.rejects(async()=>transport.sendAccountNotice({email,type:'suspension-warning',days}),/Invalid account notice deadline/);assert.equal(sent.length,2);});
+
+test('setup email uses the shared Bab catalogue for the requested supported language',async()=>{const {transport,sent}=fixture();await transport.sendSetupCode({email,code:'01234567',issuer:origin,locale:'es'});assert.match(sent[0].subject,/Confirma/);assert.match(sent[0].text,/01234567/);assert.doesNotMatch(sent[0].text,/Your verification code/);});

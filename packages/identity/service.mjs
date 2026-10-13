@@ -35,13 +35,13 @@ const publicCredentials = account => account.credentials.map(({ id, label, devic
 /** Platform-independent account policy. Repository must implement linearizable
  * create and compareAndSwap; an in-memory repository is only a test resource. */
 export class IdentityService {
-  constructor({ repository, deviceRequests, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, config }) {
+  constructor({ repository, deviceRequests, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, pushTransport, config }) {
     if (!repository || !turnstile || !rateLimiter || !webauthn || !passwordHasher || !config?.termsVersion) throw new TypeError('Identity resources and terms version are required');
     const origin = new URL(config.origin);
     if (origin.origin !== config.origin || origin.hostname !== config.rpID || (origin.protocol !== 'https:' && !(config.allowInsecureLocalhost && origin.protocol === 'http:' && origin.hostname === 'localhost'))) throw new TypeError('Exact RP origin is required');
     this.repository = repository; this.crypto = new IdentityCrypto(crypto); this.clock = clock;
     this.turnstile = turnstile; this.rateLimiter = rateLimiter; this.webauthn = webauthn; this.passwordHasher = passwordHasher;
-    this.mailer = mailer; this.identityBackup = identityBackup; this.paidHandleEligibility=paidHandleEligibility;
+    this.pushTransport=pushTransport;this.mailer = mailer; this.identityBackup = identityBackup; this.paidHandleEligibility=paidHandleEligibility;
     this.deviceRequests = deviceRequests;
     this.config = { rpName: '3sln.me', sessionTtlMs: 86400000, pendingTtlMs: 1800000, challengeTtlMs: 300000, ...config };
     if (!(this.config.sessionTtlMs > 0 && this.config.sessionTtlMs <= 86400000)) throw new TypeError('Sessions must expire within 24 hours');
@@ -57,12 +57,14 @@ export class IdentityService {
     account.revision = revision + 1;
     if (!await this.repository.compareAndSwap(account.id, revision, account)) fail('conflict', 'The account changed; start this step again.');
   }
-  async pending(value) {
+  async pending(value, context) {
     const [id] = tokenParts(value); const account = await this.repository.get(id);
     if (!account || !['pending', 'recovering'].includes(account.status) || account.pendingExpiresAt <= this.clock() || !secureEqual(account.pendingHash, await this.crypto.hash('pending', value))) fail('unauthorized', 'This setup session has expired.');
-    return account;
+    if(account.setupBindingHash&&(!context?.setupBinding||!secureEqual(account.setupBindingHash,await this.crypto.hash('setup-binding',context.setupBinding))))fail('unauthorized','Continue account setup in the browser that started it.');return account;
   }
-  async newPending(account) {
+  async newPending(account,context) {
+    if(this.config.requireReachability===true&&context){if(!context.setupBinding)fail('unauthorized');account.setupBindingHash=await this.crypto.hash('setup-binding',context.setupBinding);}
+    delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupPushVerified;
     const value = `${account.id}.${this.crypto.random()}`;
     account.pendingHash = await this.crypto.hash('pending', value); account.pendingExpiresAt = this.clock() + this.config.pendingTtlMs;
     return value;
@@ -107,7 +109,8 @@ export class IdentityService {
       createdAt: this.clock(), lastActiveAt: this.clock(), termsVersion: this.config.termsVersion,
       termsAcceptedAt: this.clock(), credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null, emailLoginEnabled: false,
       passwordHash: selectedPassword ? await this.passwordHasher.hash(selectedPassword) : null };
-    const pendingToken = await this.newPending(account);
+    if(this.config.requireReachability===true){if(!context.setupBinding)fail('unauthorized','Start setup in the account browser.');account.setupBindingHash=await this.crypto.hash('setup-binding',context.setupBinding);}
+    const pendingToken = await this.newPending(account,context);
     let registrationOptions;
     if (input.method === 'passkey') {
       registrationOptions = await this.webauthn.registrationOptions({ account, config: this.config });
@@ -118,13 +121,13 @@ export class IdentityService {
     return { pendingToken, account: publicAccount(account), registrationOptions, readyForRecovery: input.method === 'password' };
   }
   async beginPasskeyRegistration(input, context) {
-    this.origin(context); const account = await this.pending(input.pendingToken); const revision = account.revision;
+    this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
     const registrationOptions = await this.webauthn.registrationOptions({ account, config: this.config });
     account.challenges = [{ purpose: 'register', value: registrationOptions.challenge, expiresAt: this.clock() + this.config.challengeTtlMs }];
     await this.save(account, revision); return { registrationOptions };
   }
   async registerPasskey(input, context) {
-    this.origin(context); const account = await this.pending(input.pendingToken); const revision = account.revision;
+    this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
     const challenge = account.challenges.find(c => c.purpose === 'register' && c.expiresAt > this.clock());
     if (!challenge) fail('invalid_challenge');
     let credential;
@@ -134,12 +137,12 @@ export class IdentityService {
     await this.save(account, revision); return { readyForRecovery: true };
   }
   async setPendingPassword(input, context) {
-    this.origin(context); const account = await this.pending(input.pendingToken); const revision = account.revision;
+    this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
     account.passwordHash = await this.passwordHasher.hash(password(input.password));
     this.audit(account, 'password-configured'); await this.save(account, revision); return { readyForRecovery: true };
   }
   async downloadRecovery(input, context) {
-    this.origin(context); const account = await this.pending(input.pendingToken); const revision = account.revision;
+    this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
     if (!account.passwordHash && !account.credentials.length) fail('credential_required', 'Set up your passkey or password first.');
     const recoveryToken = `${account.id}.${this.crypto.random()}`;
     account.recoveryHash = await this.crypto.hash('recovery', recoveryToken); account.recoveryIssuedAt = this.clock();
@@ -174,15 +177,25 @@ export class IdentityService {
     const certificate=await this.identityBackup.certificate(account,selected,this.clock());
     return {fileName:`handle-claim-${selected}.json`,content:JSON.stringify(certificate,null,2)};
   }
+  setupProjection(account){const push=typeof this.pushTransport?.send==='function'&&typeof this.pushTransport?.register==='function'&&account.setupPushVerified?.expiresAt>this.clock();return {accountId:account.id,channelRequired:this.config.requireReachability===true,channelVerified:Boolean(account.verifiedEmail&&Number.isFinite(account.emailVerifiedAt)||push),verifiedEmail:account.verifiedEmail??null,pushVerified:Boolean(push),emailAvailable:typeof this.mailer?.sendSetupCode==='function',pushAvailable:typeof this.pushTransport?.send==='function'&&typeof this.pushTransport?.register==='function'};}
+  async setupSendAdmission(account,kind,context,target){const now=this.clock(),windowKey='setup'+kind+'WindowAt',countKey='setup'+kind+'Sends',sentKey='setup'+kind+'SentAt';const window=account[windowKey];if(window!==undefined&&(!Number.isSafeInteger(window)||window>now))fail('rate_limited');if(window===undefined||now-window>=600000){account[windowKey]=now;account[countKey]=0;}if(!Number.isInteger(account[countKey])||account[countKey]<0||account[countKey]>=3||account[sentKey]&&now-account[sentKey]<60000||!await this.rateLimiter.check({operation:'email',remoteIP:context.remoteIP,handle:target}))fail('rate_limited','Wait before requesting another verification check.');account[countKey]++;account[sentKey]=now;}
+  async setupStatus(input,context){this.origin(context);return this.setupProjection(await this.pending(input.pendingToken,context));}
+  async setupEmailStart(input,context){this.origin(context);if(input.locale!==undefined&&!['en','es'].includes(input.locale))fail('invalid_locale','Choose English or Spanish.');const account=await this.pending(input.pendingToken,context),revision=account.revision;if(typeof this.mailer?.sendSetupCode!=='function')fail('email_unavailable','Email delivery is not configured.');const email=emailAddress(input.email),now=this.clock();await this.setupSendAdmission(account,'Email',context,email);let number;do{number=globalThis.crypto.getRandomValues(new Uint32Array(1))[0];}while(number>=4200000000);const code=String(number%100000000).padStart(8,'0');account.setupEmailChallenge={email,hash:await this.crypto.hash('setup-email',account.id+'|'+account.pendingHash+'|'+email+'|'+code),pendingHash:account.pendingHash,expiresAt:now+600000,attempts:0};await this.save(account,revision);await this.mailer.sendSetupCode({email,code,issuer:this.config.origin,locale:input.locale??'en'});return {sent:true,...this.setupProjection(account)};}
+  async setupEmailConfirm(input,context){this.origin(context);const account=await this.pending(input.pendingToken,context),revision=account.revision,challenge=account.setupEmailChallenge;if(!challenge||challenge.pendingHash!==account.pendingHash||challenge.expiresAt<=this.clock()||challenge.attempts>=5||typeof input.code!=='string'||!/^\d{8}$/.test(input.code))fail('invalid_challenge','Request a fresh email code.');challenge.attempts++;if(!secureEqual(challenge.hash,await this.crypto.hash('setup-email',account.id+'|'+account.pendingHash+'|'+challenge.email+'|'+input.code))){await this.save(account,revision);fail('invalid_challenge','That email code is incorrect.');}const existing=await this.repository.findByEmail(challenge.email);if(existing&&existing.id!==account.id)fail('email_already_linked','This verified email belongs to another account. Sign in to that account.');account.verifiedEmail=challenge.email;account.emailVerifiedAt=this.clock();account.emailLoginEnabled=false;delete account.setupEmailChallenge;this.audit(account,'setup-email-verified');await this.save(account,revision);return this.setupProjection(account);}
+  async setupPushStart(input,context){this.origin(context);if(input.locale!==undefined&&!['en','es'].includes(input.locale))fail('invalid_locale','Choose English or Spanish.');const account=await this.pending(input.pendingToken,context),revision=account.revision;if(typeof this.pushTransport?.send!=='function')fail('push_unavailable','Push delivery is not configured.');const subscription=input.subscription;if(!subscription||typeof subscription.endpoint!=='string'||subscription.endpoint.length>4096||!subscription.keys||typeof subscription.keys.p256dh!=='string'||typeof subscription.keys.auth!=='string'||JSON.stringify(subscription).length>8192)fail('invalid_subscription','Use a browser-created push subscription.');await this.setupSendAdmission(account,'Push',context,account.handle);const proof=account.id+'.'+this.crypto.random();account.setupPushChallenge={subscription:structuredClone(subscription),hash:await this.crypto.hash('setup-push',proof),pendingHash:account.pendingHash,expiresAt:this.clock()+300000};delete account.setupPushVerified;await this.save(account,revision);await this.pushTransport.send(subscription,{type:'bindle-setup-challenge',proof,owner:account.id,locale:input.locale??'en'});return {sent:true,...this.setupProjection(account)};}
+  async setupPushConfirm(input,context){this.origin(context);const account=await this.pending(input.pendingToken,context),revision=account.revision,challenge=account.setupPushChallenge;if(typeof this.pushTransport?.send!=='function'||!challenge||challenge.pendingHash!==account.pendingHash||challenge.expiresAt<=this.clock()||typeof input.proof!=='string'||!secureEqual(challenge.hash,await this.crypto.hash('setup-push',input.proof)))fail('invalid_challenge','Enable notifications and request a fresh push check.');account.setupPushVerified={subscription:challenge.subscription,verifiedAt:this.clock(),expiresAt:account.pendingExpiresAt};delete account.setupPushChallenge;this.audit(account,'setup-push-verified');await this.save(account,revision);return this.setupProjection(account);}
+  async requireSetupChannel(account){if(this.config.requireReachability!==true)return;if(account.verifiedEmail&&Number.isFinite(account.emailVerifiedAt)){const owner=await this.repository.findByEmail(account.verifiedEmail);if(owner?.id===account.id)return;}if(typeof this.pushTransport?.send==='function'&&account.setupPushVerified?.expiresAt>this.clock()){if(typeof this.pushTransport.register!=='function')fail('push_unavailable','Push registration is not configured.');await this.pushTransport.register({owner:account.id,subscription:account.setupPushVerified.subscription});if(account.pendingExpiresAt<=this.clock()||account.setupPushVerified.expiresAt<=this.clock())fail('unauthorized','This setup proof expired. Start another check.');return;}fail('contact_required','Verify an email address or enable and verify push notifications before activating your account.');}
   async confirmRecovery(input, context) {
-    this.origin(context); const account = await this.pending(input.pendingToken); const revision = account.revision;
+    this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision,activationDeadline=account.pendingExpiresAt;
     if (input.downloadConfirmed !== true || !account.recoveryHash || typeof input.recoveryToken !== 'string' || !secureEqual(account.recoveryHash, await this.crypto.hash('recovery', input.recoveryToken))) fail('recovery_confirmation_required', 'Download and confirm your recovery file before continuing.');
     if (!account.passwordHash && !account.credentials.length) fail('credential_required');
-    account.status = 'active'; account.pendingHash = null; account.pendingExpiresAt = null; account.challenges = [];
+    await this.requireSetupChannel(account);
+    account.status = 'active'; account.pendingHash = null; account.pendingExpiresAt = null; account.challenges = [];delete account.setupBindingHash;delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupEmailSends;delete account.setupEmailSentAt;delete account.setupPushSends;delete account.setupPushSentAt;delete account.setupEmailWindowAt;delete account.setupPushWindowAt;
     delete account.recoveryResumeHash; delete account.recoveryResumeBackupVersion;
-    this.audit(account, 'account-activated'); const result = await this.session(account);
+    this.audit(account, 'account-activated'); const result = await this.session(account);if(activationDeadline<=this.clock())fail('unauthorized','This setup session expired.');
     await this.save(account, revision); return result;
   }
+  async resumeSetupCredential(account,context,revision=account.revision){const pendingToken=await this.newPending(account,context);account.challenges=[];this.audit(account,'setup-credential-resumed');await this.save(account,revision);return {pendingToken,account:publicAccount(account),readyForRecovery:Boolean(account.passwordHash||account.credentials.length),credentialRequired:false,resumed:true,setup:this.setupProjection(account)};}
   async loginPassword(input, context) {
     this.origin(context);input={...input,handle:handle(input.handle)};await this.guard('login', input, context); password(input.password);
     const account = await this.repository.findByHandle(input.handle);
@@ -191,7 +204,8 @@ export class IdentityService {
     const dummyHash = await this.dummyPasswordHash;
     const hash = account?.passwordHash || dummyHash;
     const verified = await this.passwordHasher.verify(input.password, hash);
-    if (!account || account.status !== 'active' || !account.passwordHash || !verified) fail('unauthorized', 'Authentication failed.');
+    if (!account || !['active',...this.config.requireReachability===true?['pending','recovering']:[]].includes(account.status) || !account.passwordHash || !verified) fail('unauthorized', 'Authentication failed.');
+    if(account.status!=='active')return this.resumeSetupCredential(account,context);
     const revision = account.revision; const result = await this.session(account, { label: input.label }); await this.save(account, revision); return result;
   }
   async beginPasskeyLogin(input, context) {
@@ -199,7 +213,7 @@ export class IdentityService {
     const account = await this.repository.findByHandle(input.handle);
     const authenticationOptions = await this.webauthn.authenticationOptions({ config: this.config });
     const challengeToken = `${account?.id || this.crypto.id()}.${this.crypto.random()}`;
-    if (account?.status === 'active') {
+    if (account?.status === 'active'||this.config.requireReachability===true&&['pending','recovering'].includes(account?.status)) {
       const revision = account.revision;
       account.challenges = [...account.challenges.filter(c => c.expiresAt > this.clock() && c.purpose !== 'register').slice(-4),
         { purpose: 'login', value: authenticationOptions.challenge, hash: await this.crypto.hash('challenge', challengeToken), expiresAt: this.clock() + this.config.challengeTtlMs }];
@@ -214,11 +228,12 @@ export class IdentityService {
     const hash = await this.crypto.hash('challenge', input.challengeToken);
     const challenge = account?.challenges.find(c => c.purpose === 'login' && secureEqual(c.hash, hash) && c.expiresAt > this.clock());
     const credential = account?.credentials.find(c => c.id === input.response?.id);
-    if (!account || account.status !== 'active' || !challenge || !credential) fail('unauthorized', 'Authentication failed.');
+    if (!account || !['active',...this.config.requireReachability===true?['pending','recovering']:[]].includes(account.status) || !challenge || !credential) fail('unauthorized', 'Authentication failed.');
     const revision = account.revision; let verified;
     try { verified = await this.webauthn.verifyAuthentication({ response: input.response, challenge: challenge.value, credential, account, config: this.config }); } catch { fail('unauthorized', 'Authentication failed.'); }
     credential.counter = verified.counter; credential.backedUp = verified.backedUp;
     account.challenges = account.challenges.filter(c => c !== challenge);
+    if(account.status!=='active')return this.resumeSetupCredential(account,context,revision);
     const result = await this.session(account, { label: input.label, credentialId: credential.id }); await this.save(account, revision); return result;
   }
   async recover(input, context) {
@@ -226,7 +241,7 @@ export class IdentityService {
     const account = await this.repository.get(id);
     const proofHash = await this.crypto.hash('recovery', input.recoveryToken);
     const resumed = account?.status === 'recovering' && secureEqual(account.recoveryResumeHash, proofHash);
-    if (!account || (!resumed && (account.status !== 'active' || !secureEqual(account.recoveryHash, proofHash)))) fail('unauthorized', 'Recovery failed.');
+    if (!account || (!resumed && (!['active','pending'].includes(account.status) || !secureEqual(account.recoveryHash, proofHash)))) fail('unauthorized', 'Recovery failed.');
     if((resumed?account.recoveryResumeBackupVersion:account.recoveryBackupVersion)===2){
       if(!this.identityBackup||!input.identityBackup)fail('unauthorized','Provide the signed identity recovery file.');
       try{await this.identityBackup.verify(input.identityBackup,account,input.recoveryToken);}catch{fail('unauthorized','Recovery failed.');}
@@ -240,7 +255,7 @@ export class IdentityService {
     // Resumption only rotates the limited setup authority; completed replacement
     // credentials and the replacement recovery file remain intact.
     account.challenges = [];
-    const pendingToken = await this.newPending(account); this.audit(account, resumed ? 'recovery-setup-resumed' : 'account-recovery-started');
+    const pendingToken = await this.newPending(account,context); this.audit(account, resumed ? 'recovery-setup-resumed' : 'account-recovery-started');
     await this.save(account, revision);
     const credentialRequired = !account.passwordHash && !account.credentials.length;
     return { pendingToken, account: publicAccount(account), credentialRequired, readyForRecovery: !credentialRequired, resumed };

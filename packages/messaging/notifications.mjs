@@ -33,7 +33,7 @@ export class NotificationService {
       await tx.set(key('notification-preferences', owner), preferences); return preferences;
     });
   }
-  async subscribe(owner, { endpoint, keys }, label = 'This device') {
+  async subscribe(owner, { endpoint, keys }, label = 'This device', {enable=false}={}) {
     let url; try { url = new URL(endpoint); } catch { fail('invalid_subscription'); }
     if (url.protocol !== 'https:' || url.username || url.password || url.hash || endpoint.length > 2048 || !this.allowedPushOrigins.includes(url.origin) || !boundedString(label, 100)) fail('invalid_subscription');
     if (!keys || fromBase64url(keys.p256dh).length !== 65 || fromBase64url(keys.auth).length !== 16) fail('invalid_subscription');
@@ -41,6 +41,7 @@ export class NotificationService {
     return this.store.transaction(async tx => {
       const all = await tx.list(key('push-subscription', owner));
       if (all.length >= 10 && !all.some(row => row.value.id === id)) fail('subscription_limit');
+      if(enable){const preferences=await tx.get(key('notification-preferences',owner))??defaultNotificationPreferences();validatePreferences(preferences);preferences.enabled=true;preferences.push.enabled=true;await tx.set(key('notification-preferences',owner),preferences);}
       await tx.set(key('push-subscription', owner, id), { id, owner, endpoint, keys, label, createdAt: this.clock() });
       return { id, label };
     });

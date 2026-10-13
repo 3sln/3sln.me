@@ -18,6 +18,7 @@ const privateHeaders={ 'Cache-Control':'no-store','Referrer-Policy':'no-referrer
 const json=(data,status=200,extra={})=>new Response(JSON.stringify(data),{status,headers:{...privateHeaders,'Content-Type':'application/json',...extra}});
 const cookie=(token,local,maxAge=86400)=>`${local?'bindle_session':'__Host-bindle_session'}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${local?'':'; Secure'}`;
 function sessionToken(request,local){const name=local?'bindle_session':'__Host-bindle_session';for(const piece of (request.headers.get('Cookie')||'').split(';')){const [key,...rest]=piece.trim().split('=');if(key===name)return decodeURIComponent(rest.join('='));}return undefined;}
+function setupCookie(request,local){const name=local?'bindle_setup':'__Host-bindle_setup';for(const piece of (request.headers.get('Cookie')||'').split(';')){const [key,...rest]=piece.trim().split('=');if(key===name){const value=rest.join('=');return /^[a-f0-9-]{72}$/.test(value)?value:undefined;}}}
 function deviceCookie(request,local){const name=local?'bindle_device':'__Host-bindle_device';for(const piece of (request.headers.get('Cookie')||'').split(';')){const [key,...rest]=piece.trim().split('=');if(key===name)return decodeURIComponent(rest.join('='));}return undefined;}
 export function subnet(value){if(/^\d+\.\d+\.\d+\.\d+$/.test(value))return value.split('.').slice(0,3).join('.')+'/24';if(value.includes(':')){const [left,right='']=value.toLowerCase().split('::');const a=left?left.split(':'):[],b=right?right.split(':'):[];const groups=[...a,...Array(Math.max(0,8-a.length-b.length)).fill('0'),...b];return groups.slice(0,3).map(x=>parseInt(x||'0',16).toString(16)).join(':')+'::/48';}return 'unknown';}
 async function pseudonym(value,secret){const key=await crypto.subtle.importKey('raw',encoder.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);const bytes=new Uint8Array(await crypto.subtle.sign('HMAC',key,encoder.encode(value)));return [...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');}
@@ -27,7 +28,7 @@ async function limit(env,{operation,remoteIP,region,handle,phase,onDenied}){
   const ip=await pseudonym(remoteIP||'unknown',secret);const network=await pseudonym(subnet(remoteIP||'unknown'),secret);
   return enforceAbusePolicy({consume:async window=>{const admitted=await consume(env,window.key,window.windowMs,window.limit,window.lifetime===true);if(!admitted)onDenied?.(window);return admitted;}},{operation,phase,ipHash:ip,subnetHash:network,handleHash:handle?await pseudonym(handle,secret):undefined,regionHash:await pseudonym(region||'unknown',secret),signupLimits:env});
 }
-export function signupEnabled(env){const present=value=>typeof value==='string'&&value.trim().length>0;const local=env.LOCAL_DEVELOPMENT==='true';return present(env.RECOVERY_SIGNING_KEY)&&(local||(env.SIGNUP_ENABLED===undefined?env.RELEASE_READY==='true':env.SIGNUP_ENABLED==='true')&&[env.TURNSTILE_SITE_KEY,env.TURNSTILE_SECRET_KEY,env.KEY_ENCRYPTION_KEY].every(present));}
+export function signupEnabled(env){const present=value=>typeof value==='string'&&value.trim().length>0;const local=env.LOCAL_DEVELOPMENT==='true';return (env.SIGNUP_CONTACT_REQUIRED!=='true'||env.EMAIL_SETUP_AVAILABLE===true||env.PUSH_AVAILABLE===true)&&present(env.RECOVERY_SIGNING_KEY)&&(local||(env.SIGNUP_ENABLED===undefined?env.RELEASE_READY==='true':env.SIGNUP_ENABLED==='true')&&[env.TURNSTILE_SITE_KEY,env.TURNSTILE_SECRET_KEY,env.KEY_ENCRYPTION_KEY].every(present));}
 async function turnstile(env,input){
   if(env.LOCAL_DEVELOPMENT==='true'&&input.token==='local-browser-test-token')return true;
   if(!env.TURNSTILE_SECRET_KEY)return false;
@@ -35,6 +36,7 @@ async function turnstile(env,input){
 }
 async function identity(env){return env.IDENTITY_ENGINE();}
 const authMethods={
+ '/api/auth/setup/status':'setupStatus','/api/auth/setup/email/start':'setupEmailStart','/api/auth/setup/email/confirm':'setupEmailConfirm','/api/auth/setup/push/start':'setupPushStart','/api/auth/setup/push/confirm':'setupPushConfirm',
  '/api/auth/handles/claim':'claimHandle','/api/auth/handles/certificate':'handleCertificate',
  '/api/auth/signup':'signup','/api/auth/passkey/register/begin':'beginPasskeyRegistration','/api/auth/passkey/register':'registerPasskey','/api/auth/password/pending':'setPendingPassword',
  '/api/auth/recovery/download':'downloadRecovery','/api/auth/recovery/confirm':'confirmRecovery','/api/auth/login/password':'loginPassword','/api/auth/login/passkey/begin':'beginPasskeyLogin',
@@ -44,7 +46,7 @@ const authMethods={
  ,'/api/auth/email/login/settings':'configureEmailLogin'
 };
 async function body(request,max=100000){const content=request.headers.get('Content-Type')||'';if(!content.startsWith('application/json'))throw Object.assign(new Error('Use JSON for this request.'),{code:'json_required',status:415});const reader=request.body?.getReader();if(!reader)throw Object.assign(new Error('Request body required'),{status:400});let size=0;const chunks=[];while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>max){await reader.cancel();throw Object.assign(new Error('Request is too large.'),{code:'body_too_large',status:413});}chunks.push(value);}const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}try{const result=JSON.parse(new TextDecoder().decode(bytes));if(!result||typeof result!=='object'||Array.isArray(result))throw new Error();return result;}catch{throw Object.assign(new Error('Request JSON must be an object.'),{code:'invalid_json',status:400});}}
-function status(error){if(error.status)return error.status;return {unauthorized:401,csrf:403,forbidden:403,not_found:404,conflict:409,handle_unavailable:409,idempotency_conflict:409,quota_exceeded:429,account_quota_exceeded:429,rate_limited:429,email_unavailable:503,challenge_failed:403}[error.code]||400;}
+function status(error){if(error.status)return error.status;return {unauthorized:401,csrf:403,forbidden:403,not_found:404,conflict:409,handle_unavailable:409,idempotency_conflict:409,quota_exceeded:429,account_quota_exceeded:429,rate_limited:429,email_unavailable:503,push_unavailable:503,contact_required:409,email_already_linked:409,challenge_failed:403}[error.code]||400;}
 function providerConfig(env){return {hosted:{enabled:Boolean(env.ACCOUNTS)},google: {enabled:Boolean(env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET&&env.KEY_ENCRYPTION_KEY),configured:Boolean(env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET),...env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET?{}:{reason:'Google Drive credentials are not configured on this service.'}},s3:{enabled:Boolean(env.KEY_ENCRYPTION_KEY)},webdav:{enabled:Boolean(env.KEY_ENCRYPTION_KEY),reason:'For your security, this service must approve the server you connect to.'},dropbox:{enabled:false,reason:'Dropbox is not available on this service yet.'},onedrive:{enabled:false,reason:'Microsoft OneDrive is not available on this service yet.'}};}
 
 export default {
@@ -119,7 +121,7 @@ export default {
    const allow=allowedMethods(path);if(allow&&!allow.includes(request.method))return json({error:'method_not_allowed',message:'This operation does not support that request method.'},405,{Allow:allow.join(', ')});
    if(path.startsWith('/api/demo'))return json({error:'not_found'},404);
    if(path==='/api/recovery/authority'){if(request.method!=='GET')return json({error:'method_not_allowed'},405,{Allow:'GET'});return json(recoveryAuthorityPublic(env));}
-   if(path==='/api/config')return json({origin:env.APP_ORIGIN,brand:{name:env.BRAND_NAME||(local?'3sln.me':'3sln.me'),host:new URL(env.APP_ORIGIN).host},termsVersion:env.TERMS_VERSION,turnstileSiteKey:env.TURNSTILE_SITE_KEY,localDevelopment:local,signupEnabled:signupEnabled(env),passwordEnabled:true,passkeyEnabled:true,emailEnabled:env.EMAIL_AVAILABLE===true,notificationEmailEnabled:false,pushEnabled:false,vapidPublicKey:env.VAPID_PUBLIC_KEY,billingEnabled:env.BILLING_ENABLED==='true',searchEnabled:true,semanticSearchEnabled:env.SEMANTIC_SEARCH_ENABLED==='true',providers:providerConfig(env)});
+   if(path==='/api/config')return json({origin:env.APP_ORIGIN,brand:{name:env.BRAND_NAME||(local?'3sln.me':'3sln.me'),host:new URL(env.APP_ORIGIN).host},termsVersion:env.TERMS_VERSION,turnstileSiteKey:env.TURNSTILE_SITE_KEY,localDevelopment:local,signupEnabled:signupEnabled(env),signupContactRequired:env.SIGNUP_CONTACT_REQUIRED==='true',emailSetupAvailable:env.EMAIL_SETUP_AVAILABLE===true,pushSetupAvailable:env.PUSH_AVAILABLE===true,passwordEnabled:true,passkeyEnabled:true,emailEnabled:env.EMAIL_AVAILABLE===true,notificationEmailEnabled:false,pushEnabled:false,vapidPublicKey:env.VAPID_PUBLIC_KEY,billingEnabled:env.BILLING_ENABLED==='true',searchEnabled:true,semanticSearchEnabled:env.SEMANTIC_SEARCH_ENABLED==='true',providers:providerConfig(env)});
    if(path==='/api/notifications/unsubscribe'&&request.method==='POST'){
      const input=await body(request);const pieces=typeof input.token==='string'?input.token.split('.'):[];const owner=pieces.length===2?pieces[0]:input.owner;const token=pieces.length===2?pieces[1]:input.token;
      if(typeof owner!=='string'||!/^[a-f0-9-]{36}$/.test(owner)||typeof token!=='string'||token.length!==43)return json({error:'invalid_unsubscribe',message:'This unsubscribe link is invalid.'},400);
@@ -145,7 +147,8 @@ export default {
    if(mutation&&path.startsWith('/api/')&&request.headers.get('Origin')!==env.APP_ORIGIN)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
    if(path.startsWith('/api/')){
     if(path==='/api/auth/signup'&&request.method==='POST'&&!signupEnabled(env))return json({error:'release_gated',message:'Account creation is not open yet.'},503);
-    engine=await identity(env);const context={origin:request.headers.get('Origin')||env.APP_ORIGIN,sessionToken:sessionToken(request,local),csrfToken:request.headers.get('X-CSRF-Token'),remoteIP:request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown'),region:/^[A-Z]{2}$/.test(request.cf?.country||'')?request.cf.country:'unknown',deviceBinding:deviceCookie(request,local)};
+    engine=await identity(env);const context={origin:request.headers.get('Origin')||env.APP_ORIGIN,sessionToken:sessionToken(request,local),csrfToken:request.headers.get('X-CSRF-Token'),remoteIP:request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown'),region:/^[A-Z]{2}$/.test(request.cf?.country||'')?request.cf.country:'unknown',deviceBinding:deviceCookie(request,local),setupBinding:setupCookie(request,local)};
+    if(['/api/auth/signup','/api/auth/recover','/api/auth/login/password','/api/auth/login/passkey/finish'].includes(path))context.setupBinding=crypto.randomUUID()+crypto.randomUUID();
     if(path==='/api/auth/device/start')context.deviceBinding=crypto.randomUUID()+crypto.randomUUID();
     if(path==='/api/auth/device/inspect')return json(await engine.query(new DeviceRequestQuery(await body(request),context)).peek());
     if(path==='/api/auth/device/qr'){
@@ -161,8 +164,9 @@ export default {
         await accountHandle(env,authenticated.account.id).touch(authenticated.account.id);
       }
       const event=await engine.dispatch(new IdentityAction(authMethods[path],input,context)).next('result');const result=event.detail;
+      if(path==='/api/auth/signup'&&result.account?.status==='pending')await accountHandle(env,result.account.id).rememberSignupOrigin(result.account.id,{createdAt:result.account.createdAt});
       if(result.sessionToken&&result.account?.id){try{await accountHandle(env,result.account.id).touch(result.account.id);result.billingSync=await accountHandle(env,result.account.id).billingRefresh(result.account.id,{force:true});}catch{result.billingSync={checked:false,error:'billing_provider_unavailable'};}}
-      const headers={};if(result.sessionToken){headers['Set-Cookie']=cookie(result.sessionToken,local);delete result.sessionToken;}if(path==='/api/auth/logout')headers['Set-Cookie']=cookie('',local,0);
+      const headers={};if(result.pendingToken&&context.setupBinding)headers['Set-Cookie']=`${local?'bindle_setup':'__Host-bindle_setup'}=${context.setupBinding}; Path=/; HttpOnly; SameSite=Strict; Max-Age=1800${local?'':'; Secure'}`;if(result.sessionToken){headers['Set-Cookie']=cookie(result.sessionToken,local);delete result.sessionToken;}if(path==='/api/auth/logout')headers['Set-Cookie']=cookie('',local,0);
       if(path==='/api/auth/device/start')headers['Set-Cookie']=`${local?'bindle_device':'__Host-bindle_device'}=${context.deviceBinding}; Path=/; HttpOnly; SameSite=Strict; Max-Age=300${local?'':'; Secure'}`;
       return json(result,200,headers);
     }

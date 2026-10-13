@@ -44,6 +44,7 @@ const constructors={
   'add-recovery-question':actions.EditRecoveryQuestion,'remove-recovery-question':actions.EditRecoveryQuestion,
   'move-recovery-question':actions.EditRecoveryQuestion,'edit-recovery-question':actions.EditRecoveryQuestion,'set-pending-passkey':actions.SetPendingPasskey,
   'set-pending-password':actions.SetPendingPassword,'prepare-recovery':actions.PrepareRecovery,
+  'signup-channel':actions.ChooseSignupChannel,'setup-contact-mode':actions.SetupContactMode,'recheck-setup-contact':actions.RecheckSetupContact,'start-setup-email':actions.StartSetupEmail,'confirm-setup-email':actions.ConfirmSetupEmail,'start-setup-push':actions.StartSetupPush,'setup-push-proof':actions.ConfirmSetupPush,
   'download-recovery':actions.DownloadRecovery,'confirm-recovery':actions.ConfirmRecovery,
   'email-signin':actions.RequestEmailSignIn,'confirm-email':actions.ConfirmEmail,
   unsubscribe:actions.UnsubscribeChannel,'send-contact-message':actions.SendContactMessage,

@@ -1,6 +1,6 @@
 # Bindle protocol v0 — normative draft
 
-Status: proposed, not a deployed interoperability standard. **Bindle** is a provisional name; the brief also says Bridle. Publication authority and final branding need owner sign-off. Example canonical URLs under `https://spec.bindle.example/` are placeholders, not live authorities. MUST/SHOULD/MAY express draft requirements. These documents distinguish a contract from a conforming production service; the actual current wire profile and runtime evidence are in [federation implementation](federation-implementation.md). Canonical contract candidates are under https://3sln.me/artefacts/contracts/; publication and external-provider verification are separate gates.
+Bindle v0 is an open specification draft, not a deployed interoperability standard. Example canonical URLs under `https://spec.bindle.example/` are placeholders, not live authorities. MUST/SHOULD/MAY express draft requirements. The [OAuth and RPC wire profile](federation-implementation.md) describes the current runtime. Canonical contract candidates are under https://3sln.me/artefacts/contracts/; publication and external-provider compatibility are separate concerns.
 
 ## 1. Model and custody
 

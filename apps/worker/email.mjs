@@ -1,4 +1,5 @@
 import { emailLogoBase64 } from '../../packages/branding/email-logo.mjs';
+import { createLocalization } from '../../packages/i18n/index.mjs';
 
 const SENDER_ROLES = Object.freeze({
   link: 'verify', login: 'login', reminder: 'notify',
@@ -13,6 +14,8 @@ const PROVIDER_CODES = new Set([
   'E_HEADER_NAME_INVALID', 'E_HEADERS_TOO_LARGE', 'E_HEADERS_TOO_MANY'
 ]);
 const ACCOUNT_NOTICES = Object.freeze({
+  'suspension-warning': ['Action required: your {brand} account will be suspended in {days} days', 'We have tried to reach you about your unpaid account. Sign in and confirm you still want to use it before the deadline. Otherwise, your account will be suspended in {days} days. Suspension retains your hosted data but blocks normal account access and changes.'],
+  'deletion-warning': ['Action required: your {brand} account will be deleted in {days} days', 'Your unpaid account is suspended. Sign in and confirm you still want to use it within {days} days to reactivate it. Otherwise, your account and data stored on {brand} will be deleted. Data in connected external storage providers will not be deleted by us.'],
   'inactivity-warning': ['Review your {brand} account', 'Your account needs an activity review. Open your personal space to review its current status and options.'],
   'deletion-scheduled': ['Review scheduled {brand} account deletion', 'Account deletion has been scheduled. Open your personal space to review the schedule and available options.'],
   'deletion-cancelled': ['{brand} account deletion cancelled', 'Scheduled account deletion has been cancelled. Open your personal space to review your account.']
@@ -89,12 +92,20 @@ export function mailTransport(env = {}) {
       });
     }
   };
-  const notice = (templates, from, { email, type }) => {
+  const notice = (templates, from, { email, type, days }) => {
     if (!Object.hasOwn(templates, type)) throw new Error('Invalid mail notice type.');
     const [subject, text] = templates[type];
-    return send({ from, to: email, subject: subject.replaceAll('{brand}', () => brand), text: `${text}\n\nOpen ${origin}/\n\nIf you did not request this change, review your account security in your personal space.` });
+    if ((subject.includes('{days}') || text.includes('{days}')) && (!Number.isInteger(days) || days < 1 || days > 3650)) throw new Error('Invalid account notice deadline.');
+    const format = value => value.replaceAll('{brand}', () => brand).replaceAll('{days}', () => String(days));
+    return send({ from, to: email, subject: format(subject), text: `${format(text)}\n\nOpen ${origin}/\n\nIf you did not request this change, review your account security in your personal space.` });
   };
   return {
+    async sendSetupCode({ email, code, issuer, locale = 'en' }) {
+      if (issuer !== origin || typeof code !== 'string' || !/^\d{8}$/.test(code)) throw new Error('Invalid setup verification request.');
+      const {t} = createLocalization({locale});
+      return send({ from: senders.link, to: email, subject: t('Confirm your {brand} account email', {brand}),
+        text: [t('Only continue if you requested a new {brand} account.', {brand}), t('Your verification code: {code}', {code}), t('Enter this code in the browser where you started account setup. It expires in ten minutes. This code verifies your email; it does not sign you in or replace your passkey, password or recovery file.'), t('If you did not request this code, ignore this message.')].join('\n\n') });
+    },
     async sendVerification({ email, token, purpose, issuer }) {
       if (!['link', 'login'].includes(purpose) || issuer !== origin) throw new Error('Invalid mail verification request.');
       requireToken(token);

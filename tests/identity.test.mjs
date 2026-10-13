@@ -215,7 +215,7 @@ test('dormant lifecycle preserves no-contact accounts and requires signoff, actu
   assert.equal(planAccountLifecycle(account, policy).action, 'shelve');
   account.shelvedAt = 181 * day;
   assert.equal(planAccountLifecycle(account, policy).action, 'retain-shelved');
-  const approved = { ...policy, deletionEnabled: true, deletionSignoff: { reviewer: 'actual reviewer fixture', date: '2026-10-11', outcome: 'approved' } };
+  const approved = { ...policy,paymentProtection:{status:'unpaid'}, deletionEnabled: true, deletionSignoff: { reviewer: 'actual reviewer fixture', date: '2026-10-11', outcome: 'approved' } };
   assert.equal(planAccountLifecycle(account, approved).action, 'retain-shelved');
   account.verifiedEmail = 'owner@mail.example'; assert.equal(planAccountLifecycle(account, approved).action, 'notify');
   account.deletionNotice = { deliveredAt: 950 * day, deliveryReceipt: 'verified-test-receipt' };

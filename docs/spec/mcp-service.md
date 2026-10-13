@@ -51,7 +51,7 @@ Owner connection listing is a control-plane operation: at most eight concurrent 
 
 Unauthenticated authorization/token ingress additionally requires independent IP (30/minute), subnet (100/minute) and service-partition admission. Sixteen fixed service partitions allow 32 ingress requests/minute each, for an aggregate ceiling of 512/minute. These shared guards apply only to OAuth ingress; ordinary bearer tool calls use one authority shard and account-local budgets. Expiry maintenance uses exponential backoff and pauses after eight failures while retaining ownership of cleanup records; a paused shard requires operator repair rather than an endless alarm loop. Stored token/grant/code/refresh expiry and grant permission structures are validated before authorization, so missing or malformed expiry fails closed.
 
-## Status and review
+## Local verification history
 
 Implemented and tested locally: Node SQLite restart persistence, official SDK HTTP tools/resources/prompts, exact audience and collection checks, S256 rejection, code replay, refresh rotation/reuse/concurrency, revocation, conditional write retry behavior and actual Worker Durable Object authorization. Production external-provider conformance and independent client/security review are unverified. Account production release remains disabled.
 
@@ -60,5 +60,7 @@ Implemented and tested locally: Node SQLite restart persistence, official SDK HT
 | Independent MCP namespace and fixed 64-shard layout | Unassigned | — | Provisional |
 | Operator pre-registration and refresh-family revocation | Unassigned | — | Provisional |
 | Bounded storage/inbox tool capability surface | Unassigned | — | Provisional |
+
+## References
 
 Primary references checked on 2026-10-12: [MCP authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization), [Streamable HTTP compatibility transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports), and [official TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk). These references establish the protocol requirements; they do not constitute independent service approval.

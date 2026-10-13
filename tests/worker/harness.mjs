@@ -9,8 +9,10 @@ import path from 'node:path';
 const harness = `
 import worker, { IdentityDirectory, AccountObject, AbuseGuard, McpAuthorizationObject, FederationObject, PlanCatalogObject } from './apps/worker/index.mjs';
 import {createWorkerArgon2Hasher}from'./apps/worker/password.mjs';
+import {createPushTransport}from'./packages/messaging/web-push.mjs';
 export {McpAuthorizationObject,PlanCatalogObject};
 export class TestDirectory extends IdentityDirectory {
+  async pushVector(config,subscription,payload){let sent;const transport=createPushTransport(config,{fetcher:async(url,options)=>{sent=options;return new Response(null,{status:201});}}),result=await transport.send(subscription,payload);return {accepted:result.accepted,encrypted:!Buffer.from(sent.body).includes(Buffer.from(payload.proof)),encoding:new Headers(sent.headers).get('Content-Encoding'),redirect:sent.redirect};}
   async rows(){return [...await this.ctx.storage.list()];}
   async passwordVector(password, encoded){const hasher=createWorkerArgon2Hasher();return {match:await hasher.verify(password,encoded),wrong:await hasher.verify(password+'wrong',encoded)};}
 }
@@ -41,9 +43,9 @@ const recoverySigningKey=JSON.stringify({kid:crypto.randomUUID(),privateJWK:awai
   await build({ stdin: { contents: harness, resolveDir: process.cwd(), sourcefile: 'test-harness.mjs' }, outfile: out,
     bundle: true, format: 'esm', platform: 'browser', mainFields: ['browser', 'module', 'main'], conditions: ['workerd', 'worker', 'browser'],
     external: ['cloudflare:workers', 'node:*'], target: 'es2022', logLevel: 'silent',
-    banner: { js: "import * as util from 'node:util'; import * as fs from 'node:fs'; import * as stream from 'node:stream'; import * as buffer from 'node:buffer'; import * as nodeAssertBuiltin from 'node:assert'; import * as zlib from 'node:zlib'; const nodeModules={'node:util':util,'node:fs':fs,'node:stream':stream,'node:buffer':buffer,'node:assert':nodeAssertBuiltin,'node:zlib':zlib}; const require=name=>{if(!nodeModules[name])throw new Error('Unexpected builtin '+name);return nodeModules[name];};" },
+    banner: { js: "import * as util from 'node:util'; import * as fs from 'node:fs'; import * as stream from 'node:stream'; import * as buffer from 'node:buffer'; import * as nodeAssertBuiltin from 'node:assert'; import * as zlib from 'node:zlib'; import * as nodeCrypto from 'node:crypto'; import * as nodeHttps from 'node:https'; import * as nodeUrl from 'node:url'; import * as nodeHttp from 'node:http'; import * as nodeNet from 'node:net'; import * as nodeTls from 'node:tls'; const nodeModules={'node:util':util,'node:fs':fs,'node:stream':stream,'node:buffer':buffer,'node:assert':nodeAssertBuiltin,'node:zlib':zlib,'node:crypto':nodeCrypto,'node:https':nodeHttps,'node:url':nodeUrl,'node:http':nodeHttp,'node:net':nodeNet,'node:tls':nodeTls}; const require=name=>{if(!nodeModules[name])throw new Error('Unexpected builtin '+name);return nodeModules[name].default??{...nodeModules[name]};};" },
     plugins: [{ name: 'worker-test-imports', setup(build) {
-      build.onResolve({ filter: /^(?:util|fs|stream|buffer|assert|zlib)$/ }, args => ({ path: `node:${args.path}`, external: true }));
+      build.onResolve({ filter: /^(?:util|fs|stream|buffer|assert|zlib|crypto|https|url|http|net|tls)$/ }, args => ({ path: `node:${args.path}`, external: true }));
       build.onResolve({ filter: /\.wasm$/ }, args => ({ path: `./${path.basename(args.path)}`, external: true }));
     } }] });
   for (const name of ['argon2', 'blake2b']) await copyFile(path.resolve(`vendor/hash-wasm/${name}.wasm`), path.join(temporary, `${name}.wasm`));

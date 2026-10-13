@@ -65,6 +65,5 @@ export default defineConfig({
     {from:'packages/i18n/vendor/bab/LICENSE',to:'packages/i18n/vendor/bab/LICENSE'},
     {from:'packages/i18n/vendor/bab/PROVENANCE.md',to:'packages/i18n/vendor/bab/PROVENANCE.md'},
     {from:'docs/artefacts',to:'artefacts'},
-    {from:'docs/walkthrough-assets',to:'docs/walkthrough-assets'},
   ],
 });

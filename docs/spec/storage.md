@@ -25,7 +25,7 @@ Proxy proofs are provider HMACs over issuer, account locator, random capability 
 
 Gateway network security does not rely on string URL validation alone. Operator allowlists must include only vetted public services; custom-host approval requires DNS/private-network checks and a safe egress policy. Credentials are sent only after endpoint validation, with redirect following disabled. Disabled/unconfigured provider cards must explain the required credential or operator setup.
 
-## Release gates
+## Implementation constraints
 
 Machine schemas, normalized object metadata and mocked provider conformance tests are present. Provider-native listing helpers are retained only as internal utilities and are not part of the object-storage contract or public RPC gateway. Listing requests fail before storage or provider requests; old capability records are projected without their legacy `list` field.
 

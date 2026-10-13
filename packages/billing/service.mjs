@@ -1,3 +1,4 @@
+import {rememberPaidHistory} from '../identity/lifecycle-protection.mjs';
 import {PlanChanges} from './changes.mjs';
 import {POLAR_CURRENCIES,priceExponent,countryCurrency} from './currencies.mjs';
 import {BILLING_PLANS,BILLING_STATE_KEY,BillingError,assertOwner,assertBillingConfiguration,billingEnabled,entitlementFromState,validPlanParameters,metadataPrefix} from './catalog.mjs';
@@ -176,7 +177,7 @@ export class BillingService {
     assertOwner(owner);assertBillingConfiguration(this.config);
     const ticket=await this.metadata.transaction(async tx=>{const current=await tx.get('billing/revision');if(current!==undefined&&(!Number.isSafeInteger(current)||current<0)||!Number.isSafeInteger((current??0)+1))throw fail();await tx.put('billing/revision',(current??0)+1);return (current??0)+1;});
     const previous=await this.metadata.get(BILLING_STATE_KEY),state=await this.fetchState(owner,previous);
-    await this.metadata.transaction(async tx=>{if(await tx.get('billing/revision')===ticket){await tx.put(BILLING_STATE_KEY,state);if(state.plan!=='free')await tx.delete('billing/pending');}});
+    await this.metadata.transaction(async tx=>{if(await tx.get('billing/revision')===ticket){await rememberPaidHistory(tx,owner,[await tx.get(BILLING_STATE_KEY),state],{config:this.config,now:this.now()});await tx.put(BILLING_STATE_KEY,state);if(state.plan!=='free')await tx.delete('billing/pending');}});
     return this.entitlement(owner);
   }
   async applyWebhook(verified){

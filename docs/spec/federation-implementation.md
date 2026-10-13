@@ -38,8 +38,13 @@ Per-account bounds are 32 pending requests, 64 codes, 256 bearer records and 256
 
 Mutations durably reserve a journal entry before native/provider effects. Fingerprints bind resource, contract, method, args, account epoch, connection/resource generation and scope. Repeated writes return the recorded result only after current authorization; collisions fail. Unknown outcomes remain indeterminate and require reconciliation by fresh reads. Local transactional adapters retain a short transaction; remote account/provider dispatch executes outside the federation metadata transaction to avoid lock cycles and false distributed atomicity.
 
-## Verification boundaries
+## SDK session behavior
 
-Tests use real native identity auth, Node SQLite/file storage, Worker SQLite/R2 and actual Chrome/local Wrangler with an independent-origin fixture app and anonymous standalone SDK imports. Browser fixtures provide app HTML and reviewed public metadata; OAuth/token/RPC requests are real network calls. This verifies our two adapters and an independent-origin client, not an independently implemented external provider or live Google/S3/WebDAV service. Production policy, external-provider conformance and public release gates remain explicit. Email absence detection is implemented, but magic-link account materialization and delivery are separately gated; the SDK does not silently create accounts or attach email.
+Email absence detection is implemented, but magic-link account materialization and delivery are separately gated; the SDK does not silently create accounts or attach email.
 
 The SDK coalesces concurrent renewal into one request. Aborting one caller does not replay a spent secret or cancel other waiters. Sign-out/new login prevents late credentials from restoring a session. Tracked resource references are reacquired by the exact same opaque ID after renewal; a changed assignment fails rather than substituting another resource. Uncertain renewal outcomes require a new login. Mutating RPCs are never retried merely because a network response was lost.
+
+
+## Local verification history
+
+Tests use real native identity auth, Node SQLite/file storage, Worker SQLite/R2 and actual Chrome/local Wrangler with an independent-origin fixture app and anonymous standalone SDK imports. Browser fixtures provide app HTML and reviewed public metadata; OAuth/token/RPC requests are real network calls. This verifies our two adapters and an independent-origin client, not an independently implemented external provider or live Google/S3/WebDAV service. Production policy, external-provider conformance and public release gates remain explicit.

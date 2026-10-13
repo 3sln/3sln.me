@@ -3,7 +3,7 @@ const DAY = 86400000;
 /** Compute a reviewable maintenance plan without changing data. Activity must
  * include authenticated account AND app resource use, not just login events. */
 export function planAccountLifecycle(account, { now, shelfAfterDays = 180, deleteAfterDays = 730,
-  graceDays = 90, deletionEnabled = false, deletionSignoff = null } = {}) {
+  graceDays = 90, deletionEnabled = false, deletionSignoff = null,paymentProtection } = {}) {
   if (!Number.isFinite(now) || ![shelfAfterDays, deleteAfterDays, graceDays].every(Number.isFinite) || shelfAfterDays < 30 || deleteAfterDays <= shelfAfterDays || graceDays < 90) throw new TypeError('Conservative lifecycle policy required');
   if (account.status !== 'active') return { action: 'retain', reason: 'Nonactive account needs a separate maintenance policy.' };
   const activity = Math.max(account.lastActiveAt || account.createdAt, account.lastResourceActivityAt || 0);
@@ -12,6 +12,7 @@ export function planAccountLifecycle(account, { now, shelfAfterDays = 180, delet
   if (now - activity < shelfAfterDays * DAY) return { action: 'retain', reason: 'The account is within the active retention window.' };
   if (!account.shelvedAt) return { action: 'shelve', reason: 'Archive cold resource data with a verified restorable manifest; keep identity and recovery online.' };
   if (!deletionEnabled || !deletionSignoff?.reviewer || !deletionSignoff.date || deletionSignoff.outcome !== 'approved') return { action: 'retain-shelved', reason: 'Destructive retention policy has no explicit approval.' };
+  if (paymentProtection?.status!=='unpaid')return {action:'retain-shelved',reason:'Paid history or uncertain payment protection prohibits automatic warning, suspension and deletion.'};
   if (now - activity < deleteAfterDays * DAY) return { action: 'retain-shelved', reason: 'Long-term retention has not elapsed.' };
   if (!account.verifiedEmail && !account.verifiedPhone) return { action: 'retain-shelved', reason: 'No verified channel can deliver advance deletion notice.' };
   const notice = account.deletionNotice;

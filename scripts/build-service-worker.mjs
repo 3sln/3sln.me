@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {readFile,writeFile,mkdir,readdir,lstat} from 'node:fs/promises';
 import {resolve,join,relative} from 'node:path';
+import {createLocalization} from '../packages/i18n/index.mjs';
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const forbidden=/^\/(?:api|config|\.well-known|users|contact|c|unsubscribe|recovery|private|logs?)(?:\/|$)/;
 function publicPath(value){
@@ -42,7 +43,8 @@ export async function generateServiceWorker(result,{out=result.config.out,public
  for(const url of [...urls].sort()){const file=join(root,...url.split('/').slice(1).map(decodeURIComponent));const stat=await lstat(file);if(!stat.isFile()||stat.isSymbolicLink())throw new TypeError('Public asset must be an emitted regular file.');const bytes=await readFile(file);assets.push({url,sha256:digest(bytes)});}
  if(assets.length>2048)throw new TypeError('Public shell cache exceeds the bounded asset manifest.');
  const source=await readFile(new URL('../apps/web/sw.js',import.meta.url),'utf8'),placeholder='/*__3SLN_PUBLIC_BUILD__*/null';
- const cacheVersion=digest(JSON.stringify(['3sln-public-shell-v1',result.buildId,assets,digest(source)])).slice(0,20),manifest={buildId:result.buildId,cacheVersion,assets,offlineDocument};
+ const setupNotifications=Object.fromEntries(['en','es'].map(locale=>{const {t}=createLocalization({locale});return [locale,{title:t('Confirm account notifications'),body:t('Notifications are working. Return to account setup to continue.')}];}));
+ const cacheVersion=digest(JSON.stringify(['3sln-public-shell-v1',result.buildId,assets,digest(source),setupNotifications])).slice(0,20),manifest={buildId:result.buildId,cacheVersion,assets,offlineDocument,setupNotifications};
  if(source.split(placeholder).length!==2)throw new TypeError('Service-worker build placeholder is missing or duplicated.');
  await writeFile(join(root,'sw.js'),source.replace(placeholder,JSON.stringify(manifest)));
  return manifest;
