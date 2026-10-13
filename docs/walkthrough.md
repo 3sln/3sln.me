@@ -278,3 +278,12 @@ Published source4d0420a, Worker349ef5c2-3bc7-47a3-851f-00bb35938705 supersedes t
 ![Published entry on desktop](walkthrough-assets/deployed-balanced-entry-1440.png)
 
 Fresh productionChrome confirms the real widget is mounted but hidden (zero height) in these screenshots, no horizontal overflow at320/1440, matching selector insets and no runtime errors. Local browser fixtures additionally verify the visible challenge in signin/signup/email/device forms at320/390/1440. No claim of a solved production challenge or account creation is made.
+
+
+## 32. Recipient details on a contact page
+
+The composer displays only the profile fields permitted by the live signed contact link and the owner's profile-sharing setting. Name and biography remain literal text; the recipient handle stays visible. The avatar URL opens through an explicit shared-avatar link, without an automatic external image request. Optional profile failures do not block a valid composer.
+
+![Local Worker contact page with name-only disclosure](walkthrough-assets/contact-page-scoped-profile.png)
+
+This screenshot comes from the actual local Worker flow with a test account, name-only field grant, and signed-in viewer. It establishes local field filtering, not a new live production user's disclosure. The deployed UI is sourceba06983, Worker6de3be20-c53d-41fa-8554-154b58c9346a. A fresh anonymous productionChrome check confirms an invalid capability shows no profile, performs no profile lookup, has no320px overflow and no runtime errors. No production account or message was created by the check.
