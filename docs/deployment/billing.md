@@ -41,7 +41,27 @@ node --input-type=module -e 'import {verifyBillingCatalog} from "./packages/bill
 
 The command only reads product configuration and prints non-secret catalog evidence for the ledger. It does not create a checkout, write account state, or enable billing. The implementation session did not run it against a live provider. Missing credentials fail before any provider request.
 
-Use the `2026-10` webhook API version and subscribe to `customer.state_changed` and relevant subscription lifecycle events. `order.paid`, `order.refunded`, and `order.updated` also trigger fresh reconciliation; their payloads do not themselves grant capacity. Customer create/update/delete events are supported. Also subscribe to `product.created` and `product.updated` for the metadata catalog. Product events outside the pinned organization/service are ignored. Unrelated benefit events are not used. An unrecognized API-version event fails validation and needs operator attention. A supported but unrelated event is acknowledged without account routing. The implementation uses the current maintained [Polar TypeScript SDK](https://github.com/polarsource/polar/tree/main/sdk/typescript), pinned to `@polar-sh/sdk` 1.0.2 and its `2026-10` API. Its package declares Node 24 or later; local Node and Worker compatibility checks still apply when changing runtime versions.
+Use the `2026-10` webhook API version and the single endpoint `https://3sln.me/api/billing/webhook`. Subscribe to:
+
+```text
+product.created
+product.updated
+customer.state_changed
+customer.deleted
+subscription.created
+subscription.updated
+order.paid
+order.updated
+order.refunded
+refund.created
+refund.updated
+```
+
+`subscription.updated` covers all subscription changes, including renewals; extra supported lifecycle events are safe but unnecessary for this selection. [Polar subscription event documentation](https://polar.sh/docs/api-reference/webhooks/subscription.updated).
+
+Polar webhook selection is organization-wide. Authenticate the bounded raw body before deciding to ignore an event. Unknown event types and authenticated events for unrelated organizations, products or customers must return successful ignored acknowledgements without changing account entitlements. Relevant product updates trigger fresh validated catalog discovery; account events trigger authoritative provider reconciliation, never grants copied from payloads. Refund routing resolves the original order and checks product/customer ownership. Product archiving or removing service tags must still invalidate previously relevant catalog entries. Empty customer subscription state must still reach a known account for revocation reconciliation. Malformed relevant payloads and invalid signatures remain errors, rather than being silently accepted. Implementation and regression evidence for these global filtering rules are tracked in DEVLOG.md.
+
+The implementation uses the maintained [Polar TypeScript SDK](https://github.com/polarsource/polar/tree/main/sdk/typescript), pinned to `@polar-sh/sdk` 1.0.2 and its `2026-10` API. Its package declares Node24 or later.
 
 ## Identity and entitlement authority
 

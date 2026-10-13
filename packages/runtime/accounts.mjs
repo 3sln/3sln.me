@@ -327,7 +327,7 @@ export class AccountController {
   async billingChangePlan(owner,input){await this.warm(owner);return this.billing.changes.change(owner,input);}
   async billingCheckout(owner,plan,options){return this.billing.checkout(owner,plan,options);}
   async billingPortal(owner){return this.billing.portal(owner);}
-  async billingWebhookVerified(owner,event){if(event.owner!==owner)throw new StorageError('forbidden','Billing account mismatch.',403);return this.billing.applyWebhook(event);}
+  async billingWebhookVerified(owner,event){if(event.owner!==owner)throw new StorageError('forbidden','Billing account mismatch.',403);if(await this.metadata.get('owner')!==owner)return {accepted:true,ignored:true};const prior=await this.metadata.get('billing/state'),retained=prior?.owner===owner&&prior.source==='polar'&&(prior.catalogVersion!==3||prior.origin===this.config.APP_ORIGIN&&prior.server===this.config.POLAR_SERVER&&prior.metadataPrefix===(this.config.POLAR_METADATA_PREFIX??'3sln_me_')&&prior.catalogMode===(this.config.POLAR_CATALOG_MODE??'static'))&&(!event.organizationId||prior.organizationId===event.organizationId)&&prior.customerId===event.customerId&&(event.customerEvent?Boolean(prior.productId&&prior.subscriptionId):prior.productId===event.productId&&(!event.subscriptionId||prior.subscriptionId===event.subscriptionId));if(!event.relevant&&!retained)return {accepted:true,ignored:true};return this.billing.applyWebhook(event);}
   async migrateItemIndex(owner){
     if(!this.itemIndex)return;
     const prefix=key('message',owner);
