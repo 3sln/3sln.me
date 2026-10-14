@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "npm run dev:worker",
     "test": "node --test tests/*.test.mjs packages/sdk/test/*.test.mjs",
-    "test:worker": "node --test tests/worker/*.test.mjs",
+    "test:worker": "node --test --test-concurrency=4 tests/worker/*.test.mjs",
     "test:dom": "node --experimental-loader ./tests/browser/loader.mjs tests/browser/smoke.mjs",
     "dev:demo": "node apps/server/server.mjs",
     "build:assets": "node scripts/build-assets.mjs",
@@ -13,7 +13,7 @@
     "check:worker": "npm run build:assets && wrangler deploy --dry-run --outdir .output/worker",
     "dev:node": "npm run build:assets && node apps/node/server.mjs",
     "test:e2e": "node scripts/run-browser-checks.mjs",
-    "test:ui-state": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/release-state.mjs tests/browser/plans-search.mjs tests/browser/beaming.mjs tests/browser/beaming-security.mjs tests/browser/mcp-conversations.mjs tests/browser/owner-flow-audit.mjs tests/browser/app-connections.mjs tests/browser/browser-automation.mjs tests/browser/google-drive.mjs tests/browser/identity-names.mjs"
+    "test:ui-state": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/release-state.mjs tests/browser/plans-search.mjs tests/browser/beaming.mjs tests/browser/beaming-security.mjs tests/browser/mcp-conversations.mjs tests/browser/owner-flow-audit.mjs tests/browser/app-connections.mjs tests/browser/browser-automation.mjs tests/browser/google-drive.mjs tests/browser/identity-names.mjs tests/browser/signup-views.mjs tests/browser/message-outcomes-audit.mjs tests/browser/message-actions.mjs tests/browser/message-motion-audit.mjs tests/browser/token-onboarding.mjs tests/browser/onboarding-audit.mjs tests/browser/host-badges.mjs"
   },
   "engines": {
     "node": ">=24"
@@ -32,6 +32,7 @@
     "@polar-sh/sdk": "1.0.2",
     "@simplewebauthn/server": "14.0.3",
     "aws4fetch": "1.0.20",
+    "dompurify": "3.4.16",
     "hash-wasm": "4.12.0",
     "parse5": "8.0.1",
     "qrcode": "1.5.4",

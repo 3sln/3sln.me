@@ -4,7 +4,8 @@
   "main": "apps/worker/index.mjs",
   "compatibility_date": "2026-10-11",
   "compatibility_flags": [
-    "nodejs_compat"
+    "nodejs_compat",
+    "global_fetch_strictly_public"
   ],
   "assets": {
     "directory": ".output/public",
@@ -13,7 +14,10 @@
   },
   "durable_objects": {
     "bindings": [
-      {"name":"PLAN_CATALOG","class_name":"PlanCatalogObject"},
+      {
+        "name": "PLAN_CATALOG",
+        "class_name": "PlanCatalogObject"
+      },
       {
         "name": "IDENTITIES",
         "class_name": "IdentityDirectory"
@@ -67,7 +71,12 @@
         "FederationObject"
       ]
     },
-    {"tag":"v5","new_sqlite_classes":["PlanCatalogObject"]}
+    {
+      "tag": "v5",
+      "new_sqlite_classes": [
+        "PlanCatalogObject"
+      ]
+    }
   ],
   "r2_buckets": [
     {
@@ -111,7 +120,10 @@
     "SIGNUP_REGION_DAILY_LIMIT": "25",
     "SIGNUP_GLOBAL_HOURLY_LIMIT": "10",
     "SIGNUP_GLOBAL_DAILY_LIMIT": "200",
-    "SIGNUP_MAX_ADMISSIONS": "1000",
+    "SIGNUP_MAX_ADMISSIONS": "100000",
+    "SIGNUP_FREE_MAX_ADMISSIONS": "10000",
+    "PAID_SIGNUP_ENABLED": "true",
+    "WAITLIST_ENABLED": "true",
     "IDENTITY_LAYOUT": "v1-64-fresh",
     "BEAM_ENABLED": "true",
     "BEAM_MONTHLY_DELIVERY_BYTES": "1000000000",
@@ -135,6 +147,8 @@
     "MCP_CLIENTS": "[]",
     "FEDERATION_ENABLED": "false",
     "FEDERATION_CLIENTS": "[]",
-    "FEDERATION_SCHEMAS": "{}"
+    "FEDERATION_SCHEMAS": "{}",
+    "FORM_POSTBACK_ORIGINS": "[]",
+    "APP_NOTIFICATION_PUBLIC_JWKS": "{\"keys\":[]}"
   }
 }

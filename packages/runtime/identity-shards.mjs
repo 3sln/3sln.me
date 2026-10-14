@@ -1,4 +1,7 @@
-import {encodeFreeHandleNumber,normalizeHandle,validatePaidHandle,MAX_FREE_HANDLE_NUMBER} from '../identity/handles.mjs';
+import {validateHostAlias,configuredReservedName} from '../identity/badge-policy.mjs';
+import {onboardingMarker,onboardingAlias,sameOnboardingIdentity} from '../identity/onboarding.mjs';
+import {systemMarker,systemBadge,sameSystemIdentity} from '../identity/system-bootstrap.mjs';
+import {isFreeHandle,isReservedHandle,encodeFreeHandleNumber,normalizeHandle,validatePaidHandle,MAX_FREE_HANDLE_NUMBER} from '../identity/handles.mjs';
 // The layout string is persisted routing protocol: changing it requires an
 // offline, verified migration. No request consults the legacy singleton.
 export const IDENTITY_LAYOUT = 'v1-64-fresh';
@@ -25,14 +28,14 @@ const linksFor = (kind, value) => kind === 'account'
 // These short transactions are the only cross-request atomic sections. They
 // never perform RPC, so no distributed lock or global coordinator is required.
 export class IdentityShardStorage {
-  constructor(metadata) { this.metadata = metadata; }
+  constructor(metadata,config={}) { this.metadata = metadata;this.config=config; }
   async read(kind, id) { return await this.metadata.get(recordKey(kind, id)) || null; }
   async prepare(kind, id, revision, value, token) {
     return this.metadata.transaction(async tx => {
       const key = recordKey(kind,id), state = await tx.get(key) || {value:null, links:[]};
       if (state.pending || (revision === null ? state.value !== null : state.value?.revision !== revision)) return false;
       if (value.id !== id || value.revision !== (revision === null ? 0 : revision + 1)) return false;
-      if (state.value && (kind === 'account' ? value.handle !== state.value.handle || value.assignmentId !== state.value.assignmentId : value.userCode !== state.value.userCode || value.expiresAt !== state.value.expiresAt)) return false;
+      if (state.value && (kind === 'account' ? value.handle !== state.value.handle || value.assignmentId !== state.value.assignmentId || !sameSystemIdentity(value.systemIdentity,state.value.systemIdentity)||!sameOnboardingIdentity(value.onboardingIdentity,state.value.onboardingIdentity) : value.userCode !== state.value.userCode || value.expiresAt !== state.value.expiresAt)) return false;
       const links = linksFor(kind,value).map(link => state.links.find(old => old.kind === link.kind && old.value === link.value) || {...link,owner:id,token});
       // The overwhelmingly common session/auth CAS never touches a lookup shard.
       if (state.value && links.length === state.links.length && links.every(link => state.links.includes(link))) {
@@ -116,12 +119,25 @@ export class IdentityShardStorage {
     });
   }
   async paidHandleClaim(handle,owner,assignmentId) {
+    handle=validateHostAlias(handle);if(configuredReservedName(this.config,handle))return false;
     return this.metadata.transaction(async tx=>{
       const key=namespaceKey(handle),old=await tx.get(key);
       if(old)return old.state==='paid-alias'&&old.owner===owner&&old.assignmentId===assignmentId;
       await tx.put(key,{owner,assignmentId,state:'paid-alias'});return true;
     });
   }
+  async systemReserve(claims,digest,binding){
+    if(!isReservedHandle(claims.handle)||typeof digest!=='string'||!/^[a-f0-9]{64}$/.test(digest)||typeof binding!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(binding))throw new TypeError('Invalid system reservation');
+    return this.metadata.transaction(async tx=>{const key=namespaceKey(claims.handle),old=await tx.get(key);if(old)return old.state==='system-alias'&&old.owner===claims.owner&&old.assignmentId===claims.assignmentId&&old.bootstrap?.version===1&&['reserved','consumed'].includes(old.bootstrap.phase)&&typeof old.bootstrap.admitted==='boolean'&&(old.bootstrap.canonical===null||isFreeHandle(old.bootstrap.canonical))&&sameSystemIdentity(old.bootstrap.marker,systemMarker(claims,digest))&&old.bootstrap.digest===digest&&old.bootstrap.binding===binding?old.bootstrap:null;const bootstrap={version:1,digest,binding,phase:'reserved',canonical:null,admitted:false,marker:systemMarker(claims,digest)};await tx.put(key,{owner:claims.owner,assignmentId:claims.assignmentId,state:'system-alias',bootstrap});return bootstrap;});
+  }
+  async systemStep(handle,digest,binding,step,canonical){return this.metadata.transaction(async tx=>{const key=namespaceKey(handle),row=await tx.get(key),value=row?.bootstrap;if(row?.state!=='system-alias'||value?.version!==1||!['reserved','consumed'].includes(value.phase)||typeof value.admitted!=='boolean'||value.canonical!==null&&!isFreeHandle(value.canonical)||!systemBadge({assignmentId:row.assignmentId,systemIdentity:value.marker})||value.marker.handle!==handle||value.digest!==digest||value.binding!==binding)return null;if(step==='admitted')value.admitted=true;else if(step==='canonical'){if(!isFreeHandle(canonical))throw new TypeError('Numeric canonical handle required');if(value.phase!=='reserved'||!value.admitted)return null;if(!value.canonical)value.canonical=normalizeHandle(canonical);}else if(step==='consumed'){if(!value.canonical||!value.admitted)return null;value.phase='consumed';}else throw new TypeError('Invalid system reservation step');await tx.put(key,row);return value;});}
+  async onboardingReserve(item,claims,digest){
+    namespaceIdentity(item.owner,item.assignmentId);if(validateHostAlias(item.name)!==item.name||!/^[a-f0-9]{64}$/.test(digest))throw new TypeError('Invalid onboarding reservation');
+    const marker=onboardingMarker(item,claims,digest);if(!onboardingAlias({assignmentId:item.assignmentId,handle:'n.1',onboardingIdentity:marker}))throw new TypeError('Invalid onboarding identity');
+    return this.metadata.transaction(async tx=>{const key=namespaceKey(item.name),old=await tx.get(key);if(old)return old.state==='operator-alias'&&old.owner===item.owner&&old.assignmentId===item.assignmentId&&sameOnboardingIdentity(old.onboarding?.marker,marker)&&old.onboarding?.digest===digest?old.onboarding:null;const onboarding={version:1,digest,marker,phase:'preissued',binding:null,canonical:null,admitted:false,issuanceComplete:false,expiresAt:claims.expiresAt};await tx.put(key,{state:'operator-alias',owner:item.owner,assignmentId:item.assignmentId,onboarding});return onboarding;});
+  }
+  async onboardingClaim(handle,digest,binding){if(typeof binding!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(binding))throw new TypeError('Invalid onboarding binding');return this.metadata.transaction(async tx=>{const key=namespaceKey(handle),row=await tx.get(key),value=row?.onboarding;if(row?.state!=='operator-alias'||value?.version!==1||value.digest!==digest||!['preissued','claiming','consumed'].includes(value.phase))return null;if(value.binding&&value.binding!==binding)return null;if(value.phase==='preissued'){value.binding=binding;value.phase='claiming';await tx.put(key,row);}return value;});}
+  async onboardingStep(handle,digest,binding,step,canonical){return this.metadata.transaction(async tx=>{const key=namespaceKey(handle),row=await tx.get(key),value=row?.onboarding;if(row?.state!=='operator-alias'||value?.version!==1||value.digest!==digest||!onboardingAlias({assignmentId:row.assignmentId,handle:'n.1',onboardingIdentity:value.marker})||value.marker.handle!==handle||typeof value.admitted!=='boolean'||!['preissued','claiming','consumed'].includes(value.phase)||value.canonical!==null&&!isFreeHandle(value.canonical))return null;if(step==='issued'){if(binding!==null)return null;value.issuanceComplete=true;}else{if(value.binding!==binding||!binding||value.phase==='preissued')return null;if(step==='admitted')value.admitted=true;else if(step==='canonical'){if(value.phase!=='claiming'||!value.admitted||!isFreeHandle(canonical))return null;if(!value.canonical)value.canonical=normalizeHandle(canonical);}else if(step==='consumed'){if(!value.canonical||!value.admitted)return null;value.phase='consumed';}else throw new TypeError('Invalid onboarding step');}await tx.put(key,row);return value;});}
   async handleLookup(handle){return await this.metadata.get(namespaceKey(handle))||null;}
   async nextHandleNumber(lane) {
     if(!Number.isInteger(lane)||lane<0||lane>=IDENTITY_SHARDS)throw new TypeError('Invalid handle counter lane');
@@ -143,9 +159,9 @@ export class IdentityShardStorage {
 }
 
 export class ShardedIdentityRepository {
-  constructor({shard,layout,clock=()=>Date.now()}) {
+  constructor({shard,layout,clock=()=>Date.now(),config={}}) {
     if(layout!==IDENTITY_LAYOUT)throw new Error('Identity sharding requires explicit v1-64-fresh layout; legacy identity data must be migrated offline first.');
-    this.shard=shard;this.clock=clock;
+    this.shard=shard;this.clock=clock;this.config=config;
   }
   async bucket(kind,value){return this.shard(await identityShardName(kind,value));}
   async state(kind,id){return (await this.bucket(kind,id)).shardRead(kind,id);}
@@ -233,13 +249,15 @@ export class ShardedIdentityRepository {
   async findByHandle(handle){
     handle=normalizeHandle(handle);
     const claim=await (await this.bucket('namespace',handle)).shardHandleLookup(handle);
+    if(claim?.state==='operator-alias'){const account=await this.get(claim.owner);return account?.assignmentId===claim.assignmentId&&onboardingAlias(account)===handle&&sameOnboardingIdentity(account.onboardingIdentity,claim.onboarding?.marker)?account:null;}
+    if(claim?.state==='system-alias'){const account=await this.get(claim.owner);return account?.assignmentId===claim.assignmentId&&sameSystemIdentity(account.systemIdentity,claim.bootstrap?.marker)?account:null;}
     if(claim?.state==='paid-alias'){const account=await this.get(claim.owner);return account?.assignmentId===claim.assignmentId?account:null;}
     return this.find('handle',handle,'account','handle');
   }
   async paidHandleForOwner(owner){const account=await this.get(owner);if(!account)return null;const anchor=await (await this.bucket('namespace',`paid-owner:${owner}`)).shardPaidHandleRead(owner);return anchor?.state==='committed'&&anchor.assignmentId===account.assignmentId?anchor.handle:null;}
   // Callers must establish paid eligibility and recent authentication first.
   async claimPaidHandle(handle,owner,assignmentId){
-    handle=validatePaidHandle(handle);
+    handle=validateHostAlias(handle);if(configuredReservedName(this.config,handle))return false;
     namespaceIdentity(owner,assignmentId);if(assignmentId===undefined)throw new TypeError('Assignment ID required');
     const account=await this.get(owner);if(!account||account.assignmentId!==assignmentId)return false;
     const coordinator=await this.bucket('namespace',`paid-owner:${owner}`);
@@ -255,6 +273,15 @@ export class ShardedIdentityRepository {
     }
     return false;
   }
+  async onboardingLookup(handle){return (await this.bucket('namespace',handle)).shardHandleLookup(handle);}
+  async reserveOnboardingIdentity(item,claims,digest){const namespace=await this.bucket('namespace',item.name),legacy=await (await this.bucket('handle',item.name)).shardLookup('handle',item.name);if(legacy){const old=await this.state('account',legacy.owner);await namespace.shardHandleGrandfather(item.name,legacy.owner,old?.value?.assignmentId,legacy.token);}return namespace.shardOnboardingReserve(item,claims,digest);}
+  async claimOnboardingIdentity(handle,digest,binding){return (await this.bucket('namespace',handle)).shardOnboardingClaim(handle,digest,binding);}
+  async onboardingStep(handle,digest,binding,step,canonical){return (await this.bucket('namespace',handle)).shardOnboardingStep(handle,digest,binding,step,canonical);}
+  async finishOnboardingIdentity(handle,digest,binding){const row=await this.onboardingLookup(handle),account=row&&await this.get(row.owner);if(!account||account.assignmentId!==row.assignmentId||account.handle!==row.onboarding?.canonical||!sameOnboardingIdentity(account.onboardingIdentity,row.onboarding.marker))return null;return this.onboardingStep(handle,digest,binding,'consumed');}
+  async reserveSystemIdentity(claims,digest,binding){const namespace=await this.bucket('namespace',claims.handle),legacy=await (await this.bucket('handle',claims.handle)).shardLookup('handle',claims.handle);if(legacy){const old=await this.state('account',legacy.owner);await namespace.shardHandleGrandfather(claims.handle,legacy.owner,old?.value?.assignmentId,legacy.token);}return namespace.shardSystemReserve(claims,digest,binding);}
+  async setSystemAdmission(handle,digest,binding){return (await this.bucket('namespace',handle)).shardSystemStep(handle,digest,binding,'admitted');}
+  async setSystemCanonical(handle,digest,binding,canonical){return (await this.bucket('namespace',handle)).shardSystemStep(handle,digest,binding,'canonical',canonical);}
+  async finishSystemIdentity(handle,digest,binding){const claim=await (await this.bucket('namespace',handle)).shardHandleLookup(handle),account=claim&&await this.get(claim.owner);if(!account||account.assignmentId!==claim.assignmentId||account.handle!==claim.bootstrap?.canonical||!sameSystemIdentity(account.systemIdentity,claim.bootstrap?.marker))return null;return (await this.bucket('namespace',handle)).shardSystemStep(handle,digest,binding,'consumed');}
   findByEmail(email){return this.find('email',email,'account','verifiedEmail');}
   findDeviceByCode(code){return this.find('device-code',code,'device','userCode');}
   async write(kind,id,revision,value){
@@ -265,7 +292,7 @@ export class ShardedIdentityRepository {
     const outcome={token},state=await this.resume(kind,id,await bucket.shardRead(kind,id),0,outcome);
     return outcome.committed ?? (state?.result?.token===token&&state.result.committed===true);
   }
-  create(value){return this.write('account',value.id,null,value);}
+  async create(value){if(value.onboardingIdentity){const handle=onboardingAlias(value),claim=handle&&await this.onboardingLookup(handle);if(value.systemIdentity||claim?.state!=='operator-alias'||claim.owner!==value.id||claim.assignmentId!==value.assignmentId||claim.onboarding?.phase!=='claiming'||!claim.onboarding.admitted||claim.onboarding.canonical!==value.handle||!sameOnboardingIdentity(value.onboardingIdentity,claim.onboarding.marker))return false;}if(value.systemIdentity){const claim=await (await this.bucket('namespace',value.systemIdentity.handle)).shardHandleLookup(value.systemIdentity.handle);if(claim?.state!=='system-alias'||claim.owner!==value.id||claim.assignmentId!==value.assignmentId||claim.bootstrap?.phase!=='reserved'||!claim.bootstrap.admitted||claim.bootstrap.canonical!==value.handle||!sameSystemIdentity(value.systemIdentity,claim.bootstrap.marker))return false;}return this.write('account',value.id,null,value);}
   compareAndSwap(id,revision,value){return this.write('account',id,revision,value);}
   createDevice(value){return this.write('device',value.id,null,value);}
   compareAndSwapDevice(id,revision,value){return this.write('device',id,revision,value);}

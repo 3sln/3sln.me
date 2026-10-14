@@ -1,7 +1,7 @@
 import { fail, key, boundedString, base64url, digest, fromBase64url } from './store.mjs';
 
 export const defaultNotificationPreferences = () => ({
-  enabled: true, push: { enabled: false },
+  enabled: true, push: { enabled: false, preview: false },
   email: { enabled: false, delayMinutes: 60, repeatHours: 24, maxReminders: 3 },
   collections: [], excludeTags: [],
   quiet: { enabled: false, startHour: 22, endHour: 8, utcOffsetMinutes: 0 },
@@ -10,6 +10,7 @@ const validatePreferences = preferences => {
   const defaults = defaultNotificationPreferences();
   if (!preferences || Object.keys(preferences).some(name => !Object.hasOwn(defaults, name)) || typeof preferences.enabled !== 'boolean' || typeof preferences.push?.enabled !== 'boolean' || typeof preferences.email?.enabled !== 'boolean' || typeof preferences.quiet?.enabled !== 'boolean') fail('invalid_preferences');
   for (const group of ['push', 'email', 'quiet']) if (Object.keys(preferences[group]).some(name => !Object.hasOwn(defaults[group], name))) fail('invalid_preferences');
+  if(preferences.push.preview!==undefined&&typeof preferences.push.preview!=='boolean')fail('invalid_preferences');
   const { delayMinutes, repeatHours, maxReminders } = preferences.email;
   const { startHour, endHour, utcOffsetMinutes } = preferences.quiet;
   if (!Number.isInteger(delayMinutes) || delayMinutes < 5 || delayMinutes > 10080 || !Number.isInteger(repeatHours) || repeatHours < 1 || repeatHours > 720 || !Number.isInteger(maxReminders) || maxReminders < 1 || maxReminders > 10 || !Number.isInteger(startHour) || startHour < 0 || startHour > 23 || !Number.isInteger(endHour) || endHour < 0 || endHour > 23 || !Number.isInteger(utcOffsetMinutes) || utcOffsetMinutes < -720 || utcOffsetMinutes > 840) fail('invalid_preferences');
@@ -23,7 +24,7 @@ const quietNow = (quiet, now) => {
 };
 
 export class NotificationService {
-  constructor({ store, crypto = globalThis.crypto, clock = () => Date.now(), allowedPushOrigins = ['https://fcm.googleapis.com', 'https://updates.push.services.mozilla.com', 'https://web.push.apple.com'] }) { Object.assign(this, { store, crypto, clock, allowedPushOrigins }); }
+  constructor({ store, messageAllowed = async()=>true, crypto = globalThis.crypto, clock = () => Date.now(), allowedPushOrigins = ['https://fcm.googleapis.com', 'https://updates.push.services.mozilla.com', 'https://web.push.apple.com'] }) { Object.assign(this, { store, messageAllowed, crypto, clock, allowedPushOrigins }); }
   async preferences(owner) { return this.store.transaction(async tx => await tx.get(key('notification-preferences', owner)) || defaultNotificationPreferences()); }
   async setPreferences(owner, preferences, { verifiedEmail = false } = {}) {
     validatePreferences(preferences);
@@ -70,7 +71,7 @@ export class NotificationService {
   async eligible(tx, owner, event, channel, now) {
     const message = await tx.get(key('message', owner, event.messageId));
     const preferences = await tx.get(key('notification-preferences', owner)) || defaultNotificationPreferences();
-    if (!message || message.readAt !== null || message.quarantined || !preferences.enabled || !preferences[channel].enabled || quietNow(preferences.quiet, now) || (preferences.collections.length && !preferences.collections.includes(message.collection)) || message.tags.some(tag => preferences.excludeTags.includes(tag))) return null;
+    if (!message || !await this.messageAllowed(tx,owner,message) || message.readAt !== null || message.quarantined || !preferences.enabled || !preferences[channel].enabled || quietNow(preferences.quiet, now) || (preferences.collections.length && !preferences.collections.includes(message.collection)) || message.tags.some(tag => preferences.excludeTags.includes(tag))) return null;
     return { message, preferences };
   }
   async claimDue(owner, { limit = 20, leaseMs = 60000 } = {}) {
@@ -90,10 +91,11 @@ export class NotificationService {
             const max = channel === 'email' ? eligible.preferences.email.maxReminders : 1;
             const minimumAt = channel === 'email' ? (job.delivered ? job.lastDeliveredAt + eligible.preferences.email.repeatHours * 3600000 : event.createdAt + eligible.preferences.email.delayMinutes * 60000) : 0;
             if (job.delivered >= max || job.attempts >= 8 || job.nextAt > now || minimumAt > now || job.leaseUntil > now) continue;
+            job.preview=channel==='push'&&eligible.preferences.push.preview===true;
             job.lease = this.crypto.randomUUID(); job.leaseUntil = now + leaseMs; job.attempts++;
             if(channel==='email')await tx.set(key('notification-email-budget',owner),{lease:job.lease,leaseUntil:job.leaseUntil,nextAt:0});
             await tx.set(path, job);
-            result.push({ ...job, messageId: event.messageId, payload: { title: 'New message', body: 'You have an unread message.', path: '/messages' }, subscription });
+            result.push({ ...job, messageId: event.messageId, payload: messagePushPayload(eligible.message,job.preview), subscription });
           }
         }
       }
@@ -106,6 +108,7 @@ export class NotificationService {
       if (!job || job.lease !== lease || job.leaseUntil <= this.clock()) return false;
       const event = await tx.get(key('notification-event', owner, job.eventId));
       if (!event || !(await this.eligible(tx, owner, event, job.channel, this.clock()))) return false;
+      if(job.preview===true&&(await tx.get(key('notification-preferences',owner)))?.push?.preview!==true)return false;
       if (job.channel === 'push' && !(await tx.get(key('push-subscription', owner, job.subscriptionId)))) return false;
       return true;
     });
@@ -126,8 +129,17 @@ export class NotificationService {
   async nextDue(owner){return this.store.transaction(async tx=>{
     const now=this.clock(),preferences=await tx.get(key('notification-preferences',owner))||defaultNotificationPreferences();if(!preferences.enabled)return null;let due=null;
     const events=await tx.list(key('notification-event',owner));const devices=await tx.list(key('push-subscription',owner));
-    for(const {value:event}of events){const message=await tx.get(key('message',owner,event.messageId));if(!message||message.readAt!==null||message.quarantined||preferences.collections.length&&!preferences.collections.includes(message.collection)||message.tags.some(tag=>preferences.excludeTags.includes(tag)))continue;
+    for(const {value:event}of events){const message=await tx.get(key('message',owner,event.messageId));if(!message||!await this.messageAllowed(tx,owner,message)||message.readAt!==null||message.quarantined||preferences.collections.length&&!preferences.collections.includes(message.collection)||message.tags.some(tag=>preferences.excludeTags.includes(tag)))continue;
       for(const channel of ['push','email']){if(!preferences[channel].enabled)continue;for(const device of channel==='push'?devices:[{value:null}]){const id=`${event.id}:${channel}:${device.value?.id||'email'}`;const job=await tx.get(key('notification-job',owner,id));if(job&&(job.delivered>=(channel==='push'?1:preferences.email.maxReminders)||job.attempts>=8))continue;let at=job?.nextAt??event.createdAt+(channel==='email'?preferences.email.delayMinutes*60000:0);at=Math.max(at,job?.leaseUntil||0);if(channel==='email'){const budget=await tx.get(key('notification-email-budget',owner));at=Math.max(at,budget?.nextAt||0,budget?.leaseUntil||0);}if(quietNow(preferences.quiet,now))at=Math.max(at,now+900000);at=Math.max(at,now+1000);due=due===null?at:Math.min(due,at);}}
     }return due;
   });}
+}
+
+export function messagePushPayload(message,preview=false){
+ const payload={type:'bindle-message',messageId:message.id,title:'New message',body:'You have an unread message.',path:'/console?message='+encodeURIComponent(message.id),actions:[]};
+ if(!preview)return payload;const summary=message.notificationSummary,p=message.appNotification;if(!summary||summary.version!==1)return payload;
+ if(p){payload.sender={name:p.name,origin:p.origin};payload.title=`${p.name} (${p.origin})`;}
+ else payload.title=summary.title||'New message';
+ payload.body=Array.from([p?summary.title:null,summary.text].filter(Boolean).join('\n')).slice(0,360).join('');payload.sourceDigest=summary.sourceDigest;
+ if(p)payload.actions=(summary.actions||[]).slice(0,2).map(a=>({action:a.kind==='form'?`form:${a.formId}:${a.buttonId}`:`link:${a.linkId}`,title:a.label}));return payload;
 }

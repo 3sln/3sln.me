@@ -32,6 +32,8 @@ for(const [source,hashed] of result.modules){
   sourceForURL.set(href,file);urlForSource.set(file,href);
 }
 result.imports['/recovery-kdf-worker.mjs']=result.workers.recovery;
+result.imports['/message-frame-controller.mjs']=result.workers.messageFrame;
+result.imports['/message-sanitizer.mjs']=result.workers.messageSanitizer;
 const sdk={login:result.workers.sdkLogin,identity:result.workers.sdkIdentity};
 for(const [source,href] of [['packages/sdk/src/login-element.mjs',sdk.login],['packages/sdk/src/identity.mjs',sdk.identity]]){
   // Both first-party imports and the stable public loader converge on the same
@@ -105,6 +107,9 @@ for(const page of pages){
   result.html.push(page.output);
 }
 
+const {buildLanding}=await import('./build-landing.mjs');
+result.html.push(...await buildLanding({out:outputRoot,css:result.entries.app.css}));
+
 async function files(directory){
   const out=[];
   for(const item of await readdir(directory,{withFileTypes:true})){
@@ -132,4 +137,4 @@ const {generateServiceWorker}=await import('./build-service-worker.mjs');
 // The manifest is branded by the HTTP adapter, so its served bytes are dynamic
 // and cannot be pinned to the copied source file's integrity digest.
 await generateServiceWorker(result,{out:outputRoot,publicAssets:['/icon.svg','/generic-icon.svg','/branding/3sln-avatar.png','/branding/3sln-lockup.svg','/branding/3sln-lockup-ondark.svg','/demo.css']});
-console.log(`Public build ${result.buildId}: ${result.modules.size} individually addressed modules, 1 isolated worker, 2 standalone SDK entries, complete import-map graph verified.`);
+console.log(`Public build ${result.buildId}: ${result.modules.size} individually addressed modules, 3 isolated worker modules, 2 standalone SDK entries, complete import-map graph verified.`);

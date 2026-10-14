@@ -1,3 +1,4 @@
+import {signupPaymentCard} from './release-signup-billing.mjs';
 import setupContact from './release-setup-contact.mjs';
 import {h,logo,icon,badge,field,checkbox,helpers,fire} from './release-primitives.mjs';
 import authCard from './release-auth.mjs';
@@ -6,8 +7,9 @@ export default function recoveryPage(state){
  const {btn,form,alerts}=helpers(state),restoring=state.route.kind==='recovery-restore';let content;
  if(restoring){
   content=state.recoveryStage==='unlock'?recoveryUnlockForm(state,{kind:'recover-account',title:'Unlock your recovery file.',prefix:'unlock:'}):h('div',badge('ACCOUNT RECOVERY'),h('h2','Find your way back.'),h('p','Select your encrypted recovery file. Questions and hints are readable; all answers stay on this device.').classes('muted'),alerts(),form([field('file','Encrypted recovery file','file',{accept:'.json,application/json',required:true})],{kind:'inspect-recovery'},'Read recovery questions')).classes('auth-card').key('inspect-recovery');
- }else if(!state.pending){content=h('div',badge('ACCOUNT SETUP'),h('h2','Start with your account.'),h('p','This recovery screen needs an account setup in the same browser tab.'),h('a','Return to sign in').props({href:'/?signin'}).classes('button','primary')).classes('auth-card');
+ }else if(!state.pending){content=h('div',badge('ACCOUNT SETUP'),h('h2','Start with your account.'),h('p','This recovery screen needs an account setup in the same browser tab.'),h('a','Return to sign in').props({href:'/console?signin'}).classes('button','primary')).classes('auth-card');
  }else if(state.setupContact?.channelRequired&&!state.setupContact.channelVerified){content=setupContact(state);
+ }else if(state.signupBilling?.paymentRequired&&!state.signupBilling.paymentVerified){content=signupPaymentCard(state);
  }else if(!state.recovery){content=authCard(state);
  }else if(state.recoveryStage==='questions'){content=questions(state);
  }else if(state.recoveryStage==='verify'){content=h('div',recoveryUnlockForm(state),btn([icon('download'),'Download recovery file again'],{kind:'download-recovery'},'button secondary full')).key('verify-container');

@@ -1,5 +1,6 @@
 import { emailLogoBase64 } from '../../packages/branding/email-logo.mjs';
 import { createLocalization } from '../../packages/i18n/index.mjs';
+import { waitlistMailLocalization } from '../../packages/i18n/waitlist-mail.mjs';
 
 const SENDER_ROLES = Object.freeze({
   link: 'verify', login: 'login', reminder: 'notify',
@@ -97,9 +98,17 @@ export function mailTransport(env = {}) {
     const [subject, text] = templates[type];
     if ((subject.includes('{days}') || text.includes('{days}')) && (!Number.isInteger(days) || days < 1 || days > 3650)) throw new Error('Invalid account notice deadline.');
     const format = value => value.replaceAll('{brand}', () => brand).replaceAll('{days}', () => String(days));
-    return send({ from, to: email, subject: format(subject), text: `${format(text)}\n\nOpen ${origin}/\n\nIf you did not request this change, review your account security in your personal space.` });
+    return send({ from, to: email, subject: format(subject), text: `${format(text)}\n\nOpen ${origin}/console\n\nIf you did not request this change, review your account security in your personal space.` });
   };
   return {
+    async sendWaitlistConfirmation({email,token,issuer,locale='en'}) {
+      if(issuer!==origin)throw new Error('Invalid waitlist verification request.');
+      requireToken(token);
+      const {t}=waitlistMailLocalization(locale);
+      const url=`${origin}/waitlist/confirm#token=${encodeURIComponent(token)}`;
+      return send({from:senders.link,to:email,subject:t('Confirm your {brand} waitlist request',{brand}),
+        text:[t('Confirm that you want your email added to the {brand} waitlist.',{brand}),url,t('This link expires in ten minutes. Opening it does not join the waitlist; confirm on the page. Joining does not create an account or reserve a place.'),t('If you did not request this message, ignore it. Your address will not be added without confirmation.')].join('\n\n')});
+    },
     async sendSetupCode({ email, code, issuer, locale = 'en' }) {
       if (issuer !== origin || typeof code !== 'string' || !/^\d{8}$/.test(code)) throw new Error('Invalid setup verification request.');
       const {t} = createLocalization({locale});
@@ -120,7 +129,7 @@ export function mailTransport(env = {}) {
       if (!safeHeader(owner, 128) || !/^[A-Za-z0-9_-]+$/.test(owner)) throw new Error('Invalid mail link.');
       const url = `${origin}/unsubscribe#token=${encodeURIComponent(`${owner}.${token}`)}`;
       return send({ from: senders.reminder, to: email, subject: `You have unread messages in ${brand}`,
-        text: `You have unread messages in your personal space.\n\nOpen ${origin}/\n\nTurn off email notifications: ${url}`,
+        text: `You have unread messages in your personal space.\n\nOpen ${origin}/console\n\nTurn off email notifications: ${url}`,
         headers: { 'List-Unsubscribe': `<${url}>` } });
     },
     // Resources for future lifecycle/security callers; these do not schedule

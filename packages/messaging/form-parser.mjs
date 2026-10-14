@@ -1,0 +1,9 @@
+import {parseFragment} from 'parse5';
+import {normalizeMessageForm} from './form-policy.mjs';
+const attrs=n=>Object.fromEntries((n.attrs||[]).map(a=>[a.name,a.value]));
+const text=n=>n.nodeName==='#text'?n.value:(n.childNodes||[]).map(text).join('');
+const disabled=n=>{for(let at=n;at;at=at.parentNode)if(['fieldset','optgroup','option','button','input','select','textarea'].includes(at.tagName)&&Object.hasOwn(attrs(at),'disabled'))return true;return false;};
+export function parseMessageForms(source,origin){
+ if(typeof source!=='string'||new TextEncoder().encode(source).length>1048576)throw Error('Message too large');const root=parseFragment(source),all=[],queue=[root];while(queue.length){const n=queue.pop();all.push(n);if(all.length>16384)throw Error('Message too complex');queue.push(...(n.childNodes||[]).slice().reverse());}
+ const forms=all.filter(n=>n.tagName==='form');if(forms.length>16)throw Error('Too many forms');return forms.map(form=>{try{const a=attrs(form),controls=all.filter(n=>['input','textarea','select','button'].includes(n.tagName)&&(()=>{for(let p=n.parentNode;p;p=p.parentNode)if(p.tagName==='form')return p===form;return false;})()).map(n=>{const a=attrs(n);return {tag:n.tagName,type:a.type,name:a.name,value:n.tagName==='textarea'?text(n):a.value,disabled:disabled(n),multiple:Object.hasOwn(a,'multiple'),externalAssociation:Object.hasOwn(a,'form'),overrides:['formaction','formmethod','formenctype','formtarget'].some(k=>Object.hasOwn(a,k)),...n.tagName==='select'?{options:all.filter(o=>o.tagName==='option'&&(()=>{for(let p=o.parentNode;p;p=p.parentNode)if(p.tagName==='select')return p===n;return false;})()).map(o=>({value:attrs(o).value??text(o).trim().replace(/\s+/g,' '),disabled:disabled(o)}))}:{}};});return normalizeMessageForm({action:a.action,method:a.method,enctype:a.enctype,target:a.target,controls},origin);}catch{return null;}});
+}

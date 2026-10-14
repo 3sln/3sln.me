@@ -5,10 +5,11 @@ import path from 'node:path';
 export const baseURL=process.env.E2E_BASE_URL || 'http://localhost:8787';
 export const artifacts=path.resolve(process.env.E2E_ARTIFACTS || '/tmp/3sln-e2e');
 mkdirSync(artifacts,{recursive:true});
-export async function launch(){
+export async function launch(options={}){
   const localChrome='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-  const executablePath=process.env.E2E_CHROME || (existsSync(localChrome)?localChrome:undefined);
-  return chromium.launch({headless:true,executablePath});
+  const pinnedChrome=chromium.executablePath();
+  const executablePath=process.env.E2E_CHROME || (existsSync(pinnedChrome)?undefined:existsSync(localChrome)?localChrome:undefined);
+  return chromium.launch({...options,headless:true,executablePath});
 }
 export async function virtualAuthenticator(context,page){
   const cdp=await context.newCDPSession(page);
@@ -17,7 +18,7 @@ export async function virtualAuthenticator(context,page){
   return {cdp,authenticatorId};
 }
 export async function waitForApp(page){
-  await page.goto(baseURL);
+  await page.goto(baseURL+'/console');
   await page.locator('.auth-card,.app-shell').first().waitFor();
 }
 export async function screenshot(page,name){await page.evaluate(async()=>{await document.fonts.ready;if(document.activeElement?.matches('.skip-link'))document.activeElement.blur();window.scrollTo({top:0,left:0,behavior:'instant'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));});await page.screenshot({path:path.join(artifacts,`${name}.png`),fullPage:true,animations:'disabled'});}

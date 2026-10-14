@@ -356,3 +356,68 @@ Fresh anonymous Chrome checks confirm the published benefit copy, removed status
 ![Production device flow waiting for its security check](walkthrough-assets/live-portal-device-check.png)
 
 The production headless device probe remained at the security check and was cancelled through the UI; no device-start response or phone approval was observed. It therefore establishes the waiting/cancel interface rather than a positive production QR/login. Automatic QR and explicit approval are established by the actual localWorker screenshots/tests above. No security check was bypassed.
+
+
+## 35. Static landing, Views, and signup capacity
+
+These screenshots are controlled local browser evidence from the earlier frozen build `78d5a3e3962dc93ac21b`, before the rich-message renderer work. They are not production screenshots. The landing is an immediately rendered static document; authenticated functionality lives at `/console`. Public docs contain curated integration material and a registry linking to actual machine-readable definitions.
+
+![Static landing on desktop](walkthrough-assets/static-landing-en-1440.png)
+
+![Spanish static landing on a small screen](walkthrough-assets/static-landing-es-320.png)
+
+Messages share one stream. Saved Views filter it by tags/read state rather than creating separate inbox containers.
+
+![Saved message Views](walkthrough-assets/message-views-390.png)
+
+![Spanish message Views](walkthrough-assets/message-views-es-390.png)
+
+When free signup capacity is exhausted, the app can offer verified paid signup or an email-confirmed waitlist. The backend independently enforces capacity. An uncertain checkout stays uncertain; returning from checkout is not payment proof. These fixtures do not create a real subscription or send production mail.
+
+![Paid signup plan choices](walkthrough-assets/paid-signup-plans-390.png)
+
+![Uncertain checkout with explicit retry guidance](walkthrough-assets/paid-signup-checkout-unknown-390.png)
+
+![Confirmed waitlist](walkthrough-assets/waitlist-confirmed.png)
+
+
+## 36. App messages, reviewed submissions, and motion controls
+
+These are local Chrome screenshots of frozen build `d089927129d93a7c490a`, not production evidence. The actual Worker fixture connects a registered app through explicit Messages consent, delivers HTML through the SDK, and mounts its isolated reader. The app's verified origin stays visible; disconnecting or disabling message permission fences later delivery.
+
+![An app message in the console](walkthrough-assets/worker-app-message-rich-frame.png)
+
+![App message permission disabled](walkthrough-assets/app-notifications-disabled.png)
+
+Form submission requires foreground review of the destination and fields. The following Node fixtures use real account authentication and the prepare/dispatch/history paths, with a controlled external transport; they do not establish live third-party delivery. The service worker is disabled in these fixtures.
+
+![Reviewing a message form submission](walkthrough-assets/message-submission-review.png)
+
+![Submission status with reviewed navigation links](walkthrough-assets/message-status-links.png)
+
+HTML postbacks retain the original and previous states. A lost response remains uncertain and cannot automatically resend the form. Fetched HTML opening in a separate tab is deferred; normal safe links and reviewed redirect links remain available.
+
+![Postback history and original message](walkthrough-assets/message-postback-history.png)
+
+![An uncertain submission](walkthrough-assets/message-submission-unknown.png)
+
+Message animations start enabled, respect reduced motion, and have a finite display budget. The local preference disables them and survives language changes. External animated media is currently blocked rather than claimed as fully controlled.
+
+![Spanish message animation preference](walkthrough-assets/app-message-animation-preferences-es.png)
+
+Verification for this frozen build: core802/802 (including12 unrelated lifecycle draft tests), Worker46/46, UI state109/109, main browser76/76 and separate federation4/4. Independent motion, credentialless broker, and submission/history checks passed. This evidence does not claim open production federation, complete account deletion, or a deployed contact-delivery v2 protocol.
+
+
+## 37. Private-host onboarding and generated badges
+
+These two screenshots are actual Chrome rendering of source fixtures with all requests intercepted under reserved `.example` hosts. They use the current stylesheet and portal components, with synthetic identities and no real delivery services. They are UI evidence, not production screenshots. Separate actual Worker integration verifies issuance, per-name admission, recovery activation and alias sign-in while public signup remains closed.
+
+A private invitation reveals only its permitted available names. The URL fragment is scrubbed before the portal loads; previews and GETs cannot claim a name.
+
+![Choosing an invited name](walkthrough-assets/private-onboarding-names.png)
+
+The host provides badge names, descriptions and SVG blocks. The app generates a cached sprite; identity properties or an injected resolver select its symbols. Labels and descriptions remain accessible, and badges do not change authority.
+
+![Local host badge in the account screen](walkthrough-assets/host-badges-console.png)
+
+The pictured badge and identity are synthetic. Definitions and resolver hooks are host-owned; an identity cannot submit SVG or a badge URL. The first SVG profile supports static primitive shapes and deliberately refuses gradients, author references, CSS, animation and active/external content.

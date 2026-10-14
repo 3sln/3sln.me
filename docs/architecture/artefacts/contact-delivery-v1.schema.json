@@ -1,0 +1,688 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://3sln.me/artefacts/contracts/contact-delivery/v1",
+  "title": "Contact delivery v1 \u2014 complete candidate, not published or implemented",
+  "description": "Schema for the proposed method/args projection, with shared envelope and full RPC/result definitions. Publication candidate only. Semantic authority, duplicate-key rejection, canonicalization, signature verification, field equality, time bounds, live grants and byte budgets remain mandatory runtime checks. Conversation v2 reference is design-only and does not claim that contract has been published.",
+  "type": "object",
+  "properties": {
+    "method": {
+      "const": "deliver"
+    },
+    "args": {
+      "$ref": "#/$defs/args"
+    }
+  },
+  "required": [
+    "method",
+    "args"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "time": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "https": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "format": "uri",
+      "pattern": "^https://",
+      "description": "Runtime must validate exact canonical HTTPS URL, no userinfo, fragment, private network target or automatic redirects; same-origin constraints are contextual."
+    },
+    "principal": {
+      "type": "object",
+      "properties": {
+        "issuer": {
+          "$ref": "#/$defs/https"
+        },
+        "subject": {
+          "$ref": "#/$defs/uuid"
+        },
+        "identityURI": {
+          "$ref": "#/$defs/https"
+        }
+      },
+      "required": [
+        "issuer",
+        "subject",
+        "identityURI"
+      ],
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "$ref": "#/$defs/principal"
+        },
+        "identityDocument": {
+          "$ref": "#/$defs/https"
+        },
+        "keyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "principal",
+        "identityDocument",
+        "keyId"
+      ],
+      "additionalProperties": false
+    },
+    "proof": {
+      "type": "object",
+      "properties": {
+        "alg": {
+          "const": "ES256"
+        },
+        "kid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      },
+      "required": [
+        "alg",
+        "kid",
+        "signature"
+      ],
+      "additionalProperties": false
+    },
+    "recipient": {
+      "type": "object",
+      "properties": {
+        "issuer": {
+          "$ref": "#/$defs/https"
+        },
+        "owner": {
+          "$ref": "#/$defs/uuid"
+        },
+        "contactId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "resource": {
+          "$ref": "#/$defs/https"
+        }
+      },
+      "required": [
+        "issuer",
+        "owner",
+        "contactId",
+        "resource"
+      ],
+      "additionalProperties": false
+    },
+    "content": {
+      "type": "object",
+      "properties": {
+        "mimeType": {
+          "type": "string",
+          "maxLength": 150,
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "mimeType",
+        "byteLength",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "tag": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "participant": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "resource": {
+          "$ref": "#/$defs/https"
+        }
+      },
+      "required": [
+        "identity",
+        "resource"
+      ],
+      "additionalProperties": false
+    },
+    "genesisPayload": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 2
+        },
+        "contract": {
+          "const": "https://3sln.me/artefacts/contracts/conversation/v2"
+        },
+        "conversationId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/time"
+        },
+        "creator": {
+          "$ref": "#/$defs/identity"
+        },
+        "creatorResource": {
+          "$ref": "#/$defs/https"
+        },
+        "participants": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/participant"
+          }
+        },
+        "secretEpoch": {
+          "$ref": "#/$defs/uuid"
+        },
+        "secretDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "initialContent": {
+          "$ref": "#/$defs/content"
+        },
+        "initialSubject": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+        }
+      },
+      "required": [
+        "version",
+        "contract",
+        "conversationId",
+        "createdAt",
+        "creator",
+        "creatorResource",
+        "participants",
+        "secretEpoch",
+        "secretDigest",
+        "initialContent",
+        "initialSubject"
+      ],
+      "additionalProperties": false
+    },
+    "genesis": {
+      "type": "object",
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/genesisPayload"
+        },
+        "proof": {
+          "$ref": "#/$defs/proof"
+        }
+      },
+      "required": [
+        "payload",
+        "proof"
+      ],
+      "additionalProperties": false
+    },
+    "returnControl": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "#/$defs/https"
+        },
+        "recipient": {
+          "$ref": "#/$defs/principal"
+        },
+        "genesisDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "nonce": {
+          "$ref": "#/$defs/uuid"
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/time"
+        },
+        "method": {
+          "const": "respondInvitation"
+        },
+        "maxBytes": {
+          "const": 8192
+        },
+        "capability": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "Secret, single-proposal consent-response allowance. No content/history/profile/general-message authority. Its value is covered by the outer author signature."
+        }
+      },
+      "required": [
+        "resource",
+        "recipient",
+        "genesisDigest",
+        "nonce",
+        "expiresAt",
+        "method",
+        "maxBytes",
+        "capability"
+      ],
+      "additionalProperties": false
+    },
+    "conversation": {
+      "type": "object",
+      "properties": {
+        "genesis": {
+          "$ref": "#/$defs/genesis"
+        },
+        "sharedSecret": {
+          "$ref": "#/$defs/digest"
+        },
+        "returnControl": {
+          "$ref": "#/$defs/returnControl"
+        }
+      },
+      "required": [
+        "genesis",
+        "sharedSecret",
+        "returnControl"
+      ],
+      "additionalProperties": false
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "kind": {
+          "enum": [
+            "one-off",
+            "conversation-init"
+          ]
+        },
+        "noReply": {
+          "type": "boolean"
+        },
+        "operationId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/time"
+        },
+        "recipient": {
+          "$ref": "#/$defs/recipient"
+        },
+        "content": {
+          "$ref": "#/$defs/content"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+        },
+        "optionalTags": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/tag"
+          }
+        },
+        "author": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/identity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "conversation": {
+          "$ref": "#/$defs/conversation"
+        }
+      },
+      "required": [
+        "version",
+        "kind",
+        "noReply",
+        "operationId",
+        "createdAt",
+        "recipient",
+        "content",
+        "subject",
+        "optionalTags",
+        "author"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "one-off"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "noReply": {
+                "const": true
+              }
+            },
+            "not": {
+              "required": [
+                "conversation"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "conversation-init"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "conversation"
+            ],
+            "properties": {
+              "noReply": {
+                "const": false
+              },
+              "author": {
+                "$ref": "#/$defs/identity"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "envelope": {
+      "type": "object",
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/payload"
+        },
+        "proof": {
+          "$ref": "#/$defs/proof"
+        }
+      },
+      "required": [
+        "payload"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "payload": {
+                "properties": {
+                  "author": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "proof"
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "proof"
+            ]
+          }
+        }
+      ]
+    },
+    "args": {
+      "type": "object",
+      "properties": {
+        "envelope": {
+          "$ref": "#/$defs/envelope"
+        },
+        "bodyBase64url": {
+          "type": "string",
+          "maxLength": 1398102,
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "description": "Canonical unpadded base64url of exactly content.byteLength bytes; reject impossible lengths/noncanonical bits and verify SHA-256. Empty is valid only for zero-length content."
+        }
+      },
+      "required": [
+        "envelope",
+        "bodyBase64url"
+      ],
+      "additionalProperties": false
+    },
+    "admissionPayload": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "purpose": {
+          "const": "bindle-contact-admission-v1"
+        },
+        "issuer": {
+          "$ref": "#/$defs/https"
+        },
+        "recipient": {
+          "$ref": "#/$defs/recipient"
+        },
+        "operationId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "messageId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "kind": {
+          "enum": [
+            "one-off",
+            "conversation-init"
+          ]
+        },
+        "noReply": {
+          "type": "boolean"
+        },
+        "payloadDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "bodyDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "authorship": {
+          "enum": [
+            "identity",
+            "unverified"
+          ]
+        },
+        "receivedAt": {
+          "$ref": "#/$defs/time"
+        },
+        "state": {
+          "const": "accepted"
+        }
+      },
+      "required": [
+        "version",
+        "purpose",
+        "issuer",
+        "recipient",
+        "operationId",
+        "messageId",
+        "kind",
+        "noReply",
+        "payloadDigest",
+        "bodyDigest",
+        "authorship",
+        "receivedAt",
+        "state"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "one-off"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "noReply": {
+                "const": true
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "noReply": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "receipt": {
+          "type": "object",
+          "properties": {
+            "payload": {
+              "$ref": "#/$defs/admissionPayload"
+            },
+            "proof": {
+              "$ref": "#/$defs/proof"
+            }
+          },
+          "required": [
+            "payload",
+            "proof"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "receipt"
+      ],
+      "additionalProperties": false
+    },
+    "rpc": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "0"
+        },
+        "tx": {
+          "$ref": "#/$defs/uuid"
+        },
+        "resource": {
+          "$ref": "#/$defs/https"
+        },
+        "contract": {
+          "const": "https://3sln.me/artefacts/contracts/contact-delivery/v1"
+        },
+        "method": {
+          "const": "deliver"
+        },
+        "args": {
+          "$ref": "#/$defs/args"
+        }
+      },
+      "required": [
+        "version",
+        "tx",
+        "resource",
+        "contract",
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "x-methods": {
+    "deliver": {
+      "request": "#",
+      "result": "#/$defs/result",
+      "effect": "write",
+      "permission": "One exact live contact parent/recipient resource, deliver only, exact kind/MIME/authorship/tag/byte restrictions. Never general app/resource access."
+    }
+  },
+  "x-limits": {
+    "maxRequestBytes": 1500000,
+    "maxEnvelopeBytes": 65536,
+    "maxBodyBytes": 1048576,
+    "maxOperationAgeMs": 86400000,
+    "maxFutureSkewMs": 60000,
+    "minReceiptRetentionMs": 172800000
+  },
+  "examples": [
+    {
+      "method": "deliver",
+      "args": {
+        "envelope": {
+          "payload": {
+            "version": 1,
+            "kind": "one-off",
+            "noReply": true,
+            "operationId": "11111111-1111-4111-8111-111111111111",
+            "createdAt": 1791979200000,
+            "recipient": {
+              "issuer": "https://recipient.example",
+              "owner": "22222222-2222-4222-8222-222222222222",
+              "contactId": "33333333-3333-4333-8333-333333333333",
+              "resource": "https://recipient.example/entities/22222222-2222-4222-8222-222222222222/contacts/33333333-3333-4333-8333-333333333333"
+            },
+            "content": {
+              "mimeType": "text/plain",
+              "byteLength": 5,
+              "sha256": "GF-NsyJx_iX1Yab8k4suJkMG7DBO2lGAB9F2SCY4GWk"
+            },
+            "subject": "Hello",
+            "optionalTags": [],
+            "author": null
+          }
+        },
+        "bodyBase64url": "SGVsbG8"
+      }
+    }
+  ]
+}

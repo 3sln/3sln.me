@@ -1,0 +1,27 @@
+# Developer contact — independent review
+
+Date: 2026-10-13. Status: **superseded historical review**. The user replaced this unshipped feedback form/service with an automatically issued paid-account contact link to a protected developer identity. The coordinator is removing the unshipped form and backend/mail slice. The findings and local tests below apply only to that discarded implementation; they do not approve or verify its replacement. No production message delivery or human approval is implied.
+
+Human product/security reviewer: __________  Date: __________  Outcome: __________
+
+The latest policy allows authenticated users to contact the developer while the counted admission total is at most 2,000; above that threshold it requires a current eligible paid subscription. The exact boundary matters: 2,000 remains eligible, 2,001 does not. Historical paid-name eligibility, provisional upgrade credit and a retained past-due/grace entitlement must not be mistaken for confirmed current payment. This must be checked server-side; a hidden form or cached availability hint is insufficient authority.
+
+Threshold caching must have an explicit conservative/staleness policy. A stale under-threshold count cannot reopen free access indefinitely, and a browser-supplied count is never trusted. Authentication, CSRF/origin checks, owner/network/global mail and work limits must precede expensive processing and sending. Limits apply even when a sender creates new request IDs; idempotency cannot be an amplification bypass. Ambiguous send results are not automatically retried as if delivery definitely failed.
+
+The body must be bounded literal text, with no attacker HTML/template execution or header injection. Sender, destination and transport headers come from trusted server configuration. A verified account email can support a reply path where explicitly configured; freeform email or message text is not ownership evidence. Never expose a destination address, account email or message body through public status, browser persistent state, logs or shared caches. Private owner contact does not expand app/federation authority.
+
+The recipient is an operator configuration decision and remains pending until the coordinator resolves it with the user. Development tests must use injected transports and reserved example addresses, with no actual external mail. The frontend needs clear eligibility, success and uncertainty behavior, safe cancellation/context changes and localized literal rendering; existing sign-in/setup gates remain intact.
+
+## Frozen service and transport assessment
+
+Reviewed [DeveloperFeedbackService](../../packages/runtime/developer-feedback.mjs), [mail adapter](../../apps/worker/email.mjs), [localized waitlist mail contribution](../../packages/i18n/waitlist-mail.mjs) and their focused tests. Independent runs passed **5/5 feedback** and **17/17 mail** tests. These use local metadata and injected transport; they send no real mail.
+
+The initial review found that stripping upgrade metadata alone still admitted retained `past_due` entitlement. The frozen service now additionally requires active/canceled billing status and an unexpired base entitlement, so past-due grace and provisional upgrade credit do not confer eligibility. The early-rollout allowance remains a trusted server-context input whose derivation must be checked in the pending integration audit.
+
+Each owner has at most two admitted requests/hour and five/day. Sixteen finite service lanes sum to 100 daily admissions. The local journal keeps at most 32 records, retains receipts for 48 hours and stores only request UUID, SHA-256 content digest, outcome and timestamps—not subject, body or email. Same-key replay cannot send twice; conflicting content fails. Rate admission happens before transport. Pre-transport service denial/failure records `not-sent`; provider failure/deadline records `unknown`. Neither automatically retries or refunds capacity. Provider acceptance is labeled accepted, not delivered. A 15-second service deadline bounds waiting without asserting that the underlying provider request was cancelled; later completion remains an uncertain outcome. A crash with `sending` retained also replays as unknown.
+
+Input rejects unknown fields, control characters and oversized text. The mail adapter uses a fixed system sender and configured destination, escapes HTML, excludes remote trackers, and includes a verified reply address only after explicit `shareEmail` consent. No client sender/recipient/header is forwarded. Waitlist confirmation uses the fixed verification sender, localized text and a fragment token, with copy requiring explicit page confirmation and promising no account or reserved slot. Provider exceptions are scrubbed. These transport properties do not establish the not-yet-reviewed waitlist service's token lifecycle or consent implementation.
+
+No blocker was found in this frozen service/transport slice. The final review still needs authenticated route/origin/CSRF checks, trustworthy threshold and email context, finite work admission, exact UI retry/cancellation behavior and final combined suite evidence. A stale under-threshold cache can extend free eligibility, so the public availability cache must not be misrepresented as an exact fresh threshold gate. The destination remains blank pending the user's choice; configuration does not establish delivery.
+
+Human final decision: __________  Date: __________  Outcome: __________

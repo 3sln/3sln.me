@@ -1,15 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chromium} from 'playwright';
-import {existsSync} from 'node:fs';
-import {baseURL,screenshot} from './browser.mjs';
+import {baseURL,screenshot,launch} from './browser.mjs';
 // This test exercises actual Chrome WebMCP and durable local Worker APIs.
 // Only explicitly local CAPTCHA bypass is used. No modelContext/API mocks.
 let browser;
-test.before(async()=>{assert.ok(['localhost','127.0.0.1'].includes(new URL(baseURL).hostname));const config=await(await fetch(baseURL+'/api/config')).json();assert.equal(config.localDevelopment,true);const local='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';browser=await chromium.launch({headless:true,executablePath:process.env.E2E_CHROME||(existsSync(local)?local:undefined),args:['--enable-features=WebMCP,WebMCPTesting,DevToolsWebMCPSupport']});});
+test.before(async()=>{assert.ok(['localhost','127.0.0.1'].includes(new URL(baseURL).hostname));const config=await(await fetch(baseURL+'/api/config')).json();assert.equal(config.localDevelopment,true);browser=await launch({args:['--enable-features=WebMCP,WebMCPTesting,DevToolsWebMCPSupport']});});
 test.after(async()=>await browser?.close());
 test('native Chrome WebMCP discovers and invokes real Worker tools with owner mutation confirmation and revocation',async t=>{
- const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block',extraHTTPHeaders:{Origin:baseURL,'CF-Connecting-IP':`198.51.100.${30+Math.floor(Math.random()*180)}`}});t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(15000);await page.goto(baseURL);
+ const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block',extraHTTPHeaders:{Origin:baseURL,'CF-Connecting-IP':`198.51.100.${30+Math.floor(Math.random()*180)}`}});t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(15000);await page.goto(baseURL+'/console');
  const native=await page.evaluate(()=>typeof document.modelContext?.registerTool==='function'&&typeof document.modelContext?.getTools==='function'&&typeof document.modelContext?.executeTool==='function');if(!native){t.skip('Installed Chrome does not expose native WebMCP with the requested experimental flags.');return;}
  const config=await(await context.request.get(baseURL+'/api/config')).json();
  const post=async(path,value,csrf)=>{const response=await context.request.post(baseURL+path,{data:value,headers:csrf?{'X-CSRF-Token':csrf}:{}});const body=await response.json();assert.equal(response.status(),200,JSON.stringify(body));return body;};

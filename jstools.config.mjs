@@ -14,13 +14,16 @@ export const publicSources = [
   'packages/recovery/normalization.mjs',
   'packages/recovery/identity-backup.mjs',
   'packages/identity/handles.mjs',
+  'packages/messaging/form-policy.mjs',
   'modules/publications',
   'scripts/recovery-kdf-worker.mjs',
+  'scripts/message-frame-controller.mjs',
+  'scripts/message-sanitizer.mjs',
   'apps/web/styles.css',
 ];
 
 export const pages = [
-  {source:'apps/web/index.html',output:'index.html',entry:'app',module:'/src/main.mjs'},
+  {source:'apps/web/console.html',output:'console.html',entry:'app',module:'/src/main.mjs'},
   {source:'apps/web/authorize.html',output:'authorize.html',entry:'authorize',module:'/src/authorize.mjs'},
 ];
 export const clientManifest = '.output/client-manifest.mjs';
@@ -33,7 +36,7 @@ export default defineConfig({
   // Vendored 3sln snapshots remain single source graphs with their provenance.
   // 0.2.0 requires at least one dependency entry. Explicitly allow the existing
   // browser crypto library only; never discover this repository's server deps.
-  // The isolated worker still bundles its own instance (workers have no map).
+  // Standalone workers bundle crypto/sanitizer dependencies without an import map.
   dependencies: ['hash-wasm'],
   entries: {
     app: {module:'apps/web/src/main.mjs',css:'apps/web/styles.css'},
@@ -44,6 +47,8 @@ export default defineConfig({
   // These two SDK entries execute in a page, not in a Worker runtime.
   workers: {
     recovery:'scripts/recovery-kdf-worker.mjs',
+    messageFrame:'scripts/message-frame-controller.mjs',
+    messageSanitizer:'scripts/message-sanitizer.mjs',
     sdkLogin:'packages/sdk/src/login-element.mjs',
     sdkIdentity:'packages/sdk/src/identity.mjs',
   },

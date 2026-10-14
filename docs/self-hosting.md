@@ -27,6 +27,53 @@ npm run dev:worker
 
 wrangler.local.jsonc contains development-only CAPTCHA behavior. Never deploy that configuration. Production uses real Turnstile secret verification and exact host/action checks. Configure WAF/bot protection separately for authentication endpoints; public documentation and contract routes remain bot-readable.
 
+## Private hosts with a fixed set of accounts
+
+A private installation can keep `SIGNUP_ENABLED=false` while retaining normal sign-in and recovery. The separate ordinary onboarding lane is enabled with `ONBOARDING_ENABLED=true`, a private `ONBOARDING_KEY`, and `ONBOARDING_NAMES`, a JSON array of canonical ordinary handles. It does not infer a system identity, grant administrative privileges or confer a paid plan. Badge IDs are explicitly selected by the operator or its resolver. The default policy reserves the reference service’s system names, which also have a separate system-account invitation flow. An explicit host-name policy can choose different reserved and onboardable sets for your installation. Every account still needs a primary credential, terms acceptance and completed recovery setup; configured verified-contact requirements still apply.
+
+`HOST_NAME_POLICY` is a versioned JSON configuration with `reserved` and `onboarding` names. Reserved names and token-onboardable names are unavailable to ordinary public handle claims; those sets may overlap. An explicit policy replaces the default name sets. Without it, the default reserved names and `ONBOARDING_NAMES` remain in effect.
+
+```json
+{"version":1,"reserved":["admin"],"onboarding":["alice","bob"]}
+```
+
+Badges are local UI presentation. The host supplies `BADGE_DEFINITIONS` as an array of `{id,name,description,svg}` entries; the app generates one SVG sprite with named symbols, a content hash and accessible labels. The embedder does not need to author a sprite map. For example:
+
+```json
+[
+  {
+    "id":"team",
+    "name":"Host team",
+    "description":"A member of this host’s team.",
+    "svg":"<svg viewBox=\"0 0 24 24\"><path d=\"M2 2h20v20H2z\" fill=\"currentColor\"/></svg>"
+  }
+]
+```
+
+Node integrators inject `resolveIdentityBadges` into `createNodeServer`. Worker integrators use `createWorker({resolveIdentityBadges})`. The hook receives a frozen descriptor containing identity ID, handle, aliases, status and stored badge IDs; credentials, sessions, connector keys and recovery material are excluded. It may look up role information using the identity ID. It returns at most four known badge IDs. Failures, invalid results or a500ms timeout produce no badges without changing login authority. The deadline bounds asynchronous waiting; injected code runs in the host runtime and is not CPU-isolated. JSON configuration does not execute resolver code.
+
+Badge definitions accept bounded static SVG shapes. Scripts, event handlers, external references and unsupported active content are refused. Identity records contain badge IDs, not SVG or badge URLs. The default resolver reads the identity’s `badgeIds`; an integrator can inject a code-owned resolver to choose known badge IDs from roles or another local policy. Badge results do not change authentication, paid status or administrative privileges. Editing a definition changes its local display; changing assignments belongs to the identity record or trusted management policy, rather than a name-to-badge configuration map. A management UI is not required by this adapter interface.
+
+An operator issues a scoped invitation for one or several configured names. The host durably reserves every name before the invitation becomes usable. Reservations and assignments are permanent: expiry or configuration removal does not make a name available for another identity. Each claimed name consumes one overall account admission, without using public free-signup capacity. The same account keeps its numeric alias as well as its configured name.
+
+Prepare a private operator directory and a `names.json` file containing the intended initial assignments, for example `["bob", {"name":"alice","badgeIds":["team"]}]`. Keep operator files owner-readable only. The CLI never prints keys or invitation tokens:
+
+```sh
+node scripts/onboarding.mjs key --out /private/operator/onboarding.key
+node scripts/onboarding.mjs invite --key-file /private/operator/onboarding.key \
+  --origin https://accounts.example --names-file /private/operator/names.json \
+  --out /private/operator/preparation.json
+node scripts/onboarding.mjs issue --key-file /private/operator/onboarding.key \
+  --origin https://accounts.example --input /private/operator/preparation.json \
+  --out /private/operator/invitation.json
+```
+
+Configure the generated key as `ONBOARDING_KEY` through your host’s secret mechanism before `issue`. `invite` prepares immutable claims offline; `issue` explicitly contacts the host with a separate short-lived issuance proof and writes the usable link only after matching durable confirmation. Keep the exact preparation after an uncertain response and explicitly retry it; generating replacement identities does not repair a partial issuance. Files are written exclusively with mode0600, and private input/symlink checks prevent accidental reuse or disclosure. Invitation validity defaults to24hours and is bounded at seven days. Badge IDs selected for each name must exist in this host’s definitions; later management can change the identity property independently of the original invitation.
+
+Generated links use `/token-onboarding#token=…`. The fragment never enters the HTTP request URL; the browser captures it privately and immediately scrubs the address before starting the portal. No GET, preview or scanner claims an account. The user deliberately opens the invitation, chooses an available authorized name, then follows the credential and recovery wizard. A holder of a multi-name invitation can claim any of its names; issue separate invitations when different people should have different authority. Do not publish an invitation or put it in telemetry, screenshots or ordinary browser storage.
+
+A lost response after account creation is not permission to claim again. Resume using the credential already configured; an interrupted passkey setup before credential registration or a lost setup-browser binding may require operator reconciliation. The invitation does not become an account-recovery credential. Reopening a scrubbed page requires the original private link or a deliberate token paste.
+
 ## Provider configuration
 
 S3-compatible services need endpoint, region, bucket/prefix and scoped access keys. WebDAV needs a vetted HTTPS host/root and app credentials. ALLOWED_CONNECTOR_HOSTS is an operator allowlist, not a user-supplied permission bypass. Google Drive, Dropbox and OneDrive require your own OAuth applications, exact redirect configuration, consent scopes and live provider conformance before enabling UI capability flags.

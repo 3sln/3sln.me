@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://3sln.me/artefacts/contracts/app-messages/v1",
+  "title": "Create a message for the consenting app connection owner",
+  "description": "Exact method/args projection of Bindle RPC. Requires explicit resource/method consent, a live owner app connection, and exact token-bound browser Origin. App provenance is provider admission evidence, not publisher code attestation.",
+  "type": "object",
+  "required": [
+    "method",
+    "args"
+  ],
+  "properties": {
+    "method": {
+      "const": "createOwn"
+    },
+    "args": {
+      "type": "object",
+      "required": [
+        "transactionId",
+        "createdAt",
+        "subject",
+        "body"
+      ],
+      "properties": {
+        "transactionId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Equal to RPC tx; preserve with createdAt on retry."
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "Immutable operation creation milliseconds. Accepted only within the previous 24 hours plus at most 60 seconds future skew."
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "mimeType": {
+          "enum": [
+            "text/plain",
+            "text/html"
+          ],
+          "default": "text/plain"
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12000
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 31,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "description": "Caller tags; app-message is reserved and added automatically. Original delivery tags are rule input."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Subject/body must contain non-whitespace text and exclude unsafe control characters. Tags exclude control characters and whitespace-only strings. Entire encoded JSON args is at most 16384 UTF-8 bytes. HTML forms/links are normal content; no separate actions field."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": [
+        "id",
+        "accepted",
+        "receivedAt"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "accepted": {
+          "const": true
+        },
+        "receivedAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "x-methods": {
+    "createOwn": {
+      "request": "#",
+      "result": "#/$defs/result",
+      "effect": "write",
+      "permission": "Explicit createOwn resource grant and Messages permission for this owner/client/connection generation; actual exact browser Origin must match token client. No contact capability or caller-selected recipient/sender."
+    }
+  }
+}

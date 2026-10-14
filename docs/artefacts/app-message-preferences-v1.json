@@ -1,0 +1,20 @@
+{
+  "id": "https://3sln.me/artefacts/preferences/app-messages/v1",
+  "title": "Messages from connected apps",
+  "description": "Choose the local message resource and explicitly approve apps to create messages for your own account. Login and other resource permissions do not grant this access.",
+  "publisher": "https://3sln.me",
+  "fields": {
+    "messages": {
+      "title": "App messages",
+      "description": "Creates text or HTML messages with tags in your own message stream. Notification channels remain under your control.",
+      "type": "resource",
+      "contracts": [
+        "https://3sln.me/artefacts/contracts/app-messages/v1"
+      ],
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    }
+  }
+}

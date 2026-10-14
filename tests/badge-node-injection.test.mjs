@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {createNodeServer} from '../apps/node/server.mjs';
+import {IdentityCrypto} from '../packages/identity/crypto.mjs';
+const definitions=JSON.stringify([{id:'team',name:'Host team',description:'Local designation',svg:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>'}]);
+test('Node forwards badge definitions from environment and injects resolver code independently of config',async t=>{
+ const previous=process.env.BADGE_DEFINITIONS;process.env.BADGE_DEFINITIONS=definitions;
+ t.after(()=>{if(previous===undefined)delete process.env.BADGE_DEFINITIONS;else process.env.BADGE_DEFINITIONS=previous;});
+ const directory=await mkdtemp(join(tmpdir(),'bindle-badge-node-'));let seen;
+ const app=await createNodeServer({directory,config:{APP_ORIGIN:'http://localhost:8788',SIGNUP_ENABLED:'false',resolveIdentityBadges(){throw Error('Config cannot override injected code');}},resolveIdentityBadges:async identity=>{seen=identity;return ['team'];}});
+ t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
+ const request=(path,headers={})=>app.fetch(new Request('http://localhost:8788'+path,{headers}));
+ const config=await(await request('/api/config')).json();assert.deepEqual(config.badgePolicy.definitions,[{id:'team',name:'Host team',description:'Local designation'}]);assert.equal(config.signupEnabled,false);
+ const id=crypto.randomUUID(),assignmentId=crypto.randomUUID(),repository=app.resources.repository,handle=await repository.allocateFreeHandle(undefined,id,assignmentId),token=id+'.'+'A'.repeat(43);
+ const account={id,assignmentId,handle,revision:0,status:'active',createdAt:Date.now(),lastActiveAt:Date.now(),termsVersion:'2026-10-11',credentials:[],challenges:[],audit:[],sessions:[{id:crypto.randomUUID(),hash:await new IdentityCrypto().hash('session',token),csrfToken:'fixture',expiresAt:Date.now()+3600000}],badgeIds:[],passwordHash:'private-credential-marker'};
+ assert.equal(await repository.create(account),true);
+ const response=await request('/api/session',{Cookie:'bindle_session='+token});assert.equal(response.status,200);const result=await response.json();assert.deepEqual(result.account.badges,['team']);assert.equal(seen.id,id);assert.equal(seen.passwordHash,undefined);assert.equal(seen.sessions,undefined);assert(Object.isFrozen(seen));
+});

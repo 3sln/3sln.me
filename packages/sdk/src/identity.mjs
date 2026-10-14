@@ -148,6 +148,15 @@ export class BindleClient {
     } else if(!provenance&&(before.access_token!==session.access_token||session.renewalCount>0))throw new Error('This resource credential expired. Read the preference fragment again.');
     return this.rpc({...call,resource:reference.id},{...options,token:reference.token});
   }
+  async userMessage(reference,message={},options={}) {
+    if(!message||Array.isArray(message)||typeof message!=='object'||Object.keys(message).some(key=>!['subject','body','mimeType','tags','transactionId','createdAt'].includes(key)))throw new Error('Unsupported app message fields.');
+    const {subject,body,mimeType='text/plain',tags=[],transactionId=this.crypto.randomUUID(),createdAt=this.clock()}=message;
+    // The host page, not a caller-supplied origin, determines browser provenance.
+    const actual=globalThis.window?.location?.origin,realm=globalThis.window?.origin;
+    if(!actual||realm!==actual||actual!==new URL(this.redirectUri).origin)throw new Error('App messages must originate from the registered app origin.');
+    if(typeof subject!=='string'||!subject.trim()||[...subject].length>120||typeof body!=='string'||[...body].length>12000||new TextEncoder().encode(JSON.stringify({transactionId,createdAt,subject,mimeType,body,tags})).length>16384||!['text/plain','text/html'].includes(mimeType)||!Array.isArray(tags)||tags.length>31||new Set(tags).size!==tags.length||tags.some(tag=>typeof tag!=='string'||!tag||[...tag].length>64||/[\x00-\x1f\x7f]/.test(tag)||tag==='app-message')||!Number.isSafeInteger(createdAt)||createdAt<0||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(transactionId))throw new Error('Provide a bounded app message and a valid transaction ID.');
+    try{const response=await this.callResource(reference,{contract:'https://3sln.me/artefacts/contracts/app-messages/v1',method:'createOwn',args:{transactionId,createdAt,subject,mimeType,body,tags},tx:transactionId},options);return {transactionId,createdAt,result:response.result};}catch(error){error.transactionId=transactionId;error.createdAt=createdAt;throw error;}
+  }
   async readPreferences(fragment,options) {
     await this.ensureSession(options);
     const generation=this.generation,session=this.session,result=(await this.rpc({resource:'@preferences',contract:session.preferencesContract,method:'read',args:{fragment}},options)).result;

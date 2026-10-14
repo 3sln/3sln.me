@@ -63,8 +63,14 @@ test('parent quarantine is live for already-minted bearer and owner-scoped',asyn
   await assert.rejects(f.endpoints.quarantine('other',f.issued.grant.id,false),{code:'not_found'});
   await f.endpoints.quarantine(f.owner,f.issued.grant.id,false);assert.equal((await f.store.transaction(tx=>f.endpoints.live(tx,verified))).quarantined,false);
 });
-test('sender annotations remain separate and participate in message idempotency',async()=>{
-  const f=await fixture();const minted=await f.endpoints.mint(f.issued.url);const request={collection:f.issued.grant.claims.collections[0],mimeType:'text/plain',bytes:new TextEncoder().encode('Hello'),idempotencyKey:'metadata',senderMetadata:{title:'A title',tags:['trusted-admin']}};
+test('legacy sender annotations remain separate and participate in message idempotency',async()=>{
+  const f=await fixture();
+  // Reproduce a pre-tag-policy persisted endpoint and its original signed URL.
+  const legacy=await f.store.transaction(tx=>tx.get(key('contact-grant',f.issued.grant.id)));
+  for(const claims of [legacy.claims,legacy.endpoint.claims]){delete claims.requiredTags;delete claims.optionalTags;}
+  const url=new URL(f.issued.url);url.searchParams.set('sig',await signContactToken({header:legacy.endpoint.header,claims:legacy.endpoint.claims,privateKey:f.pair.privateKey}));
+  await f.store.transaction(tx=>tx.set(key('contact-grant',legacy.id),legacy));
+  const minted=await f.endpoints.mint(url.href);const request={collection:f.issued.grant.claims.collections[0],mimeType:'text/plain',bytes:new TextEncoder().encode('Hello'),idempotencyKey:'metadata',senderMetadata:{title:'A title',tags:['trusted-admin']}};
   const result=await f.messages.receive(minted.token,request);const message=await f.messages.read(f.owner,result.id);
   assert.deepEqual(message.senderMetadata,{subject:'A title',tags:['trusted-admin']});assert.deepEqual(message.tags,[]);assert.equal(message.classification,'unclassified');
   request.senderMetadata={subject:'Changed',tags:['trusted-admin']};await assert.rejects(f.messages.receive(minted.token,request),{code:'idempotency_conflict'});

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {SqliteMetadata} from '../apps/node/resources.mjs';
-import {normalizeHandle,validatePaidHandle,encodeFreeHandleNumber,isFreeHandle} from '../packages/identity/handles.mjs';
+import {normalizeHandle,validatePaidHandle,encodeFreeHandleNumber,isFreeHandle,isReservedHandle,RESERVED_HANDLES} from '../packages/identity/handles.mjs';
 import {IdentityRepository} from '../packages/runtime/accounts.mjs';
 import {IdentityShardStorage,ShardedIdentityRepository,IDENTITY_LAYOUT,identityShardName} from '../packages/runtime/identity-shards.mjs';
 function fixture(){
@@ -121,4 +121,10 @@ test('paid lookup cannot attach an orphan alias to a reused subject with a new a
   assert.equal(await repo.findByHandle('123'),null);
   assert.equal(await repo.claimPaidHandle('123',id,assignmentId),false);
  }finally{metadata.close();}
+});
+
+
+test('operator-reserved names remain normal login handles but cannot be claimed as public paid aliases',()=>{
+ for(const value of RESERVED_HANDLES){assert.equal(normalizeHandle(value.toUpperCase()),value);assert.equal(isReservedHandle(value.toUpperCase()),true);assert.throws(()=>validatePaidHandle(value));}
+ assert.equal(validatePaidHandle('river'),'river');assert.equal(isReservedHandle('river'),false);assert.equal(isReservedHandle('n.abc'),false);
 });

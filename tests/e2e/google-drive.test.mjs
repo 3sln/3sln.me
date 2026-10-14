@@ -15,7 +15,7 @@ async function fixture(t,{signedIn=true,configured=true}={}){
 }
 test('Google setup fixture explains dedicated files, requires physical submit, and opens validated authorization',async t=>{
  const {page,calls}=await fixture(t);let navigation=false;await page.route('https://accounts.google.com/**',r=>{navigation=true;return r.fulfill({contentType:'text/html',body:'<h1>Google authorization fixture</h1>'});});
- await page.goto(baseURL);await page.locator('.app-shell').waitFor();await page.getByRole('button',{name:'Resources',exact:true}).click();
+ await page.goto(baseURL+'/console');await page.locator('.app-shell').waitFor();await page.getByRole('button',{name:'Resources',exact:true}).click();
  await page.locator('.provider-card').filter({has:page.getByRole('heading',{name:'Google Drive',exact:true})}).getByRole('button',{name:'Set up',exact:true}).click();
  await page.getByRole('dialog').waitFor();await page.getByText('Authorize access to files created by this connection. Existing files in your Drive are not imported or listed.',{exact:true}).waitFor();
  await page.getByLabel('Connection name',{exact:true}).fill('Personal sync');
@@ -27,7 +27,7 @@ test('Google OAuth callback fixture consumes private authorization once and clea
  const {page,calls}=await fixture(t);await page.goto(baseURL+'/integrations/google/complete#state=opaque-state&code=private-code');
  await page.getByText('Google Drive connected. Apps can use files they create in this dedicated folder.',{exact:true}).waitFor();
  assert.equal(new URL(page.url()).hash,'');assert.deepEqual(calls,[{path:'/api/integrations/google/complete',body:{state:'opaque-state',code:'private-code'}}]);
- assert.doesNotMatch(await page.locator('body').innerText(),/opaque-state|private-code/);await page.getByRole('button',{name:'Inbox',exact:true}).click();await page.waitForTimeout(50);assert.equal(calls.length,1);
+ assert.doesNotMatch(await page.locator('body').innerText(),/opaque-state|private-code/);await page.getByRole('button',{name:'Messages',exact:true}).click();await page.waitForTimeout(50);assert.equal(calls.length,1);
 });
 test('Google OAuth return without session explains recovery and never posts code',async t=>{
  const {page,calls}=await fixture(t,{signedIn:false});await page.goto(baseURL+'/integrations/google/complete#state=opaque-state&code=private-code');
@@ -37,7 +37,7 @@ test('Google reconnect fixture keeps selected resource identity and explains sam
  const {page,calls}=await fixture(t);const resource={id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',provider:'google-drive',name:'Existing sync',status:'reauthorization_required'};
  await page.route('**/api/account',r=>r.fulfill({json:{account:{id:owner,handle:'river'},collections:[],messages:[],contacts:[],resources:[resource],rules:[],grants:[]}}));
  await page.route('https://accounts.google.com/**',r=>r.fulfill({contentType:'text/html',body:'<h1>Google reconnect fixture</h1>'}));
- await page.goto(baseURL);await page.locator('.app-shell').waitFor();await page.getByRole('button',{name:'Resources',exact:true}).click();
+ await page.goto(baseURL+'/console');await page.locator('.app-shell').waitFor();await page.getByRole('button',{name:'Resources',exact:true}).click();
  assert.equal(await page.getByRole('button',{name:'Verify connection',exact:true}).count(),0);await page.getByRole('button',{name:'Reconnect Google Drive',exact:true}).click();
  await page.getByText('Authorize the same Google account to preserve this resource, its dedicated folder and its file mappings.',{exact:true}).waitFor();assert.equal(await page.getByLabel('Connection name',{exact:true}).inputValue(),'Existing sync');
  await page.getByRole('button',{name:'Authorize with Google',exact:true}).click();await page.getByRole('heading',{name:'Google reconnect fixture',exact:true}).waitFor();assert.deepEqual(calls[0].body,{name:'Existing sync',resourceId:resource.id});

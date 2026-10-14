@@ -1,6 +1,6 @@
 # Bindle protocol v0 — normative draft
 
-Bindle v0 is an open specification draft, not a deployed interoperability standard. Example canonical URLs under `https://spec.bindle.example/` are placeholders, not live authorities. MUST/SHOULD/MAY express draft requirements. The [OAuth and RPC wire profile](federation-implementation.md) describes the current runtime. Canonical contract candidates are under https://3sln.me/artefacts/contracts/; publication and external-provider compatibility are separate concerns.
+Bindle v0 is an open specification draft, not a deployed interoperability standard. Example canonical URLs under `https://spec.bindle.example/` are placeholders, not live authorities. MUST/SHOULD/MAY express draft requirements. The [OAuth and RPC wire profile](federation-implementation.md) describes the current runtime. The [contract registry](/artefacts/contracts/) links the published draft JSON definitions and a [machine-readable index](/artefacts/contracts/index.json). Canonical contract identifiers return those JSON definitions directly; publication does not imply external-provider compatibility.
 
 ## 1. Model and custody
 

@@ -15,6 +15,9 @@ test.before(async()=>{
 test.after(async()=>{await browser?.close();});
 async function setup(t){
   const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,extraHTTPHeaders:{'CF-Connecting-IP':process.env.E2E_CLIENT_IP||`198.51.100.${Math.floor(Math.random()*200)+20}`}});t.after(async()=>{for(const page of context.pages()){const alerts=await page.locator('[role=alert]').allTextContents().catch(()=>[]);if(alerts.length)console.log('Browser alerts:',alerts.join(' | '));}await context.close();});
+  // Observe the closed renderer only in this controlled browser fixture.
+  // Production author content receives neither this reference nor script access.
+  await context.addInitScript(()=>{const attach=Element.prototype.attachShadow;Element.prototype.attachShadow=function(options){const root=attach.call(this,options);window.__fixtureMessageShadow=root;return root;};});
   const page=await context.newPage();page.setDefaultTimeout(12000);page.on('pageerror',error=>console.log('Browser runtime:',error.message));
   await page.route('https://challenges.cloudflare.com/**',route=>route.abort());
   await page.route('**/api/auth/**',async route=>{
@@ -22,7 +25,7 @@ async function setup(t){
     const body=request.postDataJSON();if(Object.hasOwn(body,'turnstileToken'))body.turnstileToken='local-browser-test-token';
     return route.continue({postData:JSON.stringify(body)});
   });
-  await waitForApp(page);return {page,context};
+  await waitForApp(page);await page.getByRole('button',{name:'Create a 3sln.me account',exact:true}).click();return {page,context};
 }
 const recoveryAnswer='Private browser recovery phrase 2026!';
 function assertAssignedIdentity(account){
@@ -43,7 +46,7 @@ async function finishRecoveryDownload(page){
   await page.getByRole('button',{name:'Test unlock',exact:true}).click();
   await page.getByRole('heading',{name:'Your way back in is ready.'}).waitFor();
   await page.getByLabel('I saved my recovery file in a safe place.').check();await page.getByRole('button',{name:'Open my space',exact:true}).click();
-  await page.getByRole('heading',{name:'A quieter inbox.'}).waitFor();return recovery;
+  await page.getByRole('heading',{name:'Messages & conversations'}).waitFor();return recovery;
 }
 async function ownerAPI(page,path,body,method='POST'){
   return page.evaluate(async({path,body,method})=>{
@@ -62,7 +65,7 @@ test('real passkey signup, confirmation gate, sign out and assertion login',asyn
   await finishRecoveryDownload(page);await screenshot(page,'live-passkey-inbox-desktop');
   const assigned=(await (await context.request.get(`${baseURL}/api/session`)).json()).account;assertAssignedIdentity(assigned);const handle=assigned.handle;
   await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.getByLabel('Your handle').fill(handle);
-  await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();await page.getByRole('heading',{name:'A quieter inbox.'}).waitFor();
+  await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();await page.getByRole('heading',{name:'Messages & conversations'}).waitFor();
   const session=await (await context.request.get(`${baseURL}/api/session`)).json();assert.equal(session.account.handle,handle);assert.equal(session.account.id,assigned.id);assert.equal(session.account.passkeyCount,1);
   const cookies=await context.cookies();assert.ok(cookies.some(c=>c.httpOnly&&c.sameSite==='Strict'));
   await page.getByRole('button',{name:'Contact links',exact:true}).click();await page.getByRole('button',{name:'New contact link',exact:true}).click();
@@ -72,7 +75,7 @@ test('real passkey signup, confirmation gate, sign out and assertion login',asyn
   await page.getByRole('button',{name:'Resources',exact:true}).click();await screenshot(page,'live-resources-desktop');
   await page.getByRole('button',{name:'Account & security',exact:true}).click();await screenshot(page,'live-security-desktop');
   await page.setViewportSize({width:390,height:844});await screenshot(page,'live-security-mobile');
-  const tvContext=await browser.newContext({viewport:{width:1440,height:1000},extraHTTPHeaders:{'CF-Connecting-IP':'198.51.100.222'}});t.after(()=>tvContext.close());const tv=await tvContext.newPage();tv.setDefaultTimeout(15000);await tv.goto(baseURL+'/?signin');const created=tv.waitForResponse(response=>response.url().endsWith('/api/auth/device/start'));await tv.getByRole('button',{name:'Use phone / TV QR',exact:true}).click();const device=await(await created).json();await tv.getByRole('heading',{name:'A new screen. The same you.',exact:true}).waitFor();assert.equal(await tv.getByRole('button',{name:'Show device QR',exact:true}).count(),0);await tv.locator('.device-qr').waitFor();assert.equal((await(await tvContext.request.get(baseURL+'/api/session')).json()).authenticated,false);await screenshot(tv,'live-automatic-tv-qr');
+  const tvContext=await browser.newContext({viewport:{width:1440,height:1000},extraHTTPHeaders:{'CF-Connecting-IP':'198.51.100.222'}});t.after(()=>tvContext.close());const tv=await tvContext.newPage();tv.setDefaultTimeout(15000);await tv.goto(baseURL+'/console?signin');const created=tv.waitForResponse(response=>response.url().endsWith('/api/auth/device/start'));await tv.getByRole('button',{name:'Use phone / TV QR',exact:true}).click();const device=await(await created).json();await tv.getByRole('heading',{name:'A new screen. The same you.',exact:true}).waitFor();assert.equal(await tv.getByRole('button',{name:'Show device QR',exact:true}).count(),0);await tv.locator('.device-qr').waitFor();assert.equal((await(await tvContext.request.get(baseURL+'/api/session')).json()).authenticated,false);await screenshot(tv,'live-automatic-tv-qr');
   await page.goto(device.verificationUriComplete);await page.getByLabel('Type the code shown on the requesting screen',{exact:true}).fill(device.userCode);await page.getByRole('checkbox',{name:'I compared the codes and want this device to access my account.',exact:true}).check();await page.getByRole('button',{name:'Approve this device',exact:true}).click();await page.getByRole('heading',{name:'Device approved.',exact:true}).waitFor();await tv.locator('.app-shell').waitFor();assert.equal((await(await tvContext.request.get(baseURL+'/api/session')).json()).account.id,assigned.id);await screenshot(tv,'live-automatic-tv-approved');
 
 });
@@ -96,7 +99,7 @@ test('real password setup resumes, recovery rotates, contacts constrain messages
   const replay=replayPage.waitForResponse(response=>response.url().endsWith('/api/auth/recover'));await replayPage.getByRole('button',{name:'Unlock recovery file',exact:true}).click();assert.equal((await replay).status(),401,'consumed recovery file cannot be reused');await replayPage.close();
   await page.getByRole('button',{name:'Resources',exact:true}).click();await screenshot(page,'live-resources-desktop');
   await page.getByRole('button',{name:'Notifications',exact:true}).click();await screenshot(page,'live-notifications-desktop');
-  await page.getByRole('button',{name:'Inbox',exact:true}).first().click();
+  await page.getByRole('button',{name:'Messages',exact:true}).first().click();
   const account=await ownerAPI(page,'/api/account',null,'GET');assert.equal(account.cache,'no-store');
   const collection=account.body.collections[0].id;
   const contact=await ownerAPI(page,'/api/contacts',{name:'Adversarial test',collections:[collection],mimeTypes:['text/html'],expiresAt:Date.now()+3600000,maxMessages:1,maxMessageBytes:65536,maxBytes:65536});assert.equal(contact.status,200);
@@ -106,14 +109,16 @@ test('real password setup resumes, recovery rotates, contacts constrain messages
   const sharedProfile=await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-profile+json'}});assert.equal(sharedProfile.status(),200);assert.deepEqual((await sharedProfile.json()).profile,{displayName:'Actual scoped recipient'});
   await page.goto(share.href);await page.getByRole('heading',{name:'Send a message to Actual scoped recipient.',exact:true}).waitFor();assert.equal(await page.locator('.contact-profile-bio').count(),0);assert.equal(await page.getByRole('link',{name:'View shared avatar',exact:true}).count(),0);assert.equal(new URL(page.url()).search,'');await screenshot(page,'live-contact-scoped-profile');
   assert.equal((await ownerAPI(page,'/api/profile',{displayName:'Actual scoped recipient',bio:'Private biography',avatar:'https://images.example/private.png',discloseToContacts:false},'PUT')).status,200);
-  const disabledProfile=await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-profile+json'}});assert.equal((await disabledProfile.json()).profile,null);await page.goto(share.href);await page.getByRole('button',{name:'Send message',exact:true}).waitFor();assert.equal(await page.locator('.contact-recipient-profile').count(),0);await page.goto(baseURL);await page.getByRole('button',{name:'Inbox',exact:true}).first().waitFor();
+  const disabledProfile=await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-profile+json'}});assert.equal((await disabledProfile.json()).profile,null);await page.goto(share.href);await page.getByRole('button',{name:'Send message',exact:true}).waitFor();assert.equal(await page.locator('.contact-recipient-profile').count(),0);await page.goto(baseURL+'/console');await page.getByRole('button',{name:'Messages',exact:true}).first().waitFor();
   const send=async(body)=>{const response=await context.request.post(`${baseURL}/api/messages`,{headers:{Authorization:`Bearer ${token}`},data:body});return {status:response.status(),body:await response.json()};};
   const input={collection,mimeType:'text/html',text:'<h1>Safe heading</h1><img src="https://leak.example/pixel"><script>parent.__messageExecuted=true</script>',idempotencyKey:'browser-real-message'};
   assert.equal((await send({...input,mimeType:'image/png'})).status,403);
   const accepted=await send(input);assert.equal(accepted.status,202);assert.equal((await send(input)).body.id,accepted.body.id);
   assert.equal((await send({...input,idempotencyKey:'over-quota'})).status,429);
   await page.reload();await page.getByRole('button',{name:/New message/}).click();
-  const frame=page.locator('iframe[title]');await frame.waitFor();assert.equal(await frame.getAttribute('sandbox'),'');await page.frameLocator('iframe[title]').getByRole('heading',{name:'Safe heading'}).waitFor();
+  const frame=page.locator('iframe[title]');await frame.waitFor();assert.equal(await frame.getAttribute('sandbox'),'allow-scripts');
+  const child=await (await frame.elementHandle()).contentFrame();await child.waitForFunction(()=>window.__fixtureMessageShadow?.querySelector('h1')?.textContent==='Safe heading');
+  assert.equal(await child.evaluate(()=>document.querySelector('iframe,form')!==null),false);
   assert.equal(await page.evaluate(()=>Boolean(window.__messageExecuted)),false);await screenshot(page,'live-inert-message-desktop');
   await ownerAPI(page,`/api/contacts/${contact.body.id}`,{},'DELETE');assert.notEqual((await send(input)).status,202);
   const urls=await publicAssetCache(page);assert.ok(urls.every(url=>!new URL(url).pathname.startsWith('/api/')));

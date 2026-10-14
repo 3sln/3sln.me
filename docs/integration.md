@@ -18,13 +18,17 @@ Failed discovery must not downgrade identity. Only definitive absent manifests (
 
 ## Resources and contracts
 
-Resources have identifiers and exact contract URLs; a display name is not conformance. Apps request field and resource-method scopes, users explicitly approve, and every operation checks live grants/current assignments. Adding a resource does not silently extend an app's access. The proposed object storage contract lives at `/artefacts/contracts/object-storage/v1` with JSON and human representations. It remains a versioned draft until the release gates are complete.
+Resources have identifiers and exact contract URLs; a display name is not conformance. Apps request field and resource-method scopes, users explicitly approve, and every operation checks live grants/current assignments. Adding a resource does not silently extend an app's access. Browse the [contract registry](/artefacts/contracts/) for direct JSON definitions. The object storage contract identifier `/artefacts/contracts/object-storage/v1` returns its [JSON Schema](/artefacts/contracts/object-storage/v1.json); usage documentation remains separate. It remains a versioned draft until the release gates are complete.
 
 Storage capabilities describe read/write/range/presigning support. Object listing is absent; apps maintain directory/index objects. Do not assume every Google Drive, WebDAV or S3-compatible connection supports safe conditional writes. Object URLs are bearer capabilities for one object and operation. The result reports mode and revocation: native provider URLs can remain valid until expiry after grant revocation, while provider-proxy URLs perform live grant checks. Users approve temporary-link powers explicitly; callers must send the returned requiredHeaders and must not infer revocation behavior from the storage provider name.
 
 ## Contact endpoints
 
-The primary shared contact capability is a signed endpoint URL. HTML GET opens the host's composer, a token MIME Accept header yields a short-lived API bearer, and intentional multipart POST to the signed URL delivers a message. Signed URLs and returned bearers need safe handling and log redaction. Collection and MIME/size/count limits are live, revocable and separate from permission to read messages. Subject/tags from a sender are untrusted annotations, distinct from owner classification.
+The primary shared contact capability is a signed endpoint URL. HTML GET opens the host's composer, a token MIME Accept header yields a short-lived API bearer, and intentional multipart POST to the signed URL delivers a message. Signed URLs and returned bearers need safe handling and log redaction. MIME/size/count limits are live, revocable and separate from permission to read messages. New endpoints automatically add their signed required tags and allow only their signed optional tag choices. Raw sender annotations grant no authority. Legacy collection restrictions remain enforced for compatibility; they are not configurable Views.
+
+## Messages, conversations and Views
+
+The user-facing model is one logical store of messages and conversations. Saved Views filter that store by metadata; an item can appear in multiple Views without duplicate storage. Renaming or deleting a View does not modify retained messages. Views never determine app permissions, and changing their filters cannot expand a resource grant. The owner-facing `/api/views` and `/api/incoming` implementation is separate from the existing scoped app/MCP APIs; it is not yet a new published Bindle RPC contract. See [messaging](spec/messaging.md) for the implemented boundary.
 
 ## Self-hosting and extension
 

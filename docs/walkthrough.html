@@ -171,6 +171,35 @@
 <p><img src="walkthrough-assets/live-portal-signup-dark-320.png" alt="Published signup on a small screen"></p>
 <p><img src="walkthrough-assets/live-portal-device-check.png" alt="Production device flow waiting for its security check"></p>
 <p>The production headless device probe remained at the security check and was cancelled through the UI; no device-start response or phone approval was observed. It therefore establishes the waiting/cancel interface rather than a positive production QR/login. Automatic QR and explicit approval are established by the actual localWorker screenshots/tests above. No security check was bypassed.</p>
+<h2>35. Static landing, Views, and signup capacity</h2>
+<p>These screenshots are controlled local browser evidence from the earlier frozen build <code>78d5a3e3962dc93ac21b</code>, before the rich-message renderer work. They are not production screenshots. The landing is an immediately rendered static document; authenticated functionality lives at <code>/console</code>. Public docs contain curated integration material and a registry linking to actual machine-readable definitions.</p>
+<p><img src="walkthrough-assets/static-landing-en-1440.png" alt="Static landing on desktop"></p>
+<p><img src="walkthrough-assets/static-landing-es-320.png" alt="Spanish static landing on a small screen"></p>
+<p>Messages share one stream. Saved Views filter it by tags/read state rather than creating separate inbox containers.</p>
+<p><img src="walkthrough-assets/message-views-390.png" alt="Saved message Views"></p>
+<p><img src="walkthrough-assets/message-views-es-390.png" alt="Spanish message Views"></p>
+<p>When free signup capacity is exhausted, the app can offer verified paid signup or an email-confirmed waitlist. The backend independently enforces capacity. An uncertain checkout stays uncertain; returning from checkout is not payment proof. These fixtures do not create a real subscription or send production mail.</p>
+<p><img src="walkthrough-assets/paid-signup-plans-390.png" alt="Paid signup plan choices"></p>
+<p><img src="walkthrough-assets/paid-signup-checkout-unknown-390.png" alt="Uncertain checkout with explicit retry guidance"></p>
+<p><img src="walkthrough-assets/waitlist-confirmed.png" alt="Confirmed waitlist"></p>
+<h2>36. App messages, reviewed submissions, and motion controls</h2>
+<p>These are local Chrome screenshots of frozen build <code>d089927129d93a7c490a</code>, not production evidence. The actual Worker fixture connects a registered app through explicit Messages consent, delivers HTML through the SDK, and mounts its isolated reader. The app&#39;s verified origin stays visible; disconnecting or disabling message permission fences later delivery.</p>
+<p><img src="walkthrough-assets/worker-app-message-rich-frame.png" alt="An app message in the console"></p>
+<p><img src="walkthrough-assets/app-notifications-disabled.png" alt="App message permission disabled"></p>
+<p>Form submission requires foreground review of the destination and fields. The following Node fixtures use real account authentication and the prepare/dispatch/history paths, with a controlled external transport; they do not establish live third-party delivery. The service worker is disabled in these fixtures.</p>
+<p><img src="walkthrough-assets/message-submission-review.png" alt="Reviewing a message form submission"></p>
+<p><img src="walkthrough-assets/message-status-links.png" alt="Submission status with reviewed navigation links"></p>
+<p>HTML postbacks retain the original and previous states. A lost response remains uncertain and cannot automatically resend the form. Fetched HTML opening in a separate tab is deferred; normal safe links and reviewed redirect links remain available.</p>
+<p><img src="walkthrough-assets/message-postback-history.png" alt="Postback history and original message"></p>
+<p><img src="walkthrough-assets/message-submission-unknown.png" alt="An uncertain submission"></p>
+<p>Message animations start enabled, respect reduced motion, and have a finite display budget. The local preference disables them and survives language changes. External animated media is currently blocked rather than claimed as fully controlled.</p>
+<p><img src="walkthrough-assets/app-message-animation-preferences-es.png" alt="Spanish message animation preference"></p>
+<p>Verification for this frozen build: core802/802 (including12 unrelated lifecycle draft tests), Worker46/46, UI state109/109, main browser76/76 and separate federation4/4. Independent motion, credentialless broker, and submission/history checks passed. This evidence does not claim open production federation, complete account deletion, or a deployed contact-delivery v2 protocol.</p>
+<h2>37. Private-host onboarding and generated badges</h2>
+<p>These two screenshots are actual Chrome rendering of source fixtures with all requests intercepted under reserved <code>.example</code> hosts. They use the current stylesheet and portal components, with synthetic identities and no real delivery services. They are UI evidence, not production screenshots. Separate actual Worker integration verifies issuance, per-name admission, recovery activation and alias sign-in while public signup remains closed.</p>
+<p>A private invitation reveals only its permitted available names. The URL fragment is scrubbed before the portal loads; previews and GETs cannot claim a name.</p>
+<p><img src="walkthrough-assets/private-onboarding-names.png" alt="Choosing an invited name"></p>
+<p>The host provides badge names, descriptions and SVG blocks. The app generates a cached sprite; identity properties or an injected resolver select its symbols. Labels and descriptions remain accessible, and badges do not change authority.</p>
+<p><img src="walkthrough-assets/host-badges-console.png" alt="Local host badge in the account screen"></p>
+<p>The pictured badge and identity are synthetic. Definitions and resolver hooks are host-owned; an identity cannot submit SVG or a badge URL. The first SVG profile supports static primitive shapes and deliberately refuses gradients, author references, CSS, animation and active/external content.</p>
 </main>
-</body>
-</html>

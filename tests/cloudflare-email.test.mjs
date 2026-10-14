@@ -181,3 +181,26 @@ test('signup codes use the verified sender and reject malformed proof envelopes 
 test('unpaid suspension and deletion notices have bounded countdowns and preserve external-storage distinction',async()=>{const {transport,sent}=fixture();await transport.sendAccountNotice({email,type:'suspension-warning',days:7});await transport.sendAccountNotice({email,type:'deletion-warning',days:30});assert.equal(sent[0].from,'accounts@sys.3sln.me');assert.match(sent[0].subject,/Action required.*suspended in 7 days/);assert.match(sent[1].subject,/Action required.*deleted in 30 days/);assert.match(sent[1].text,/external storage providers will not be deleted/);for(const days of [0,-1,1.5,3651,'7'])await assert.rejects(async()=>transport.sendAccountNotice({email,type:'suspension-warning',days}),/Invalid account notice deadline/);assert.equal(sent.length,2);});
 
 test('setup email uses the shared Bab catalogue for the requested supported language',async()=>{const {transport,sent}=fixture();await transport.sendSetupCode({email,code:'01234567',issuer:origin,locale:'es'});assert.match(sent[0].subject,/Confirma/);assert.match(sent[0].text,/01234567/);assert.doesNotMatch(sent[0].text,/Your verification code/);});
+
+test('waitlist confirmation mail uses the registered verification sender, Bab locale and explicit opt-in fragment', async () => {
+  const {transport,sent}=fixture();
+  for(const locale of ['en','es']){
+    await transport.sendWaitlistConfirmation({email,token,issuer:origin,locale});
+    const message=sent.at(-1);assert.equal(message.from,'verify@sys.3sln.me');assert.equal(message.to,email);
+    const url=new URL(message.text.split('\n').find(line=>line.startsWith('https://')));
+    assert.equal(url.origin,origin);assert.equal(url.pathname,'/waitlist/confirm');assert.equal(url.search,'');
+    assert.equal(new URLSearchParams(url.hash.slice(1)).get('token'),token);
+    assert.match(message.subject,locale==='es'?/Confirma tu solicitud/:/Confirm your/);
+    assert.match(message.text,locale==='es'?/no crea una cuenta ni reserva una plaza/:/does not create an account or reserve a place/);
+    assert.match(message.text,locale==='es'?/diez minutos/:/ten minutes/);
+    assert.match(message.html,/waitlist\/confirm#token=/);assert.equal(message.headers,undefined);
+  }
+});
+
+test('waitlist mail rejects alternate issuers, header injection and unsupported locales before sending', async () => {
+  const {transport,sent}=fixture();
+  for(const override of [{issuer:'https://other.example'},{token:'bad\r\nHeader: yes'},{email:'recipient@inbox.example\r\nInjected: yes'},{locale:'unsupported'}]){
+    await assert.rejects(transport.sendWaitlistConfirmation({email,token,issuer:origin,...override}));
+  }
+  assert.equal(sent.length,0);
+});

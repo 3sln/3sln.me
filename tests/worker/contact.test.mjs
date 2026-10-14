@@ -16,7 +16,7 @@ async function contact(extra={}){
  assert.equal(response.status,200,await response.clone().text());return response.json();
 }
 async function mint(url,headers={}){return h.mf.dispatchFetch(url,{headers:{Accept:TOKEN_MIME,'CF-Connecting-IP':`203.0.113.${network++}`,...headers}});}
-function form(extra={}){const result=new FormData();for(const [k,v]of Object.entries({collection,mimeType:'text/plain',idempotencyKey:crypto.randomUUID(),subject:'<img src=x onerror=alert(1)>',tags:JSON.stringify(['owner-looking-tag']),...extra}))result.append(k,v);result.append('message',new Blob(['Hello from a sender'],{type:'text/plain'}),'hello.txt');return result;}
+function form(extra={}){const result=new FormData();for(const [k,v]of Object.entries({collection,mimeType:'text/plain',idempotencyKey:crypto.randomUUID(),subject:'<img src=x onerror=alert(1)>',tags:JSON.stringify([]),...extra}))result.append(k,v);result.append('message',new Blob(['Hello from a sender'],{type:'text/plain'}),'hello.txt');return result;}
 // Miniflare/Undici can reuse a socket while workerd cancels an oversized body.
 // Close only those deliberate overflow uploads; do not retry application failures.
 async function send(url,body=form(),headers={}){const encoded=new Request(url,{method:'POST',body});const bytes=await encoded.arrayBuffer();return h.mf.dispatchFetch(url,{method:'POST',body:bytes,headers:{'Content-Type':encoded.headers.get('Content-Type'),'CF-Connecting-IP':`192.0.2.${network++}`,...(bytes.byteLength>1500000?{Connection:'close'}:{}),...headers}});}
@@ -59,12 +59,13 @@ test('Worker binds signed URL to path, recipient, issuer and unambiguous query',
 });
 
 test('Worker multipart and bare bearer share quotas and idempotency; sender metadata cannot set owner state',async()=>{
- const issued=await contact({maxMessages:2});const token=await (await mint(issued.url)).text();const idem=crypto.randomUUID();
- const accepted=await send(issued.url,form({idempotencyKey:idem}));assert.equal(accepted.status,202,await accepted.clone().text());const result=await accepted.json();
- const replay=await send(issued.url,form({idempotencyKey:idem}));assert.equal(replay.status,202);assert.equal((await replay.json()).id,result.id);
+ const issued=await contact({maxMessages:2,requiredTags:['contact-source'],optionalTags:['topic']});const token=await (await mint(issued.url)).text();const idem=crypto.randomUUID();
+ const forbidden=await send(issued.url,form({tags:JSON.stringify(['owner-looking-tag'])}));assert.equal(forbidden.status,400);assert.equal((await forbidden.json()).error,'forbidden_tags');
+ const accepted=await send(issued.url,form({idempotencyKey:idem,tags:JSON.stringify(['topic'])}));assert.equal(accepted.status,202,await accepted.clone().text());const result=await accepted.json();
+ const replay=await send(issued.url,form({idempotencyKey:idem,tags:JSON.stringify(['topic'])}));assert.equal(replay.status,202);assert.equal((await replay.json()).id,result.id);
  const bare=await h.request('/api/messages',{method:'POST',headers:{Authorization:`Bearer ${token}`,'CF-Connecting-IP':'198.51.100.1'},value:{collection,mimeType:'text/plain',text:'Bare token message',idempotencyKey:crypto.randomUUID()}});assert.equal(bare.status,202,await bare.clone().text());
  assert.equal((await send(issued.url)).status,429);
- const rows=new Map(await object.rows());const record=rows.get(`message/${owner.result.account.id}/${result.id}/`);assert.deepEqual(record.tags,[]);assert.equal(record.classification,'unclassified');assert.equal(record.readAt,null);assert.deepEqual(record.senderMetadata,{subject:'<img src=x onerror=alert(1)>',tags:['owner-looking-tag']});assert.equal(record.bytes,undefined);assert.equal(typeof record.blobRef,'string');
+ const rows=new Map(await object.rows());const record=rows.get(`message/${owner.result.account.id}/${result.id}/`);assert.deepEqual(record.tags,['contact-source','topic']);assert.deepEqual(record.deliveryTags,['contact-source','topic']);assert.equal(record.classification,'unclassified');assert.equal(record.readAt,null);assert.deepEqual(record.senderMetadata,{subject:'<img src=x onerror=alert(1)>',tags:['topic']});assert.equal(record.bytes,undefined);assert.equal(typeof record.blobRef,'string');
  assert.equal(rows.get(`contact-grant/${issued.id}/`).messagesUsed,2);
 });
 

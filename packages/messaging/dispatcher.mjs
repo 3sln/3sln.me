@@ -1,8 +1,8 @@
 // Transport policy stays independent of Workers and browser push.
 // Delivery resources receive stable attempt keys; provider deduplication is
 // optional, so ambiguous transport failures can still produce duplicates.
-// Generic content avoids
-// leaking sender/body information onto lock screens or forwarded email.
+// Push previews require owner opt-in; email content remains generic.
+// Preview withdrawal is checked again before each claimed push delivery.
 export class NotificationDispatcher {
  constructor({notifications,push,email,recipient,payloads}){if(email&&!payloads?.getOrCreate)throw new TypeError('Email delivery requires durable, encrypted retry payloads.');Object.assign(this,{notifications,push,email,recipient,payloads});}
  async dispatch(owner){

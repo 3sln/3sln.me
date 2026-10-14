@@ -30,9 +30,9 @@ export class ContactEndpointService {
     this.tokens = tokens; this.signer = signer;
     const { store, issuer, crypto, clock } = tokens; Object.assign(this, { store, issuer, crypto, clock });
   }
-  async create(owner, { handle, ...options }) {
+  async create(owner, { handle, ...options },internal) {
     if (typeof handle !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(handle)) fail('invalid_handle');
-    const issued = await this.tokens.createGrant(owner, options);
+    const issued = await this.tokens.createGrant(owner, options,internal);
     const grant = issued.grant;
     const endpoint = `${this.issuer}/users/${encodeURIComponent(handle)}/contact/${encodeURIComponent(grant.id)}`;
     const header = { ...grant.header, typ: ENDPOINT_TYPE };
@@ -42,8 +42,8 @@ export class ContactEndpointService {
     const url = `${endpoint}?sig=${signature}`;
     return this.store.transaction(async tx => {
       const current = await this.tokens.live(tx, { header: issued.protectedHeader, claims: issued.claims });
-      current.endpoint = { url: endpoint, header, claims };
-      current.quarantined = false;
+      if(current.endpoint){if(canonical(current.endpoint)!==canonical({url:endpoint,header,claims}))fail('invalid_grant_metadata');}
+      else {current.endpoint = { url: endpoint, header, claims };current.quarantined = false;}
       await tx.set(key('contact-grant', grant.id), current);
       return { grant: current, url, endpoint };
     });

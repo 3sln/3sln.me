@@ -70,7 +70,7 @@ export class MessageReceiptBudget{
  }
  async status(owner){return this.metadata.transaction(async tx=>{const {now,stored,plan,limits}=await this.context(tx,owner);return {enabled:true,plan,unit:'admitted-new-message-attempts',window:'fixed-utc',windows:report(currentWindows(stored?.windows,now),limits.owner,now),contactLimits:structuredClone(limits.contact)};});}
  async admit(owner,{parent,bytes,source='contact'}={}){
-  if(!['contact','conversation'].includes(source)||source==='conversation'&&parent!==undefined)fail('invalid_message','Invalid receipt source.',400);
+  if(!['contact','conversation','app-notification'].includes(source)||source!=='contact'&&parent!==undefined)fail('invalid_message','Invalid receipt source.',400);
   if(!integer(bytes)||bytes>maxMessageBytes)fail('invalid_message','Messages are limited to one MiB.',400);
   return this.metadata.transaction(async tx=>{
    const {now,stored,plan,limits}=await this.context(tx,owner);if(source==='contact')await this.parent(tx,owner,parent,now);

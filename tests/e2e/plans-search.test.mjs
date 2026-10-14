@@ -20,7 +20,7 @@ async function fixture(t,{locale='en',billing={plan:'free',enabled:false,configu
  await page.route('**/api/session',route=>route.fulfill({json:{account,csrfToken:'fixture-csrf'}}));
  await page.route('**/api/account',route=>route.fulfill({json:{account,storage:{...storage,...storageOverride},collections:[{id:'inbox',name:'Inbox'}],messages:[],contacts:[],resources:[],rules:[],grants:[]}}));
  await page.route('**/api/billing*',route=>route.fulfill({json:billing}));
- await page.goto(baseURL);await page.locator('.app-shell').waitFor();return {page,context};
+ await page.goto(baseURL+'/console');await page.locator('.app-shell').waitFor();return {page,context};
 }
 test('localized storage meter and annual plan cards disable checkout without configuration and fit mobile',async t=>{
  const {page}=await fixture(t,{locale:'es',storageOverride:{writeOperations:{enabled:true,period:'rolling-day',used:125,limit:1000,hourUsed:20,hourLimit:500}}});let checkout=0;await page.route('**/api/billing/checkout',route=>{checkout++;return route.fulfill({status:503,json:{message:'unavailable'}});});

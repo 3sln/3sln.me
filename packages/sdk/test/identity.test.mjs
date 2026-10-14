@@ -69,3 +69,21 @@ test('failed or grant-expanding renewal requires new login without replaying a r
 test('renewal tolerates response transit delay while keeping the original absolute deadline',async()=>{const f=await renewableFixture({onRefresh:async({access,time})=>{const token=access();time.now+=12000;return reply(token);}}),deadline=f.client.session.refreshExpiresAt;await f.client.refresh();assert.equal(f.client.session.refreshExpiresAt,deadline);assert.ok(f.client.session.expiresAt<=deadline);});
 test('an old renewal cannot wipe a newer completed login',async()=>{let release;const held=new Promise(resolve=>release=resolve);const f=await renewableFixture({onRefresh:async({access})=>{await held;return reply(access());}}),pending=f.client.refresh();f.client.storage.setItem('bindle.pending-login',JSON.stringify({state:'new',verifier:'v'.repeat(43),issuer:manifest.issuer,tokenEndpoint:manifest.token_endpoint,rpcEndpoint:manifest.rpc_endpoint,preferencesContract:manifest.preferences_contract,clientId:'app',redirectUri:f.client.redirectUri,expiresAt:600000}));const newer=await f.client.completeLogin('https://app.example/callback?state=new&iss=https%3A%2F%2Fself.example&code='+'d'.repeat(43));release();await assert.rejects(pending,/canceled/);assert.equal(f.client.session,newer);});
 test('RPC write-rate faults expose validated retry metadata without retrying the mutation',async()=>{const {client}=await renewableFixture();let calls=0;client.fetcher=async(url,options)=>{calls++;const input=JSON.parse(options.body);return reply({version:'0',tx:input.tx,error:{code:'rate_limit',message:'Storage writes are arriving too quickly. Try again shortly.',retryAfter:60}});};await assert.rejects(client.rpc({resource:'resource',contract:'https://storage.example/v1',method:'put'}),error=>error.code==='rate_limit'&&error.retryAfter===60);assert.equal(calls,1);});
+
+test('userMessage binds native browser origin to the registered callback and keeps transaction identity exact',async()=>{
+ const prior=Object.getOwnPropertyDescriptor(globalThis,'window');let calls=[];
+ try{
+  Object.defineProperty(globalThis,'window',{configurable:true,value:{origin:'https://wrong.example',location:{origin:'https://wrong.example'}}});
+  const client=new BindleClient({clientId:'https://registry.example/apps/notes',redirectUri:'https://notes.example/callback',storage:storage()});
+  client.callResource=async(reference,call,options)=>{calls.push({reference,call,options});return {result:{accepted:true}};};
+  const ref={id:'https://self.example/resource',token:'scoped'};
+  await assert.rejects(client.userMessage(ref,{subject:'Reminder',body:'Plain text'}),/registered app origin/);assert.equal(calls.length,0);
+  window.location.origin='https://notes.example';window.origin='null';await assert.rejects(client.userMessage(ref,{subject:'Opaque frame',body:'No write'}),/registered app origin/);window.origin='https://notes.example';const tx='10000000-0000-4000-8000-000000000001';
+  await client.userMessage(ref,{subject:'Reminder',body:'<b>literal text</b>',transactionId:tx,createdAt:1000});
+  assert.equal(calls.length,1);assert.equal(calls[0].call.tx,tx);assert.deepEqual(calls[0].call.args,{transactionId:tx,createdAt:1000,subject:'Reminder',mimeType:'text/plain',body:'<b>literal text</b>',tags:[]});assert.equal(calls[0].call.method,'createOwn');
+  for(const value of [{subject:'',body:'ok'},{subject:'x',body:'x'.repeat(12001)},{subject:'x'.repeat(121),body:'x'},{subject:'x',body:'x',transactionId:'not-a-uuid'}])await assert.rejects(client.userMessage(ref,value),/bounded app message/);
+  await assert.rejects(client.userMessage(ref,{subject:'Unsupported',body:'No silent action',actions:[]}),/Unsupported app message fields/);await assert.rejects(client.userMessage(ref,{subject:'Tag spoof',body:'No',tags:['app-message']}),/bounded app message/);
+  assert.equal(calls.length,1);
+  client.callResource=async()=>{throw Error('Network outcome unknown');};const failure=await client.userMessage(ref,{subject:'Retry',body:'Same payload',transactionId:tx,createdAt:1000}).catch(error=>error);assert.equal(failure.transactionId,tx);assert.equal(failure.createdAt,1000);
+ }finally{if(prior)Object.defineProperty(globalThis,'window',prior);else delete globalThis.window;}
+});

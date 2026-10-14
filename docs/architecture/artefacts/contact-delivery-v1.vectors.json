@@ -1,0 +1,54 @@
+{
+  "description": "Public test vector only. Generated test signing key discarded; this is not a deployed identity or currently admissible delivery. Key discovery is assumed by this isolated cryptographic vector, not authenticated by the embedded public key.",
+  "bodyBase64url": "SGVsbG8",
+  "publicJwk": {
+    "kty": "EC",
+    "x": "iTnlRGYb6kN34YzIVHDhiHoo4AhRjPTVQDU6QyDHMNM",
+    "y": "afxXumUWPD-VB95XFeoyT1Mv-t5OAQkCOBr2Jj1lJjA",
+    "crv": "P-256",
+    "kid": "https://sender.example/identity/44444444-4444-4444-8444-444444444444#signing-1",
+    "alg": "ES256",
+    "use": "sig"
+  },
+  "envelope": {
+    "payload": {
+      "version": 1,
+      "kind": "one-off",
+      "noReply": true,
+      "operationId": "11111111-1111-4111-8111-111111111111",
+      "createdAt": 1791979200000,
+      "recipient": {
+        "issuer": "https://recipient.example",
+        "owner": "22222222-2222-4222-8222-222222222222",
+        "contactId": "33333333-3333-4333-8333-333333333333",
+        "resource": "https://recipient.example/entities/22222222-2222-4222-8222-222222222222/contacts/33333333-3333-4333-8333-333333333333"
+      },
+      "content": {
+        "mimeType": "text/plain",
+        "byteLength": 5,
+        "sha256": "GF-NsyJx_iX1Yab8k4suJkMG7DBO2lGAB9F2SCY4GWk"
+      },
+      "subject": "Hello",
+      "optionalTags": [],
+      "author": {
+        "principal": {
+          "issuer": "https://sender.example",
+          "subject": "44444444-4444-4444-8444-444444444444",
+          "identityURI": "https://sender.example/identity/44444444-4444-4444-8444-444444444444"
+        },
+        "identityDocument": "https://sender.example/identity/44444444-4444-4444-8444-444444444444/identity.json",
+        "keyId": "https://sender.example/identity/44444444-4444-4444-8444-444444444444#signing-1"
+      }
+    },
+    "proof": {
+      "alg": "ES256",
+      "kid": "https://sender.example/identity/44444444-4444-4444-8444-444444444444#signing-1",
+      "signature": "L6mOghbvgpZqKZo5d9J96tSkZcOXyvDte9QvKRm9_qmIEljEDl2-W1IvjVWa7P78B5ik9hrLQejUc6V-C5Obtw"
+    }
+  },
+  "resignedSignature": "RRdSMOxT3-AlrMwGG4Ng6nOGZWlQjY4NQslj89Cw8x3_hi7baqiiNAlfN9bFq4fIdZ2avLbgSZ5pQ1mqx_O6TQ",
+  "signedCanonical": "{\"alg\":\"ES256\",\"kid\":\"https://sender.example/identity/44444444-4444-4444-8444-444444444444#signing-1\",\"payload\":{\"author\":{\"identityDocument\":\"https://sender.example/identity/44444444-4444-4444-8444-444444444444/identity.json\",\"keyId\":\"https://sender.example/identity/44444444-4444-4444-8444-444444444444#signing-1\",\"principal\":{\"identityURI\":\"https://sender.example/identity/44444444-4444-4444-8444-444444444444\",\"issuer\":\"https://sender.example\",\"subject\":\"44444444-4444-4444-8444-444444444444\"}},\"content\":{\"byteLength\":5,\"mimeType\":\"text/plain\",\"sha256\":\"GF-NsyJx_iX1Yab8k4suJkMG7DBO2lGAB9F2SCY4GWk\"},\"createdAt\":1791979200000,\"kind\":\"one-off\",\"noReply\":true,\"operationId\":\"11111111-1111-4111-8111-111111111111\",\"optionalTags\":[],\"recipient\":{\"contactId\":\"33333333-3333-4333-8333-333333333333\",\"issuer\":\"https://recipient.example\",\"owner\":\"22222222-2222-4222-8222-222222222222\",\"resource\":\"https://recipient.example/entities/22222222-2222-4222-8222-222222222222/contacts/33333333-3333-4333-8333-333333333333\"},\"subject\":\"Hello\",\"version\":1}}",
+  "semanticCanonical": "{\"payload\":{\"author\":{\"identityDocument\":\"https://sender.example/identity/44444444-4444-4444-8444-444444444444/identity.json\",\"keyId\":\"https://sender.example/identity/44444444-4444-4444-8444-444444444444#signing-1\",\"principal\":{\"identityURI\":\"https://sender.example/identity/44444444-4444-4444-8444-444444444444\",\"issuer\":\"https://sender.example\",\"subject\":\"44444444-4444-4444-8444-444444444444\"}},\"content\":{\"byteLength\":5,\"mimeType\":\"text/plain\",\"sha256\":\"GF-NsyJx_iX1Yab8k4suJkMG7DBO2lGAB9F2SCY4GWk\"},\"createdAt\":1791979200000,\"kind\":\"one-off\",\"noReply\":true,\"operationId\":\"11111111-1111-4111-8111-111111111111\",\"optionalTags\":[],\"recipient\":{\"contactId\":\"33333333-3333-4333-8333-333333333333\",\"issuer\":\"https://recipient.example\",\"owner\":\"22222222-2222-4222-8222-222222222222\",\"resource\":\"https://recipient.example/entities/22222222-2222-4222-8222-222222222222/contacts/33333333-3333-4333-8333-333333333333\"},\"subject\":\"Hello\",\"version\":1},\"proof\":{\"alg\":\"ES256\",\"kid\":\"https://sender.example/identity/44444444-4444-4444-8444-444444444444#signing-1\"}}",
+  "payloadDigest": "gh9nYe6R57ZUOo5UeP4LRCrw_8aVJR1-Boh78JgqXdA",
+  "signedBytesSha256": "xHsk_3BWbDTYzvYV7ibq2MToPyahEJQhoJRylyx7SAE"
+}

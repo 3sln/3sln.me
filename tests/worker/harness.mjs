@@ -25,7 +25,7 @@ export class TestAccount extends AccountObject {
   async restoreCold(owner){await this.warm(owner);return [...await this.ctx.storage.list()];}
   async alarmAt(){return this.ctx.storage.getAlarm();}
 }
-export class TestAbuse extends AbuseGuard {async rows(){return [...await this.ctx.storage.list()];} }
+export class TestAbuse extends AbuseGuard {async rows(){return [...await this.ctx.storage.list()];} async fireAlarm(){await this.ctx.storage.deleteAlarm();await super.alarm();} }
 export class TestFederation extends FederationObject {
  async rows(){return [...await this.ctx.storage.list()];}
  async alarmAt(){return this.ctx.storage.getAlarm();}

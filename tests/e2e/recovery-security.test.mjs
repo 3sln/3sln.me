@@ -86,7 +86,7 @@ test('independent browser audit: repeated submit starts one worker and navigatio
       form.requestSubmit();
       form.requestSubmit();
     });
-    await page.waitForURL(`${baseURL}/?signin`);
+    await page.waitForURL(`${baseURL}/console?signin`);
     await page.locator('.auth-card').waitFor();
     assert.equal(events.filter(event => event === 'audit-worker:created').length, 1);
     assert.equal(await page.evaluate(() => Number(sessionStorage.getItem('audit-worker-terminated') || 0)), 1);

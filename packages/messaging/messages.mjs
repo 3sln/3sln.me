@@ -1,9 +1,10 @@
+import {publicMessageMetadata as metadata} from './message-metadata.mjs';
+import {contactDeliveryTags,validTagList} from './tag-policy.mjs';
 import { fail, key, boundedString, mimeValid, digest, canonical } from './store.mjs';
 import { validateContent } from './content.mjs';
 import { validateSenderMetadata } from './contact-endpoints.mjs';
 
 const classifications = ['unclassified', 'personal', 'work', 'spam', 'automation'];
-const metadata = ({ bytes, blobRef, ...message }) => message;
 const validTags = tags => Array.isArray(tags) && tags.length <= 32 && tags.every(tag => boundedString(tag, 64)) && new Set(tags).size === tags.length;
 const validateActions = actions => {
   if (!actions || typeof actions !== 'object' || Array.isArray(actions) || Object.keys(actions).some(field => !['collection', 'tags', 'classification', 'quarantined', 'read'].includes(field))) fail('invalid_actions');
@@ -38,7 +39,7 @@ export class MessagingService {
     return this.store.transaction(async tx => {
       const ids = new Set();
       for (const rule of rules) {
-        if (!rule || !boundedString(rule.id) || ids.has(rule.id) || typeof rule.enabled !== 'boolean' || !rule.match || typeof rule.match !== 'object' || Array.isArray(rule.match) || Object.keys(rule.match).some(field => !['grantId', 'mimeType', 'collection'].includes(field)) || Object.values(rule.match).some(value => !boundedString(value))) fail('invalid_rules');
+        if (!rule || !boundedString(rule.id) || ids.has(rule.id) || typeof rule.enabled !== 'boolean' || !rule.match || typeof rule.match !== 'object' || Array.isArray(rule.match) || Object.keys(rule.match).some(field => !['grantId', 'mimeType', 'collection','tagsAll'].includes(field)) || Object.entries(rule.match).some(([field,value])=>field==='tagsAll'?(!validTagList(value)||!value.length):!boundedString(value))) fail('invalid_rules');
         validateActions(rule.actions);
         if (Object.hasOwn(rule.actions, 'read')) fail('invalid_rules');
         if (rule.actions.collection && !(await tx.get(key('collection', owner, rule.actions.collection)))?.active) fail('invalid_collection');
@@ -57,17 +58,17 @@ export class MessagingService {
     const fingerprint = await digest(this.crypto, canonical({ collection, mimeType, senderMetadata, digest: await digest(this.crypto, bytes) }));
     return this.store.transaction(async tx => {
       const grant = await this.tokens.live(tx, verified);
-      const owner = grant.owner;
+      const owner = grant.owner,deliveryTags=contactDeliveryTags(grant.claims,senderMetadata.tags);
       if (!grant.claims.collections.includes(collection) || !grant.claims.mimeTypes.includes(mimeType) || !(await tx.get(key('collection', owner, collection)))?.active) fail('forbidden');
       const receiptKey = key('message-receipt', grant.id, idempotencyKey); const prior = await tx.get(receiptKey);
       if (prior) { if (prior.fingerprint !== fingerprint) fail('idempotency_conflict'); return { id: prior.id, accepted: true }; }
       if (bytes.byteLength > grant.claims.maxMessageBytes || grant.messagesUsed + 1 > grant.claims.maxMessages || grant.bytesUsed + bytes.byteLength > grant.claims.maxBytes) fail('quota_exceeded');
       const usage = await tx.get(key('message-usage', owner)) || { bytes: 0, messages: 0 };
       if (usage.bytes + bytes.byteLength > this.maxStoredBytes || usage.messages + 1 > this.maxStoredMessages) fail('account_quota_exceeded');
-      const message = { id: this.crypto.randomUUID(), owner, collection, mimeType, size: bytes.byteLength, bytes, receivedAt: this.clock(), readAt: null, tags: [], classification: 'unclassified', quarantined: Boolean(grant.quarantined), grantId: grant.id, senderMetadata };
-      const original = { collection, mimeType, grantId: grant.id };
+      const message = { id: this.crypto.randomUUID(), owner, collection, mimeType, size: bytes.byteLength, bytes, receivedAt: this.clock(), readAt: null, tags: [...deliveryTags], deliveryTags, classification: 'unclassified', quarantined: Boolean(grant.quarantined), grantId: grant.id, senderMetadata };
+      const original = { collection, mimeType, grantId: grant.id,deliveryTags };
       // Match all rules against original delivery metadata; no accidental rule cascades.
-      for (const rule of await tx.get(key('rules', owner)) || []) if (rule.enabled && Object.entries(rule.match).every(([field, value]) => original[field] === value)) {
+      for (const rule of await tx.get(key('rules', owner)) || []) if (rule.enabled && Object.entries(rule.match).every(([field, value]) => field==='tagsAll'?value.every(tag=>original.deliveryTags.includes(tag)):original[field]===value)) {
         if (rule.actions.collection && !(await tx.get(key('collection', owner, rule.actions.collection)))?.active) continue;
         const quarantine = message.quarantined || Boolean(rule.actions.quarantined);
         Object.assign(message, rule.actions); message.quarantined = quarantine;

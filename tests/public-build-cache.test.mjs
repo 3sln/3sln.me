@@ -9,10 +9,11 @@ import {generateServiceWorker} from '../scripts/build-service-worker.mjs';
 const hash=body=>createHash('sha256').update(body).digest('hex');
 async function fixture(){
  const out=await mkdtemp(join(tmpdir(),'3sln-public-cache-'));await mkdir(join(out,'assets','vendor'),{recursive:true});
- const bodies=new Map([['/assets/main.1234567890.js','import "./other.js";'],['/assets/other.abcdef1234.js','export const value=1;'],['/assets/vendor/chunk-ABCDEFGH.js','export const vendor=true;'],['/assets/recovery.0987654321.js','self.onmessage=()=>{};'],['/assets/app.0123456789.css','body{}'],['/assets/wireup-app.abcde12345.js','document.write("public app");'],['/icon.svg','<svg/>'],['/index.html','<!doctype html><script src="/assets/wireup-app.abcde12345.js"></script>']]);
+ const bodies=new Map([['/assets/main.1234567890.js','import "./other.js";'],['/assets/other.abcdef1234.js','export const value=1;'],['/assets/vendor/chunk-ABCDEFGH.js','export const vendor=true;'],['/assets/recovery.0987654321.js','self.onmessage=()=>{};'],['/assets/app.0123456789.css','body{}'],['/assets/wireup-app.abcde12345.js','document.write("public app");'],['/icon.svg','<svg/>'],['/console.html','<!doctype html><script src="/assets/wireup-app.abcde12345.js"></script>']]);
+ bodies.set('/index.html','<!doctype html><h1>Static landing</h1>');bodies.set('/index.es.html','<!doctype html><h1>Portada</h1>');
  for(const [url,body]of bodies)await writeFile(join(out,url.slice(1)),body);
- const result={buildId:'1234567890',config:{out,assetRoot:'assets'},imports:{'/assets/main.js':'/assets/main.1234567890.js','/assets/other.js':'/assets/other.abcdef1234.js'},entries:{app:{module:'/assets/main.1234567890.js',css:'/assets/app.0123456789.css',wireup:'/assets/wireup-app.abcde12345.js'}},workers:{recovery:'/assets/recovery.0987654321.js'},html:['index.html']};
- const manifest=await generateServiceWorker(result,{publicAssets:['/icon.svg']});bodies.set(manifest.offlineDocument,await readFile(join(out,manifest.offlineDocument.slice(1)),'utf8'));
+ const result={buildId:'1234567890',config:{out,assetRoot:'assets'},imports:{'/assets/main.js':'/assets/main.1234567890.js','/assets/other.js':'/assets/other.abcdef1234.js'},entries:{app:{module:'/assets/main.1234567890.js',css:'/assets/app.0123456789.css',wireup:'/assets/wireup-app.abcde12345.js'}},workers:{recovery:'/assets/recovery.0987654321.js'},html:['console.html','index.html','index.es.html']};
+ const manifest=await generateServiceWorker(result,{publicAssets:['/icon.svg']});for(const path of Object.values(manifest.offlineLandings))bodies.set(path,await readFile(join(out,path.slice(1)),'utf8'));bodies.set(manifest.offlineDocument,await readFile(join(out,manifest.offlineDocument.slice(1)),'utf8'));
  return{out,result,bodies,manifest,source:await readFile(join(out,'sw.js'),'utf8'),close:()=>rm(out,{recursive:true,force:true})};
 }
 function harness(source,bodies,{failure,mutate,headers}={}){
@@ -52,11 +53,13 @@ test('install is complete or rejected on missing changed private or uncacheable 
 test('offline navigation uses only its own matching HTML; immutable fetches never cache private responses',async()=>{
  const f=await fixture();try{
   const h=harness(f.source,f.bodies);await h.lifecycle('install');h.setOffline(true);
-  assert.equal(await(await h.request('/','navigate')).text(),f.bodies.get(f.manifest.offlineDocument));
+  assert.equal(await(await h.request('/','navigate')).text(),f.bodies.get(f.manifest.offlineLandings.en));
+  assert.equal(await(await h.request('/console','navigate')).text(),f.bodies.get(f.manifest.offlineDocument));
+  assert.equal(await(await h.request('/?lang=es','navigate')).text(),f.bodies.get(f.manifest.offlineLandings.es));
   assert.equal(await(await h.request('/assets/main.1234567890.js')).text(),f.bodies.get('/assets/main.1234567890.js'));
   for(const path of ['/api/config','/api/identity/recover','/users/alice','/authorize','/recovery','/contact/token','/?account=alice','/assets/main.1234567890.js?token=secret'])assert.equal(await h.request(path,'navigate'),undefined);
   assert.equal(await h.request('/assets/main.1234567890.js','cors','POST'),undefined);
-  const own=[...h.rows.values()][0];own.delete(f.manifest.offlineDocument);h.rows.set('3sln-public-shell:older',new Map([[f.manifest.offlineDocument,new Response('mismatched old HTML')]]));assert.equal((await h.request('/','navigate')).type,'error');
+  const own=[...h.rows.values()][0];own.delete(f.manifest.offlineDocument);h.rows.set('3sln-public-shell:older',new Map([[f.manifest.offlineDocument,new Response('mismatched old HTML')]]));assert.equal((await h.request('/console','navigate')).type,'error');
  }finally{await f.close();}
 });
 test('live navigation remains uncached and storage failures cannot delete an existing generation',async()=>{

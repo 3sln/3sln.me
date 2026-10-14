@@ -5,11 +5,11 @@ import {launch,baseURL,waitForApp} from './browser.mjs';
 
 test('content-addressed import map, CSS and isolated worker have immutable policies while the shell revalidates',async t=>{
  const browser=await launch();t.after(()=>browser.close());const page=await browser.newPage();await waitForApp(page);
- const html=await (await page.request.get(baseURL)).text();const policy=(await page.request.get(baseURL)).headers()['content-security-policy'];const meta=/<meta name="bindle-import-map-csp" content="([^"]+)">/.exec(html)?.[1];assert.ok(meta&&policy.includes("'"+meta+"'"));
+ const html=await (await page.request.get(baseURL+'/console')).text();const policy=(await page.request.get(baseURL+'/console')).headers()['content-security-policy'];const meta=/<meta name="bindle-import-map-csp" content="([^"]+)">/.exec(html)?.[1];assert.ok(meta&&policy.includes("'"+meta+"'"));
  const manifest=await(await page.request.get(baseURL+'/build-manifest.json')).json();const imports=await page.evaluate(()=>JSON.parse(document.querySelector('script[type=importmap]').textContent).imports);
  assert.equal(imports['/vendor/dodo/index.js'],imports['/assets/vendor/dodo/index.js']);assert.equal(imports['/packages/identity/handles.mjs'],manifest.imports['/packages/identity/handles.mjs']);
  for(const url of [manifest.entries.app.module,manifest.entries.app.css,manifest.entries.app.wireup,manifest.workers.recovery]){assert.match(url,/\.[a-f0-9]{10}\.(?:mjs|js|css)$/);const response=await page.request.get(baseURL+url);assert.equal(response.status(),200);assert.match(response.headers()['cache-control'],/immutable/);}
- assert.equal((await page.request.get(baseURL)).headers()['cache-control'],'no-store');
+ assert.equal((await page.request.get(baseURL+'/console')).headers()['cache-control'],'no-store');
  const worker=await page.request.get(baseURL+manifest.workers.recovery);assert.match(worker.headers()['content-security-policy'],/wasm-unsafe-eval/);
  const raw=await page.request.get(baseURL+'/src/main.mjs');assert.equal(raw.status(),404);
 });

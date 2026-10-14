@@ -1,4 +1,19 @@
+import {validateHostAlias,configuredReservedName} from '../identity/badge-policy.mjs';
+import {onboardingAlias,sameOnboardingIdentity} from '../identity/onboarding.mjs';
+import {messagePostbackPrepare,messagePostbackDispatch,cleanupPostbackPreparations,erasePostbackPreparations,messagePostbackAvailability} from './message-postbacks.mjs';
+import {messagePresentationSummary} from '../messaging/presentation-summary.mjs';
+import {messageWithPresentation,messagePresentation,erasePresentations} from './message-presentations.mjs';
+import {APP_NOTIFICATIONS} from '../federation/app-notifications.mjs';
+import {createAppNotification,appNotificationCheck,appNotificationAllowed} from './app-notifications.mjs';
+import {ActivePopulationStorage,recordOwnerPopulation} from './active-population.mjs';
+import {MessageViews,normalizeIncomingUpdate} from './message-views.mjs';
+import {developerContactTier,issueDailyDeveloperContact} from './developer-contact.mjs';
+import {sameSystemIdentity} from '../identity/system-bootstrap.mjs';
+import {contactDeliveryTags} from '../messaging/tag-policy.mjs';
+import {WaitlistService} from './waitlist.mjs';
 import {accountRemovalProtection,UNPAID_LIFECYCLE_ORIGIN} from '../identity/lifecycle-protection.mjs';
+import {consumeSignupCapacity,signupCapacityStatus} from './signup-capacity.mjs';
+import {PaidSignupBilling} from '../billing/setup.mjs';
 import {RESOURCE_SCOPING,storageScopeOptions} from '../storage/scoping.mjs';
 import {encodeFreeHandleNumber,normalizeHandle,validatePaidHandle} from '../identity/handles.mjs';
 import {GoogleDriveService} from '../storage/google-drive.mjs';
@@ -27,31 +42,36 @@ import {vectorBinding} from './semantic-routing.mjs';
 import {SearchService,SqliteSearchIndex,MetadataSearchOutbox,enqueueSearchEvent,searchRevisionKey,messageSearchDocument,extractSearchText,planBudget,DurableSemanticBudget,SearchMutationGate,WorkersAIEmbeddingAdapter,VectorizeSearchIndex,SEMANTIC_MODEL,SEMANTIC_DIMENSIONS} from '../search/index.mjs';
 
 export class IdentityRepository {
-  async shardRead(...args){return new IdentityShardStorage(this.metadata).read(...args);}
-  async shardPrepare(...args){return new IdentityShardStorage(this.metadata).prepare(...args);}
-  async shardSettle(...args){return new IdentityShardStorage(this.metadata).settle(...args);}
-  async shardFinish(...args){return new IdentityShardStorage(this.metadata).finish(...args);}
-  async shardLookup(...args){return new IdentityShardStorage(this.metadata).lookup(...args);}
-  async shardClaim(...args){return new IdentityShardStorage(this.metadata).claim(...args);}
-  async shardRelease(...args){return new IdentityShardStorage(this.metadata).release(...args);}
-  async shardNamespaceBound(...args){return new IdentityShardStorage(this.metadata).namespaceBound(...args);}
-  async shardPaidHandleRead(...args){return new IdentityShardStorage(this.metadata).paidHandleRead(...args);}
-  async shardPaidHandleAnchor(...args){return new IdentityShardStorage(this.metadata).paidHandleAnchor(...args);}
-  async shardPaidHandleFinish(...args){return new IdentityShardStorage(this.metadata).paidHandleFinish(...args);}
-  async shardPaidHandleClaim(...args){return new IdentityShardStorage(this.metadata).paidHandleClaim(...args);}
-  async shardHandleLookup(...args){return new IdentityShardStorage(this.metadata).handleLookup(...args);}
-  async shardHandleClaim(...args){return new IdentityShardStorage(this.metadata).handleClaim(...args);}
-  async shardHandleConsume(...args){return new IdentityShardStorage(this.metadata).handleConsume(...args);}
-  async shardHandleGrandfather(...args){return new IdentityShardStorage(this.metadata).handleGrandfather(...args);}
-  async shardNextHandleNumber(...args){return new IdentityShardStorage(this.metadata).nextHandleNumber(...args);}
-  async shardPage(...args){return new IdentityShardStorage(this.metadata).page(...args);}
-  constructor({metadata}){this.metadata=metadata;}
+  async shardRead(...args){return new IdentityShardStorage(this.metadata,this.config).read(...args);}
+  async shardPrepare(...args){return new IdentityShardStorage(this.metadata,this.config).prepare(...args);}
+  async shardSettle(...args){return new IdentityShardStorage(this.metadata,this.config).settle(...args);}
+  async shardFinish(...args){return new IdentityShardStorage(this.metadata,this.config).finish(...args);}
+  async shardLookup(...args){return new IdentityShardStorage(this.metadata,this.config).lookup(...args);}
+  async shardClaim(...args){return new IdentityShardStorage(this.metadata,this.config).claim(...args);}
+  async shardRelease(...args){return new IdentityShardStorage(this.metadata,this.config).release(...args);}
+  async shardNamespaceBound(...args){return new IdentityShardStorage(this.metadata,this.config).namespaceBound(...args);}
+  async shardPaidHandleRead(...args){return new IdentityShardStorage(this.metadata,this.config).paidHandleRead(...args);}
+  async shardPaidHandleAnchor(...args){return new IdentityShardStorage(this.metadata,this.config).paidHandleAnchor(...args);}
+  async shardPaidHandleFinish(...args){return new IdentityShardStorage(this.metadata,this.config).paidHandleFinish(...args);}
+  async shardPaidHandleClaim(...args){return new IdentityShardStorage(this.metadata,this.config).paidHandleClaim(...args);}
+  async shardOnboardingReserve(...args){return new IdentityShardStorage(this.metadata,this.config).onboardingReserve(...args);}
+  async shardOnboardingClaim(...args){return new IdentityShardStorage(this.metadata,this.config).onboardingClaim(...args);}
+  async shardOnboardingStep(...args){return new IdentityShardStorage(this.metadata,this.config).onboardingStep(...args);}
+  async shardSystemReserve(...args){return new IdentityShardStorage(this.metadata,this.config).systemReserve(...args);}
+  async shardSystemStep(...args){return new IdentityShardStorage(this.metadata,this.config).systemStep(...args);}
+  async shardHandleLookup(...args){return new IdentityShardStorage(this.metadata,this.config).handleLookup(...args);}
+  async shardHandleClaim(...args){return new IdentityShardStorage(this.metadata,this.config).handleClaim(...args);}
+  async shardHandleConsume(...args){return new IdentityShardStorage(this.metadata,this.config).handleConsume(...args);}
+  async shardHandleGrandfather(...args){return new IdentityShardStorage(this.metadata,this.config).handleGrandfather(...args);}
+  async shardNextHandleNumber(...args){return new IdentityShardStorage(this.metadata,this.config).nextHandleNumber(...args);}
+  async shardPage(...args){return new IdentityShardStorage(this.metadata,this.config).page(...args);}
+  constructor({metadata,config={}}){this.metadata=metadata;this.config=config;}
   async get(id) { return this.metadata.get(`account/${id}`); }
   async findByHandle(handle) {
     handle=normalizeHandle(handle);
     const id=await this.metadata.get(`handle/${handle}`);
     if(id){const account=await this.get(id);await this.shardHandleGrandfather(handle,id,account?.assignmentId);return account;}
-    const claim=await this.shardHandleLookup(handle);if(claim?.state!=='paid-alias')return null;const account=await this.get(claim.owner);return account?.assignmentId===claim.assignmentId?account:null;
+    const claim=await this.shardHandleLookup(handle);if(claim?.state==='operator-alias'){const account=await this.get(claim.owner);return account?.assignmentId===claim.assignmentId&&onboardingAlias(account)===handle&&sameOnboardingIdentity(account.onboardingIdentity,claim.onboarding?.marker)?account:null;}if(claim?.state==='system-alias'){const account=await this.get(claim.owner);return account?.assignmentId===claim.assignmentId&&sameSystemIdentity(account.systemIdentity,claim.bootstrap?.marker)?account:null;}if(claim?.state!=='paid-alias')return null;const account=await this.get(claim.owner);return account?.assignmentId===claim.assignmentId?account:null;
   }
   async allocateFreeHandle(baseIgnored,owner=crypto.randomUUID(),assignmentId){
     if(typeof owner!=='string'||!owner||owner.length>128||assignmentId!==undefined&&(typeof assignmentId!=='string'||!assignmentId||assignmentId.length>128))throw new TypeError('Invalid handle allocation identity');
@@ -65,7 +85,7 @@ export class IdentityRepository {
   async paidHandleForOwner(owner){const account=await this.get(owner),anchor=await this.shardPaidHandleRead(owner);return account&&anchor?.state==='committed'&&anchor.assignmentId===account.assignmentId?anchor.handle:null;}
   // Caller has already verified paid eligibility and recent authentication.
   async claimPaidHandle(handle,owner,assignmentId){
-    handle=validatePaidHandle(handle);
+    handle=validateHostAlias(handle);if(configuredReservedName(this.config,handle))return false;
     if(typeof assignmentId!=='string'||!assignmentId)throw new TypeError('Invalid paid handle identity');
     const account=await this.get(owner);if(!account||account.assignmentId!==assignmentId)return false;
     for(let attempt=0;attempt<2;attempt++){
@@ -79,9 +99,20 @@ export class IdentityRepository {
     }
     return false;
   }
+  async onboardingLookup(handle){return this.shardHandleLookup(handle);}
+  async reserveOnboardingIdentity(item,claims,digest){const oldOwner=await this.metadata.get(`handle/${item.name}`);if(oldOwner){const old=await this.get(oldOwner);await this.shardHandleGrandfather(item.name,oldOwner,old?.assignmentId);}return this.shardOnboardingReserve(item,claims,digest);}
+  async claimOnboardingIdentity(handle,digest,binding){return this.shardOnboardingClaim(handle,digest,binding);}
+  async onboardingStep(handle,digest,binding,step,canonical){return this.shardOnboardingStep(handle,digest,binding,step,canonical);}
+  async finishOnboardingIdentity(handle,digest,binding){const row=await this.onboardingLookup(handle),account=row&&await this.get(row.owner);if(!account||account.assignmentId!==row.assignmentId||account.handle!==row.onboarding?.canonical||!sameOnboardingIdentity(account.onboardingIdentity,row.onboarding.marker))return null;return this.onboardingStep(handle,digest,binding,'consumed');}
+  async reserveSystemIdentity(claims,digest,binding){const oldOwner=await this.metadata.get(`handle/${claims.handle}`);if(oldOwner){const old=await this.get(oldOwner);await this.shardHandleGrandfather(claims.handle,oldOwner,old?.assignmentId);}return this.shardSystemReserve(claims,digest,binding);}
+  async setSystemAdmission(handle,digest,binding){return this.shardSystemStep(handle,digest,binding,'admitted');}
+  async setSystemCanonical(handle,digest,binding,canonical){return this.shardSystemStep(handle,digest,binding,'canonical',canonical);}
+  async finishSystemIdentity(handle,digest,binding){const claim=await this.shardHandleLookup(handle),account=claim&&await this.get(claim.owner);if(!account||account.assignmentId!==claim.assignmentId||account.handle!==claim.bootstrap?.canonical||!sameSystemIdentity(account.systemIdentity,claim.bootstrap?.marker))return null;return this.shardSystemStep(handle,digest,binding,'consumed');}
   async findByEmail(email) { const id=await this.metadata.get(`email/${email}`); return id ? this.get(id) : null; }
   async create(account) {
     return this.metadata.transaction(async tx=>{
+      if(account.onboardingIdentity){const handle=onboardingAlias(account),claim=handle&&await tx.get(`identity-namespace/${handle}`);if(account.systemIdentity||claim?.state!=='operator-alias'||claim.owner!==account.id||claim.assignmentId!==account.assignmentId||claim.onboarding?.phase!=='claiming'||!claim.onboarding.admitted||claim.onboarding.canonical!==account.handle||!sameOnboardingIdentity(account.onboardingIdentity,claim.onboarding.marker))return false;}
+      if(account.systemIdentity){const claim=await tx.get(`identity-namespace/${account.systemIdentity.handle}`);if(claim?.state!=='system-alias'||claim.owner!==account.id||claim.assignmentId!==account.assignmentId||claim.bootstrap?.phase!=='reserved'||!claim.bootstrap.admitted||claim.bootstrap.canonical!==account.handle||!sameSystemIdentity(account.systemIdentity,claim.bootstrap.marker))return false;}
       const namespace=`identity-namespace/${account.handle}`,oldClaim=await tx.get(namespace),oldOwner=await tx.get(`handle/${account.handle}`);
       if(oldOwner){if(!oldClaim){const oldAccount=await tx.get(`account/${oldOwner}`);await tx.put(namespace,{owner:oldOwner,assignmentId:oldAccount?.assignmentId??null,state:'assigned'});}return false;}
       if(await tx.get(`account/${account.id}`))return false;
@@ -92,7 +123,7 @@ export class IdentityRepository {
   }
   async compareAndSwap(id, revision, account) {
     return this.metadata.transaction(async tx=>{
-      const old=await tx.get(`account/${id}`);if(!old||old.revision!==revision||account.handle!==old.handle||account.assignmentId!==old.assignmentId)return false;
+      const old=await tx.get(`account/${id}`);if(!old||old.revision!==revision||account.handle!==old.handle||account.assignmentId!==old.assignmentId||!sameSystemIdentity(account.systemIdentity,old.systemIdentity)||!sameOnboardingIdentity(account.onboardingIdentity,old.onboardingIdentity))return false;
       const email=account.verifiedEmail;
       if(email){const owner=await tx.get(`email/${email}`);if(owner&&owner!==id)return false;await tx.put(`email/${email}`,id);}
       if(old.verifiedEmail&&old.verifiedEmail!==email)await tx.delete(`email/${old.verifiedEmail}`);
@@ -110,7 +141,11 @@ export class IdentityRepository {
 }
 
 export class FixedWindowGuard {
-  constructor({metadata}){this.metadata=metadata;}
+  constructor({metadata,config={}}){this.metadata=metadata;this.config=config;this.population=new ActivePopulationStorage({metadata});this.waitlist=new WaitlistService({metadata,config});}
+  async populationAction(method,input){if(!['initialize','touch','summary','claimCensus','finishCensus','baseline','invalidate'].includes(method))throw new Error('Invalid population operation');const result=await this.population[method](input);if(method==='baseline'&&!result.complete&&!await this.metadata.getAlarm()){await this.metadata.put('population/census-wake',true);await this.metadata.setAlarm(Date.now()+1000);}return result;}
+  async waitlistAction(method,input){if(!['prepare','confirm','leave'].includes(method))throw new Error('Invalid waitlist operation');return this.waitlist[method](input);}
+  async consumeSignup(options){return consumeSignupCapacity(this.metadata,options);}
+  async signupStatus(options){return signupCapacityStatus(this.metadata,options);}
   async consume({windowMs,limit,lifetime=false,units=1,storageWrite}) {
     if(!Number.isSafeInteger(units)||units<1||units>16||!Number.isSafeInteger(limit)||limit<1||typeof lifetime!=='boolean'||!lifetime&&(!Number.isSafeInteger(windowMs)||windowMs<1000))return false;
     if(storageWrite!==undefined){
@@ -130,7 +165,7 @@ export class FixedWindowGuard {
       if(!Number.isSafeInteger(value.count)||value.count<0||value.count+units>limit)return false;value.count+=units;await tx.put('window',value);await tx.setAlarm(value.end);return true;
     });
   }
-  async alarm(){await this.metadata.transaction(async tx=>{const window=await tx.get('window');if(window&&window.end<=Date.now())await tx.delete('window');else if(window)await tx.setAlarm(window.end);});}
+  async alarm(){if(await this.metadata.get('population/census-v1')||await this.metadata.get('population/census-wake')){if(this.config.ACTIVE_POPULATION_CENSUS)try{await this.config.ACTIVE_POPULATION_CENSUS();}catch{await this.metadata.setAlarm(Date.now()+60000);}}if(await this.metadata.get('waitlist/counts'))await this.waitlist.cleanupExpired();await this.metadata.transaction(async tx=>{const window=await tx.get('window');if(window&&window.end<=Date.now())await tx.delete('window');else if(window)await tx.setAlarm(window.end);});}
 }
 
 function serializable(value){if(value instanceof Uint8Array)return {$bytes:Array.from(value)};if(Array.isArray(value))return value.map(serializable);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,serializable(v)]));return value;}
@@ -148,8 +183,8 @@ export class AccountController {
       const garbage=[];
       const result=await this.metadata.transaction(async tx=>operation({
         get:k=>tx.get(k),
-        set:async(k,v)=>{if(v?.bytes instanceof Uint8Array){const reservation=this.messageReservation;if(!reservation||reservation.owner!==v.owner||reservation.bytes!==v.bytes.byteLength)throw new StorageError('conflict','Message upload reservation is missing.',409);const blobRef=reservation.blobRef;const {bytes,...record}=v;const event=await this.queueMessageSearch(tx,record);record.revision=event.revision;await tx.put(k,{...record,blobRef});this.itemIndex?.upsert(record);await this.quota.commit(tx,reservation.id);}else{if(k.startsWith('message/')){const event=await this.queueMessageSearch(tx,v);v={...v,revision:event.revision};this.itemIndex?.upsert(v);}await tx.put(k,v);}},
-        delete:async k=>{const value=await tx.get(k);if(value?.blobRef){const garbageKey=`blob-garbage/${crypto.randomUUID()}`;await tx.put(garbageKey,value.blobRef);garbage.push({key:garbageKey,blobRef:value.blobRef});const alarm=typeof tx.getAlarm==='function'?await tx.getAlarm():null;await tx.setAlarm?.(alarm?Math.min(alarm,Date.now()+60000):Date.now()+60000);}if(k.startsWith('message/')&&value){await this.queueMessageSearch(tx,value,'tombstone');this.itemIndex?.remove(value.id);}await tx.delete(k);},
+        set:async(k,v)=>{if(v?.bytes instanceof Uint8Array){const reservation=this.messageReservation;if(!reservation||reservation.owner!==v.owner||reservation.bytes!==v.bytes.byteLength)throw new StorageError('conflict','Message upload reservation is missing.',409);const blobRef=reservation.blobRef;const {bytes,...record}=v;record.notificationSummary=await messagePresentationSummary(v);const event=await this.queueMessageSearch(tx,record);record.revision=event.revision;await tx.put(k,{...record,blobRef});this.itemIndex?.upsert(record);await this.quota.commit(tx,reservation.id);}else{if(k.startsWith('message/')){const event=await this.queueMessageSearch(tx,v);v={...v,revision:event.revision};this.itemIndex?.upsert(v);}await tx.put(k,v);}},
+        delete:async k=>{const value=await tx.get(k);if(value?.blobRef){const garbageKey=`blob-garbage/${crypto.randomUUID()}`;await tx.put(garbageKey,value.blobRef);garbage.push({key:garbageKey,blobRef:value.blobRef});const alarm=typeof tx.getAlarm==='function'?await tx.getAlarm():null;await tx.setAlarm?.(alarm?Math.min(alarm,Date.now()+60000):Date.now()+60000);}if(k.startsWith('message/')&&value){await erasePostbackPreparations(tx,value.owner,value.id);await erasePresentations(tx,value,garbage);await this.queueMessageSearch(tx,value,'tombstone');this.itemIndex?.remove(value.id);}await tx.delete(k);},
         list:async prefix=>[...(await tx.list({prefix}))].map(([key,value])=>{if(value?.blobRef){const {blobRef,...record}=value;return {key,value:record};}return {key,value};})
       }));
       for(const {key,blobRef}of garbage){try{await this.blobs.delete(blobRef);await this.metadata.delete(key);}catch{/* Ownership was committed with logical deletion; GC can retry after a crash. */}}
@@ -158,23 +193,25 @@ export class AccountController {
     this.store=store;this.tokens=new ContactTokenService({store,issuer:config.APP_ORIGIN,allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true'});
     this.endpoints=new ContactEndpointService({tokens:this.tokens,signer:async({owner,kid})=>{const signer=await this.signingKey(owner);if(signer.kid!==kid)throw new Error('Signing key unavailable');return signer.privateKey;}});
     this.messages=new MessagingService({store,tokens:this.endpoints,maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000});
-    this.notifications=new NotificationService({store});
+    this.notifications=new NotificationService({store,messageAllowed:appNotificationAllowed});
     this.beams=new BeamService({metadata,config,entitlement:owner=>this.billing.entitlement(owner)});this.beamContacts=new BeamContacts({metadata,endpoints:this.endpoints});
   }
   async invoke({method,args}){
-    const allowed=['paidHandleEligibility','identityKeychain','googleDriveStart','googleDriveComplete',...Object.keys(automationMethods),...Object.keys(conversationMethods).filter(m=>m!=='conversationIdentity'),'appConnectionBinding','appConnections','appConnect','appBindleConnect','appDisconnect','appConnectionCheck','mcpCollections','mcpOperation','admitWork','touch','snapshot','collections','contacts','createContact','contactURL','revokeContact','quarantineContact','inspectContact','mintContact','deliverContact','receive','message','messageBytes','updateMessage','deleteMessage','rules','notificationPreferences','rememberSignupOrigin','registerSignupPush','subscribe','removeSubscription','unsubscribe','unsubscribeLink','resources','addResource','verifyResource','deleteResource','federationRPC','storageUsage','messagePage','billingRefresh','billingStatus','billingChangePlan','billingCancelChange','billingCheckout','billingPortal','billingWebhookVerified','omniSearch','searchRebuild','searchDrain','searchPreferences','updateSearchPreferences','beamInviteURL','beamOutbox','beamStatus','beamCreate','beamRaw','beamAction','beamMailbox','beamNotify','beamIce','beamProfile','beamContactEnable','beamContactRedeem','beamContactRemember','beamDirectory','beamContactForget','beamPermission','beamDisclosed','beamContactInfo','contactProfile','beamInviteCreate','beamInviteGet','beamInviteJoin','beamPair'];
+    const allowed=['developerContactTier','issueDailyDeveloperContact','paidHandleEligibility','identityKeychain','googleDriveStart','googleDriveComplete',...Object.keys(automationMethods),...Object.keys(conversationMethods).filter(m=>m!=='conversationIdentity'),'appNotificationSettings','appNotificationCheck','appConnectionBinding','appConnections','appConnect','appBindleConnect','appDisconnect','appConnectionCheck','mcpCollections','mcpOperation','admitWork','touch','snapshot','collections','contacts','createContact','contactURL','revokeContact','quarantineContact','inspectContact','mintContact','deliverContact','receive','message','messagePresentation','messagePostbackPrepare','messagePostbackDispatch','messageBytes','updateMessage','deleteMessage','rules','notificationPreferences','rememberSignupOrigin','registerSignupPush','subscribe','removeSubscription','unsubscribe','unsubscribeLink','resources','addResource','verifyResource','deleteResource','federationRPC','storageUsage','messagePage','listViews','createView','updateView','deleteView','queryIncoming','updateIncoming','billingRefresh','billingStatus','billingChangePlan','billingCancelChange','billingCheckout','setupBillingCheckout','setupBillingStatus','billingPortal','billingWebhookVerified','omniSearch','searchRebuild','searchDrain','searchPreferences','updateSearchPreferences','beamInviteURL','beamOutbox','beamStatus','beamCreate','beamRaw','beamAction','beamMailbox','beamNotify','beamIce','beamProfile','beamContactEnable','beamContactRedeem','beamContactRemember','beamDirectory','beamContactForget','beamPermission','beamDisclosed','beamContactInfo','contactProfile','beamInviteCreate','beamInviteGet','beamInviteJoin','beamPair'];
     if(!allowed.includes(method))return {$fault:{code:'unsupported_method',message:'Unsupported account operation.',status:400}};
     // Fanout runs outside the account gate: a recipient may concurrently submit
     // to this source while its own account gate is held. Receiver writes retain
     // their own serialization, including the source's local inbox.
     if(method==='conversationDrain'||method==='conversationPublicIdentity'&&await this.metadata.get('signing-key')){try{return await this[method](...args);}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'Conversation delivery could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}}
-    return this.gate.run(async()=>{try{if(['mcpOperation','appConnectionBinding','appConnections','appConnect','appBindleConnect','appDisconnect','appConnectionCheck','message','messageBytes','updateMessage','deleteMessage','resources','addResource','verifyResource','deleteResource'].includes(method))await this.warm(args[0]);return await this[method](...args);}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}});
+    return this.gate.run(async()=>{try{if(['mcpOperation','appNotificationSettings','appNotificationCheck','appConnectionBinding','appConnections','appConnect','appBindleConnect','appDisconnect','appConnectionCheck','message','messagePresentation','messagePostbackPrepare','messageBytes','updateMessage','deleteMessage','resources','addResource','verifyResource','deleteResource'].includes(method))await this.warm(args[0]);return await this[method](...args);}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}});
   }
   async appConnections(owner){return this.apps.list(owner);}
   async appConnectionBinding(owner,clientId){return this.apps.binding(owner,clientId);}
   async appConnect(owner,client,expected){return this.apps.register(owner,client,expected);}
-  async appBindleConnect(owner,client,expected){return this.apps.register(owner,client,expected,{transport:'bindle',provenance:{kind:'oauth-consent',issuer:this.config.APP_ORIGIN}});}
+  async appBindleConnect(owner,client,expected,permissions={}){return this.apps.register(owner,client,expected,{transport:'bindle',notifications:permissions.notifications===true,expectedNotificationGeneration:permissions.expectedNotificationGeneration,provenance:{kind:'oauth-consent',issuer:this.config.APP_ORIGIN}});}
   async appDisconnect(owner,id){return this.apps.disconnect(owner,id);}
+  async appNotificationSettings(owner,id,input){await this.warm(owner);return this.apps.notificationSettings(owner,id,input);}
+  async appNotificationCheck(owner,connection,clientId){await this.warm(owner);return appNotificationCheck(this,owner,connection,clientId);}
   async appConnectionCheck(owner,id,generation,clientId){return this.apps.check(owner,id,generation,clientId);}
   async mcpCollections(owner){return accountMcpCollections(this,owner);}
   async mcpOperation(owner,clientId,tool,args,connection){await this.apps.check(owner,connection?.id,connection?.generation,clientId);return tool==='collections_list'?this.mcpCollections(owner):accountMcpOperation(this,owner,clientId,tool,args);}
@@ -330,6 +367,8 @@ export class AccountController {
   async billingCancelChange(owner,input){await this.warm(owner);return this.billing.changes.cancel(owner,input);}
   async billingChangePlan(owner,input){await this.warm(owner);return this.billing.changes.change(owner,input);}
   async billingCheckout(owner,plan,options){return this.billing.checkout(owner,plan,options);}
+  async setupBillingCheckout(owner,admission,input){await this.warm(owner);return new PaidSignupBilling(this.billing).checkout(owner,admission,input);}
+  async setupBillingStatus(owner,admission){await this.warm(owner);return new PaidSignupBilling(this.billing).status(owner,admission);}
   async billingPortal(owner){return this.billing.portal(owner);}
   async billingWebhookVerified(owner,event){if(event.owner!==owner)throw new StorageError('forbidden','Billing account mismatch.',403);if(await this.metadata.get('owner')!==owner)return {accepted:true,ignored:true};const prior=await this.metadata.get('billing/state'),retained=prior?.owner===owner&&prior.source==='polar'&&(prior.catalogVersion!==3||prior.origin===this.config.APP_ORIGIN&&prior.server===this.config.POLAR_SERVER&&prior.metadataPrefix===(this.config.POLAR_METADATA_PREFIX??'3sln_me_')&&prior.catalogMode===(this.config.POLAR_CATALOG_MODE??'static'))&&(!event.organizationId||prior.organizationId===event.organizationId)&&prior.customerId===event.customerId&&(event.customerEvent?Boolean(prior.productId&&prior.subscriptionId):prior.productId===event.productId&&(!event.subscriptionId||prior.subscriptionId===event.subscriptionId));if(!event.relevant&&!retained)return {accepted:true,ignored:true};return this.billing.applyWebhook(event);}
   async migrateItemIndex(owner){
@@ -346,6 +385,7 @@ export class AccountController {
         else{await tx.put('item-index-migration',[...rows.keys()].at(-1));await tx.setAlarm(Date.now()+60000);}
       });
     }
+    if(await this.metadata.get('item-index-ready'))await this.metadata.transaction(async tx=>{if(!this.itemIndex.migrateIncoming())await tx.setAlarm(Date.now()+60000);});
     if(await this.metadata.get('search-backfill-ready'))return;
     // Source revision initialization and work publication remain atomic. Leave
     // room for new deliveries while legacy work proceeds in bounded pages.
@@ -372,17 +412,24 @@ export class AccountController {
     });
   }
   async messagePage(owner,options={}){await this.warm(owner);if(!this.itemIndex)return {items:await this.messages.list(owner,options),cursor:null};if(!await this.metadata.get('item-index-ready'))throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options);}
+  async listViews(owner){await this.warm(owner);return {views:await new MessageViews(this.metadata).list(owner)};}
+  async createView(owner,input){const request=structuredClone(input);await this.warm(owner);return new MessageViews(this.metadata).mutate(owner,'create',null,request);}
+  async updateView(owner,id,input){const request=structuredClone(input);await this.warm(owner);return new MessageViews(this.metadata).mutate(owner,'update',id,request);}
+  async deleteView(owner,id,input){const request=structuredClone(input);await this.warm(owner);return new MessageViews(this.metadata).mutate(owner,'delete',id,request);}
+  async updateIncoming(owner,input){const request=normalizeIncomingUpdate(input);await this.warm(owner);if(!this.itemIndex||!await this.metadata.get('item-index-ready')||this.itemIndex.incomingState('ready')!=='1')throw new StorageError('temporarily_unavailable','Your incoming index is being upgraded. Try again shortly.',503);return this.metadata.transaction(()=>this.itemIndex.updateIncoming(owner,request));}
+  async queryIncoming(owner,input={}){const request=structuredClone(input);await this.warm(owner);if(!this.itemIndex||!await this.metadata.get('item-index-ready')||this.itemIndex.incomingState('ready')!=='1')throw new StorageError('temporarily_unavailable','Your incoming index is being upgraded. Try again shortly.',503);const query=await new MessageViews(this.metadata).resolve(owner,request);return this.itemIndex.incomingPage(owner,query);}
   async storageUsage(owner){await this.warm(owner);const usage=await this.quota.usage(owner);return {...usage,...this.storageWriteBudget?{writeOperations:await this.storageWriteBudget.status(owner)}:{}};}
   async scheduleAlarm(time){
-    const now=Date.now(),cleanup=await this.quota.nextCleanup(),owner=await this.metadata.get('owner'),pending=owner&&((await this.metadata.get(key('search-queue-usage',owner)))?.count||!await this.metadata.get('item-index-ready')||!await this.metadata.get('search-backfill-ready')),garbage=await this.metadata.list({prefix:'blob-garbage/',limit:1});
+    const now=Date.now(),cleanup=await this.quota.nextCleanup(),owner=await this.metadata.get('owner'),pending=owner&&((await this.metadata.get(key('search-queue-usage',owner)))?.count||!await this.metadata.get('item-index-ready')||!await this.metadata.get('search-backfill-ready')||this.itemIndex&&this.itemIndex.incomingState('ready')!=='1'),garbage=await this.metadata.list({prefix:'blob-garbage/',limit:1});
     const semantic=await this.metadata.get('search-semantic-backfill'),purge=await this.metadata.get('search-vector-purge');
     const next=Math.min(time,cleanup||Infinity,pending?retryTime(await this.metadata.get('search/extraction-retry'),now):Infinity,garbage.size?retryTime(await this.metadata.get('storage/garbage-retry'),now):Infinity,purge?retryTime(await this.metadata.get('search/purge-retry'),now):Infinity,semantic&&!semantic.paused?Math.max(now+60000,semantic.retryAfter||0):Infinity),prior=typeof this.metadata.getAlarm==='function'?await this.metadata.getAlarm():null;if(prior&&prior>now&&prior<=next)return;return this.metadata.setAlarm(next);
   }
-  async touch(owner) {await this.warm(owner);const now=Date.now(),prior=await this.metadata.get('lastOwnerActiveAt');if(Number.isSafeInteger(prior)&&prior>=now-900000)return;await this.metadata.put('lastOwnerActiveAt',now);await this.metadata.put('lifecycle',{status:'active'});await this.scheduleAlarm(now+7*86400000);}
-  async snapshot(owner){await this.warm(owner);return {...await this.messageSnapshot(owner),collections:await this.messages.collections(owner),contacts:await this.contacts(owner),resources:await this.resources(owner),rules:await this.messages.rules(owner),notificationPreferences:await this.notifications.preferences(owner),pushDevices:await this.notifications.subscriptions(owner),storage:await this.storageUsage(owner),work:this.workBudget?await this.workBudget.status(owner):null,messageReceiptAdmission:await this.messageReceiptBudget.status(owner),retention:await this.metadata.transaction(tx=>accountRemovalProtection(tx,owner,{config:this.config})),lifecycle:await this.metadata.get('lifecycle')||{status:'active'}};}
+  async populationActivity(owner){const stored=await this.metadata.get('owner');if(stored&&stored!==owner)throw new StorageError('wrong_owner','Owner mismatch',403);return {lastActiveAt:await this.metadata.get('lastOwnerActiveAt'),status:(await this.metadata.get('lifecycle'))?.status};}
+  async touch(owner) {await this.warm(owner);const now=Date.now();await recordOwnerPopulation(this,owner,{now});const prior=await this.metadata.get('lastOwnerActiveAt');if(Number.isSafeInteger(prior)&&prior>=now-900000)return;await this.metadata.put('lastOwnerActiveAt',now);await this.metadata.put('lifecycle',{status:'active'});await this.scheduleAlarm(now+7*86400000);}
+  async snapshot(owner){await this.warm(owner);return {...await this.messageSnapshot(owner),views:await new MessageViews(this.metadata).list(owner),collections:await this.messages.collections(owner),contacts:await this.contacts(owner),resources:await this.resources(owner),rules:await this.messages.rules(owner),notificationPreferences:await this.notifications.preferences(owner),pushDevices:await this.notifications.subscriptions(owner),storage:await this.storageUsage(owner),work:this.workBudget?await this.workBudget.status(owner):null,messageReceiptAdmission:await this.messageReceiptBudget.status(owner),retention:await this.metadata.transaction(tx=>accountRemovalProtection(tx,owner,{config:this.config})),lifecycle:await this.metadata.get('lifecycle')||{status:'active'}};}
   async messageSnapshot(owner){const page=await this.messagePage(owner,{limit:100});return {messages:page.items,messageCursor:page.cursor};}
   async collections(owner,name){await this.warm(owner);return name===undefined?this.messages.collections(owner):this.messages.createCollection(owner,name);}
-  async contacts(owner){const beamGrants=await this.metadata.list({prefix:'beam/grant/'});const names=await this.metadata.list({prefix:'contact-name/'});return (await this.tokens.list(owner)).map(g=>({id:g.id,beamEnabled:beamGrants.get('beam/grant/'+g.id)?.beamEnabled===true,profileFields:beamGrants.get('beam/grant/'+g.id)?.profileFields||[],discloseProfile:Boolean(beamGrants.get('beam/grant/'+g.id)?.profileFields?.length),name:names.get(`contact-name/${g.id}`)||'Contact link',active:g.active,quarantined:Boolean(g.quarantined),createdAt:g.createdAt,expiresAt:g.claims.exp*1000,collections:g.claims.collections,mimeTypes:g.claims.mimeTypes,messagesUsed:g.messagesUsed,maxMessages:g.claims.maxMessages,bytesUsed:g.bytesUsed,maxBytes:g.claims.maxBytes}));}
+  async contacts(owner){const beamGrants=await this.metadata.list({prefix:'beam/grant/'});const names=await this.metadata.list({prefix:'contact-name/'});return (await this.tokens.list(owner)).map(g=>({id:g.id,beamEnabled:beamGrants.get('beam/grant/'+g.id)?.beamEnabled===true,profileFields:beamGrants.get('beam/grant/'+g.id)?.profileFields||[],discloseProfile:Boolean(beamGrants.get('beam/grant/'+g.id)?.profileFields?.length),name:names.get(`contact-name/${g.id}`)||'Contact link',active:g.active,quarantined:Boolean(g.quarantined),createdAt:g.createdAt,expiresAt:g.claims.exp*1000,collections:g.claims.collections,mimeTypes:g.claims.mimeTypes,requiredTags:g.claims.requiredTags??[],optionalTags:g.claims.optionalTags??[],messagesUsed:g.messagesUsed,maxMessages:g.claims.maxMessages,bytesUsed:g.bytesUsed,maxBytes:g.claims.maxBytes}));}
   async signingKey(owner){
     const existing=await this.metadata.get('signing-key');
     if(existing){const jwk=await decryptSecret(existing.encrypted,this.config.KEY_ENCRYPTION_KEY);return {kid:existing.kid,privateKey:await crypto.subtle.importKey('jwk',jwk,{name:'ECDSA',namedCurve:'P-256'},false,['sign'])};}
@@ -408,11 +455,13 @@ export class AccountController {
     }
     return {version:1,signing:{kid:signing.kid,privateJWK:await decryptSecret(signing.encrypted,this.config.KEY_ENCRYPTION_KEY)},encryption:{kid:encryption.kid,privateJWK:await decryptSecret(encryption.encrypted,this.config.KEY_ENCRYPTION_KEY)}};
   }
-  async createContact(owner,handle,input){await this.warm(owner);if(typeof input.name!=='string'||!input.name.trim()||input.name.length>100)throw new Error('Contact name is required');const signer=await this.signingKey(owner);const issued=await this.endpoints.create(owner,{...input,handle,kid:signer.kid});await this.metadata.put(`contact-name/${issued.grant.id}`,input.name.trim());if(input.beamEnabled!==undefined||input.profileFields!==undefined||input.discloseProfile!==undefined)await this.beamContacts.enable(owner,issued.grant.id,{beamEnabled:input.beamEnabled??false,...input.profileFields!==undefined?{profileFields:input.profileFields}:{},...input.discloseProfile!==undefined?{discloseProfile:input.discloseProfile}:{}});await this.metadata.put(`contact-url/${issued.grant.id}`,await encryptSecret({url:issued.url},this.config.KEY_ENCRYPTION_KEY));return {...(await this.contacts(owner)).find(g=>g.id===issued.grant.id),url:issued.url};}
+  async developerContactTier(owner){return developerContactTier(this,owner);}
+  async issueDailyDeveloperContact(owner,input){return issueDailyDeveloperContact(this,owner,input);}
+  async createContact(owner,handle,input,internal){await this.warm(owner);if(typeof input.name!=='string'||!input.name.trim()||input.name.length>100)throw new Error('Contact name is required');const signer=await this.signingKey(owner);const issued=await this.endpoints.create(owner,{...input,handle,kid:signer.kid},internal);await this.metadata.put(`contact-name/${issued.grant.id}`,input.name.trim());if(input.beamEnabled!==undefined||input.profileFields!==undefined||input.discloseProfile!==undefined)await this.beamContacts.enable(owner,issued.grant.id,{beamEnabled:input.beamEnabled??false,...input.profileFields!==undefined?{profileFields:input.profileFields}:{},...input.discloseProfile!==undefined?{discloseProfile:input.discloseProfile}:{}});const encryptedURL=await encryptSecret({url:issued.url},this.config.KEY_ENCRYPTION_KEY),storedURL=await this.metadata.transaction(async tx=>{const path=`contact-url/${issued.grant.id}`,prior=await tx.get(path);if(prior!==undefined)return prior;await tx.put(path,encryptedURL);return encryptedURL;});const url=(await decryptSecret(storedURL,this.config.KEY_ENCRYPTION_KEY)).url;return {...(await this.contacts(owner)).find(g=>g.id===issued.grant.id),url};}
   async contactURL(owner,id){const g=(await this.tokens.list(owner)).find(g=>g.id===id);if(!g)throw new Error('Contact not found');const record=await this.metadata.get(`contact-url/${id}`);return (await decryptSecret(record,this.config.KEY_ENCRYPTION_KEY)).url;}
   async revokeContact(owner,id){await this.tokens.revoke(owner,id);return {revoked:true};}
   async quarantineContact(owner,id,value){return this.endpoints.quarantine(owner,id,value);}
-  async inspectContact(owner,url){const {grant}=await this.endpoints.inspect(url);if(grant.owner!==owner)throw Object.assign(new Error('Invalid contact capability.'),{code:'unauthorized'});return {collections:await this.messages.collections(owner).then(all=>all.filter(c=>grant.claims.collections.includes(c.id)).map(({id,name})=>({id,name}))),mimeTypes:grant.claims.mimeTypes,maxMessageBytes:grant.claims.maxMessageBytes,expiresAt:grant.claims.exp*1000};}
+  async inspectContact(owner,url){const {grant}=await this.endpoints.inspect(url);if(grant.owner!==owner)throw Object.assign(new Error('Invalid contact capability.'),{code:'unauthorized'});return {collections:await this.messages.collections(owner).then(all=>all.filter(c=>grant.claims.collections.includes(c.id)).map(({id,name})=>({id,name}))),mimeTypes:grant.claims.mimeTypes,maxMessageBytes:grant.claims.maxMessageBytes,requiredTags:grant.claims.requiredTags??[],optionalTags:grant.claims.optionalTags??[],expiresAt:grant.claims.exp*1000};}
   async mintContact(owner,url){const {grant}=await this.endpoints.inspect(url);if(grant.owner!==owner)throw Object.assign(new Error('Invalid contact capability.'),{code:'unauthorized'});return this.endpoints.mint(url);}
   async deliverContact(owner,url,input){const issued=await this.mintContact(owner,url);return this.receive(owner,issued.token,input);}
   async receive(owner,token,input){
@@ -420,14 +469,18 @@ export class AccountController {
     if(!boundedString(input.collection)||!mimeValid(input.mimeType)||!boundedString(input.idempotencyKey,128)||!Array.isArray(input.bytes)&&!(input.bytes instanceof Uint8Array))throw new StorageError('invalid_message','Message fields are invalid.');
     const bytes=Uint8Array.from(input.bytes);if(bytes.byteLength>1048576)throw new StorageError('quota_exceeded','Messages are limited to one MiB.',429);const receipt=await this.metadata.get(key('message-receipt',verified.claims.parent,input.idempotencyKey));
     if(receipt)return this.messages.receive(token,{...input,bytes});
-    validateContent(input.mimeType,bytes);validateSenderMetadata(input.senderMetadata);if(!verified.claims.collections.includes(input.collection)||!verified.claims.mimeTypes.includes(input.mimeType)||(await this.metadata.get(key('collection',owner,input.collection)))?.active!==true)throw new StorageError('forbidden','Message access denied.',403);const grant=await this.metadata.get(key('contact-grant',verified.claims.parent));if(bytes.length>verified.claims.maxMessageBytes||grant.messagesUsed+1>grant.claims.maxMessages||grant.bytesUsed+bytes.length>grant.claims.maxBytes)throw new StorageError('quota_exceeded','The contact invitation limit has been reached.',429);
+    validateContent(input.mimeType,bytes);const senderMetadata=validateSenderMetadata(input.senderMetadata);contactDeliveryTags(verified.claims,senderMetadata.tags);if(!verified.claims.collections.includes(input.collection)||!verified.claims.mimeTypes.includes(input.mimeType)||(await this.metadata.get(key('collection',owner,input.collection)))?.active!==true)throw new StorageError('forbidden','Message access denied.',403);const grant=await this.metadata.get(key('contact-grant',verified.claims.parent));if(bytes.length>verified.claims.maxMessageBytes||grant.messagesUsed+1>grant.claims.maxMessages||grant.bytesUsed+bytes.length>grant.claims.maxBytes)throw new StorageError('quota_exceeded','The contact invitation limit has been reached.',429);
     await this.quota.check(owner,{bytes:bytes.length});await this.messageReceiptBudget.admit(owner,{parent:grant.id,bytes:bytes.length});await this.admitWork(owner,{clientId:'contact:'+grant.id});
     const id=crypto.randomUUID(),reservation=await this.quota.reserve(owner,{id,bytes:bytes.length,blobRef:`messages/${owner}/${id}`,kind:'message'});
     this.messageReservation=reservation;
     try{await this.blobs.put(reservation.blobRef,bytes,{httpMetadata:{contentType:'application/octet-stream'},storageAdmission:{clientId:'contact:'+grant.id}});return await this.messages.receive(token,{...input,bytes});}finally{this.messageReservation=null;await this.quota.release(id);}
   }
   async content(owner,id){const record=await this.messages.read(owner,id);if(record.blobRef){const blob=await this.blobs.get(record.blobRef);if(!blob)throw Object.assign(new Error('Message content is temporarily unavailable.'),{code:'temporarily_unavailable',status:503});return {...record,bytes:new Uint8Array(await blob.arrayBuffer())};}return record;}
-  async message(owner,id){const record=await this.content(owner,id);const {bytes,blobRef,...message}=record;return {message,render:renderMessage(record)};}
+  async message(owner,id,options){return messageWithPresentation(this,owner,id,options);}
+  async messagePresentation(owner,id,input){return messagePresentation(this,owner,id,input);}
+  async messagePostbackPrepare(owner,id,input,epoch){return messagePostbackPrepare(this,owner,id,input,epoch);}
+  async messagePostbackDispatch(owner,id,token){return messagePostbackDispatch(this,owner,id,token);}
+  async postbackAvailability(owner,id,record,originalDigest){return messagePostbackAvailability(this,owner,id,record,originalDigest);}
   async messageBytes(owner,id){const {bytes,mimeType}=await this.content(owner,id);return {bytes:Array.from(bytes),mimeType};}
   async updateMessage(owner,id,actions){return this.messages.update(owner,id,actions);}
   async deleteMessage(owner,id){return this.messages.delete(owner,id);}
@@ -456,6 +509,7 @@ export class AccountController {
   async deleteResource(owner,id){const builtin=await this.metadata.get('builtin/hosted-resource-v1');if(builtin?.owner===owner&&builtin.id===id)throw new StorageError('builtin_resource','Account storage is always available and cannot be disconnected.',409);const app=await this.metadata.get(`resource/${id}`);if(app?.kind==='app-connection')return this.apps.disconnect(owner,id);const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner)throw new Error('Resource not found');if(resource.builtin===true)throw new StorageError('builtin_resource','Account storage is always available and cannot be disconnected.',409);if(resource.provider==='google-drive')return this.googleDrive.disconnect(owner,id);if(resource.provider==='hosted'&&(await this.metadata.list({prefix:`hosted/${id}/`,limit:1})).size)throw new StorageError('resource_not_empty','Delete the files in this hosted resource before removing it.',409);await this.metadata.delete(`resource/${id}`);return {deleted:true};}
   async federationRPC(context){
     const owner=/\/entities\/([a-f0-9-]{36})$/.exec(context.subject)?.[1];if(!owner||context.subject!==`${this.config.APP_ORIGIN}/entities/${owner}`)throw new StorageError('forbidden','Resource access denied.',403);
+    if(context.contract===APP_NOTIFICATIONS)return createAppNotification(this,owner,context);
     if(context.method==='list')throw new StorageError('unsupported_method','Object storage has no listing operation; use application-managed directory objects.');
     await this.warm(owner);
     if(context.authority==='bindle'&&(!context.epoch||!context.connection||!this.config.FEDERATION_IDENTITY_CHECK||await this.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true))throw new StorageError('unauthorized','Application authorization is no longer active.',401);
@@ -535,6 +589,8 @@ export class AccountController {
     if(failed)await retryFailure(this.metadata,'storage/garbage-retry',null);else if(!(await this.metadata.list({prefix:'blob-garbage/',limit:1})).size)await this.metadata.delete('storage/garbage-retry');if(rows.size)await this.metadata.put('blob-garbage-cursor',[...rows.keys()].at(-1));return {cleaned};
   }
   async alarm(){
+    await cleanupPostbackPreparations(this);
+    const populationOwner=await this.metadata.get('owner');if(populationOwner)await recordOwnerPopulation(this,populationOwner,{retry:true});
     const conversationOwner=await this.metadata.get('owner');if(conversationOwner)await this.conversationDrain(conversationOwner,{limit:16});
     const retry=await this.metadata.get('maintenance/alarm-retry');if(!retryReady(retry)){await this.metadata.setAlarm(retry?.paused?Date.now()+7*86400000:retryTime(retry));return;}try{await this.gate.run(async()=>{
       await this.beams.cleanup();const beamExpiry=[];for(const prefix of ['beam/offer/','beam/mailbox/','beam/invite/','beam/nearby/'])for(const r of (await this.metadata.list({prefix,limit:129})).values())beamExpiry.push(r.expiresAt);if(beamExpiry.length)await this.scheduleAlarm(Math.min(...beamExpiry));
@@ -542,7 +598,7 @@ export class AccountController {
       if(await this.metadata.get('shelved')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       await this.migrateItemIndex(owner);await this.configureSemanticSearch(owner);try{await this.purgeSearchVectors(owner);await this.backfillSemanticSearch(owner);}catch(error){await this.metadata.put('search-index-error',{code:error.code||'index_unavailable',at:Date.now()});}
       if((await this.metadata.get(key('search-queue-usage',owner)))?.count){try{await this.searchDrain(owner,{limit:10});}catch{/* Durable outbox and health marker retain retry work. */}}
-      if((await this.metadata.get(key('search-queue-usage',owner)))?.count||this.itemIndex&&(!await this.metadata.get('item-index-ready')||!await this.metadata.get('search-backfill-ready'))){await this.scheduleAlarm(Date.now()+7*86400000);return;}
+      if((await this.metadata.get(key('search-queue-usage',owner)))?.count||this.itemIndex&&(!await this.metadata.get('item-index-ready')||!await this.metadata.get('search-backfill-ready')||this.itemIndex.incomingState('ready')!=='1')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       const semanticPending=await this.metadata.get('search-semantic-backfill');if(semanticPending&&!semanticPending.paused||await this.metadata.get('search-vector-purge')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       const last=await this.metadata.get('lastOwnerActiveAt')||0;if(Date.now()-last<7*86400000){await this.scheduleAlarm(last+7*86400000);return;}
       const messageRows=await this.metadata.list({prefix:key('message',owner),limit:2001}),resourceRows=await this.metadata.list({prefix:'resource/',limit:201});if(messageRows.size>2000||resourceRows.size>200){await this.metadata.put('cold-index-mode',{mode:'indexed-sqlite',reason:'paged-metadata-shelving-pending'});await this.scheduleAlarm(Date.now()+7*86400000);return;}const all=new Map([...messageRows,...resourceRows]);
