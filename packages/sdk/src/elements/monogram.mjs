@@ -4,7 +4,7 @@
 // the tile code (tile.mjs) loads on first render.
 import {ElementBase,h,reconcileShadow,localize} from './shared.mjs';
 import {css} from '../../../../vendor/dodo/style.js';
-export {monogramPattern} from '../islands-protocol.mjs';
+export {monogramPattern} from '../monogram-pattern.mjs';
 
 let tile=null;
 const loadTile=()=>tile??=import('./tile.mjs');

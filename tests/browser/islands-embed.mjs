@@ -15,7 +15,7 @@ import {readFile,writeFile,mkdtemp,rm,mkdir} from 'node:fs/promises';
 import {request as httpRequest} from 'node:http';
 import {createServer} from 'node:net';
 import {tmpdir} from 'node:os';
-import {resolve} from 'node:path';
+import {resolve,extname} from 'node:path';
 import {randomBytes,webcrypto} from 'node:crypto';
 import {chromium,firefox,webkit} from 'playwright';
 import {monogramColors} from '../../packages/sdk/src/islands-protocol.mjs';
@@ -68,19 +68,25 @@ window.prepare=async id=>{const verifier=b64(48),d=new Uint8Array(await crypto.s
   window.pending={verifier,state};send(id,{v:1,type:'prepare',redirectUri:'${APP}/callback',challenge,state,requests:[]});};
 window.openOwn=url=>{window.own=window.open(url,'_blank');};
 </script>`;
+// The real elements (packages/sdk): <bindle-sign-in> and <bindle-account> mount the islands the provider declares.
+const elementsPage=`<!doctype html><html lang="en"><meta charset="utf-8"><title>Fixture app (elements)</title><body style="margin:1rem">
+<script type="module">import '/packages/sdk/src/define.mjs';window.events=[];for(const type of ['bindle-session-change','bindle-sign-in-start','bindle-sign-in-end','bindle-account-change','bindle-account-change-failed','bindle-menu-toggle'])document.addEventListener(type,e=>window.events.push({type,detail:JSON.parse(JSON.stringify(e.detail??null))}));window.sdkReady=true;</script>
+<bindle-session client-id="${CLIENT}" redirect-uri="${APP}/callback" default-host="provider.example"><bindle-account actions="switch sign-out manage"><bindle-sign-in slot="signed-out"></bindle-sign-in></bindle-account></bindle-session></body></html>`;
 // Stand-in for the A7 provider popup document: static, no COOP header, no account state before the handshake. After the
 // opener-key handshake it performs the owner steps against the real entry routes with the tab's member headers.
 const popupPage=`<!doctype html><meta charset="utf-8"><title>Provider</title><script>
 (async()=>{const EMBED=${JSON.stringify(EMBED)},entry=new URL(location.href).searchParams.get('entry');window.log=[];window.hasOpener=!!window.opener;window.nameAtLoad=window.name;
  const post=(p,b,h={})=>fetch(p,{method:'POST',headers:{'Content-Type':'application/json',...h},body:JSON.stringify(b)}).then(r=>r.json());
  addEventListener('message',async e=>{log.push({origin:e.origin,type:e.data&&e.data.type,fromOpener:e.source===window.opener});if(e.origin!==EMBED||e.source!==window.opener)return;
-  if(e.data.type==='bindle-embed-proof'){const {pageSecret}=await post('/oauth/entries/'+entry+'/embed-verify',{proof:e.data.proof});
+  if(e.data.type==='bindle-embed-proof'){const {pageSecret}=await post('/oauth/entries/'+entry+'/embed-verify',{proof:e.data.proof},page);
    const session=await(await fetch('/api/session')).json(),member={'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext,'X-CSRF-Token':session.csrfToken};
-   const view=await(await fetch('/api/oauth/entries/'+entry)).json(),selection=await post('/api/oauth/entries/'+entry+'/select',{nonce:view.entry.nonce,pageSecret},member);await fetch('/api/oauth/requests/'+selection.requestId);
-   const r=await post('/api/oauth/entries/'+entry+'/decision',{nonce:view.entry.nonce,pageSecret,approved:[]},member);window.decision=r;
+   const view=await(await fetch('/api/oauth/entries/'+entry)).json(),selection=await post('/api/oauth/entries/'+entry+'/select',{nonce:view.entry.nonce,pageSecret},{...member,...page});await fetch('/api/oauth/requests/'+selection.requestId);
+   const r=await post('/api/oauth/entries/'+entry+'/decision',{nonce:view.entry.nonce,pageSecret,approved:[]},{...member,...page});window.decision=r;
    window.opener.postMessage({v:1,type:'bindle-embed-done',entry,code:r.code,state:r.state,iss:r.iss,claim:r.claim},EMBED);}
   if(e.data.type==='bindle-embed-ack'){window.acked=true;}});
- const {challenge}=await post('/oauth/entries/'+entry+'/embed-challenge',{});
+ // Every page mutation carries the entry's page token from its view.
+ const first=await(await fetch('/api/oauth/entries/'+entry)).json(),page=first.pageToken?{'X-Bindle-Entry-Token':first.pageToken}:{};
+ const {challenge}=await post('/oauth/entries/'+entry+'/embed-challenge',{},page);
  if(window.opener)window.opener.postMessage({v:1,type:'bindle-embed-hello',entry,challenge},EMBED);})();
 </script>`;
 // Records P8-relevant calls in every frame, including the cross-origin islands.
@@ -117,18 +123,24 @@ async function fixture(t,name){
     const response=await forwardTo(worker.port,{method:request.method(),url:request.url(),headers:{...Object.fromEntries(Object.entries(headers).filter(([k])=>!k.startsWith(':')&&!['host','accept-encoding','connection','content-length'].includes(k))),'cf-connecting-ip':remote},body:['GET','HEAD'].includes(request.method())?undefined:request.postDataBuffer()});
     const out={};for(const [k,v] of Object.entries(response.headers))if(!['connection','keep-alive','transfer-encoding','content-length'].includes(k))out[k]=Array.isArray(v)?v.join('\n'):v;
     return {status:response.status,headers:out,body:response.body};};
-  await context.route('**/*',async route=>{
+  // The route handler outlives a closed browser for long-lived requests (the leader's NDJSON stream, which this
+  // buffering forwarder can only deliver when the Worker ends it), so late failures are dropped, never unhandled.
+  await context.route('**/*',route=>handle(route).catch(()=>route.abort().catch(()=>{})));
+  const handle=async route=>{
     const request=route.request(),url=new URL(request.url()),raw=await request.allHeaders(),headers={...raw,...metadata(url,raw)};
     const entry={method:request.method(),url:url.href,headers};log.push(entry);
     if(url.origin===APP){
       if(url.pathname==='/')return route.fulfill({contentType:'text/html',headers:{'Cross-Origin-Opener-Policy':'same-origin-allow-popups'},body:appPage});
+      if(url.pathname==='/elements')return route.fulfill({contentType:'text/html',headers:{'Cross-Origin-Opener-Policy':'same-origin-allow-popups'},body:elementsPage});
+      // The real @3sln/bindle elements, served from this checkout.
+      if(/^\/(?:packages\/sdk\/src|packages\/i18n|vendor\/dodo)\//.test(url.pathname)&&!url.pathname.includes('..'))return route.fulfill({contentType:['.mjs','.js'].includes(extname(url.pathname))?'text/javascript':'text/plain',body:await readFile(resolve('.'+url.pathname))});
       return route.fulfill({status:404,body:''});
     }
     if(url.origin===ISSUER&&url.pathname==='/oauth/authorize'&&url.searchParams.has('entry'))return route.fulfill({contentType:'text/html',headers:{'Referrer-Policy':'no-referrer'},body:popupPage});
     if(url.origin===ISSUER&&url.pathname==='/test/blank')return route.fulfill({contentType:'text/html',body:'<!doctype html><title>Provider fixture</title>'});
     if(url.origin===ISSUER||url.origin===EMBED){const response=await forward(route,headers);entry.status=response.status;if(process.env.ISLANDS_DEBUG&&url.pathname.startsWith('/embed/api/'))console.error('api',request.method(),url.pathname,response.status,String(response.body).slice(0,300));return route.fulfill(response);}
     return route.abort();
-  });
+  };
   // A real provider account (password signup plus recovery confirmation) with a display name and an avatar served from
   // the provider's own static assets.
   const provider=await context.newPage();await provider.goto(ISSUER+'/test/blank');
@@ -306,3 +318,91 @@ for(const name of ['chromium','firefox','webkit'])test(`islands in ${name}`,{tim
   });
 });
 
+
+// ---- The real elements mount the real islands -------------------------------------------------------------------
+// True once the island shows the key-bound, re-encoded picture (transparent corner, opaque blue centre), not the monogram.
+const boundPicture=async()=>{const img=document.querySelector('img.avatar');if(!img?.src.startsWith('blob:'))return false;await img.decode().catch(()=>{});if(!img.naturalWidth)return false;const c=document.createElement('canvas');c.width=c.height=img.naturalWidth;const x=c.getContext('2d');x.drawImage(img,0,0);const corner=x.getImageData(1,1,1,1).data,centre=x.getImageData(img.naturalWidth/2,img.naturalWidth/2,1,1).data;return corner[3]===0&&centre[3]===255&&centre[2]>200;};
+const islandFrame=(page,part)=>page.frames().find(frame=>frame.url().startsWith(EMBED+'/embed?')&&frame.url().endsWith(`#${part}.v1`));
+async function credentialCount(frame){return frame.evaluate(()=>new Promise((ok,fail)=>{const req=indexedDB.open('bindle-embed');req.onerror=()=>fail(req.error);req.onsuccess=()=>{const db=req.result;if(!db.objectStoreNames.contains('credentials')){db.close();return ok(0);}const count=db.transaction('credentials').objectStore('credentials').count();count.onsuccess=()=>{db.close();ok(count.result);};};}));}
+async function islandSignIn(f,page){
+  await page.waitForFunction(()=>document.querySelector('bindle-sign-in')?.state.islands==='live',null,{timeout:10000});
+  const frame=islandFrame(page,'sign-in');assert.ok(frame,'the sign-in island frame');
+  await until(frame,()=>document.documentElement.dataset.part==='sign-in');await sleep(600);
+  const popupPromise=f.context.waitForEvent('page',{timeout:8000});
+  await frame.locator('button.signin').hover();await sleep(500);await frame.locator('button.signin').click();
+  const popup=await popupPromise;
+  await page.waitForFunction(()=>window.events.some(e=>e.type==='bindle-sign-in-end'),null,{timeout:20000});
+  const end=await page.evaluate(()=>window.events.find(e=>e.type==='bindle-sign-in-end').detail);assert.equal(end.outcome,'completed',JSON.stringify(end));
+  return popup;
+}
+for(const name of ['chromium','firefox','webkit'])test(`elements mount real islands in ${name}`,{timeout:180000},async t=>{
+  const f=await fixture(t,name);if(!f)return;
+  const page=await f.open();await page.goto(APP+'/elements');await page.waitForFunction(()=>window.sdkReady&&document.querySelector('bindle-session')?.capabilities,null,{timeout:10000});
+
+  await t.test('<bindle-sign-in> mounts the sign-in island and translates its flow; the app exchanges the island code',async()=>{
+    await page.waitForFunction(()=>document.querySelector('bindle-sign-in').shadowRoot?.querySelector('.island iframe'),null,{timeout:10000});
+    const caps=await page.evaluate(()=>document.querySelector('bindle-session').capabilities);
+    assert.equal(caps.embedOrigin,EMBED);assert.ok(caps.islands.signIn);assert.ok(caps.islands.avatar);assert.equal(caps.fedcm,false,'the provider declares no fedcm.v1');
+    const iframe=await page.evaluateHandle(()=>document.querySelector('bindle-sign-in').shadowRoot.querySelector('.island iframe'));
+    const attrs=await iframe.evaluate(el=>({src:el.getAttribute('src'),allow:el.getAttribute('allow'),referrer:el.getAttribute('referrerpolicy'),name:el.name}));
+    assert.equal(attrs.src,`${EMBED}/embed?client=${encodeURIComponent(CLIENT)}#sign-in.v1`);assert.match(attrs.allow,/^identity-credentials-get 'none'; storage-access 'none';/);assert.equal(attrs.referrer,'no-referrer');
+    assert.match(attrs.name,/^bindle-island;v=1;n=[\w-]{22};l=en;cs=(light|dark)$/);
+    await islandSignIn(f,page);
+    const end=await page.evaluate(()=>window.events.find(e=>e.type==='bindle-sign-in-end').detail);
+    assert.equal(end.outcome,'completed',JSON.stringify(end));assert.equal(end.session.subject,f.subject);
+    const order=await page.evaluate(()=>window.events.map(e=>e.type).filter(type=>['bindle-session-change','bindle-sign-in-start','bindle-sign-in-end'].includes(type)));
+    assert.deepEqual(order,['bindle-session-change','bindle-sign-in-start','bindle-session-change','bindle-sign-in-end'],'sign-in ends only after the app credential is ready');
+    assert.equal((await page.evaluate(()=>window.events.find(e=>e.type==='bindle-sign-in-start').detail)).source,'island');
+    assert.ok(f.log.some(e=>e.method==='POST'&&e.url===`${ISSUER}/oauth/token`&&e.headers.origin===APP),'the app redeemed the code itself');
+  });
+
+  await t.test('<bindle-account>: the avatar island shows the key-bound picture; the leader streams /embed/api/events; the switcher shows the account',async()=>{
+    await page.waitForFunction(()=>document.querySelector('bindle-account').state.islands.avatar==='live',null,{timeout:10000});
+    const avatar=islandFrame(page,'avatar');
+    await until(avatar,boundPicture,null,15000);
+    const box=await page.evaluate(()=>{const a=document.querySelector('bindle-account').shadowRoot,frame=a.querySelector('.avatar-island iframe').getBoundingClientRect();return {w:frame.width,h:frame.height,hidden:a.querySelector('.avatar-island iframe').getAttribute('aria-hidden')};});
+    assert.deepEqual(box,{w:32,h:32,hidden:'true'});
+    await sleep(500);const stream=f.log.find(e=>e.method==='GET'&&e.url===`${EMBED}/embed/api/events`);
+    assert.ok(stream,'the leader opened the data stream');assert.match(stream.headers.authorization,/^BindleEmbedSession /);assert.ok(stream.headers.dpop);
+    await page.getByRole('button',{name:/^Account: /}).hover();
+    await page.waitForFunction(()=>document.querySelector('bindle-account').state.islands.switcher==='live',null,{timeout:10000});
+    await page.getByRole('button',{name:/^Account: /}).click();
+    const switcher=islandFrame(page,'account-switcher');await until(switcher,()=>document.querySelector('.card .name')?.textContent==='Display alex',null,10000);
+    assert.deepEqual(await page.evaluate(()=>document.querySelector('bindle-account').state.actions),['sign-out'],'switch and manage live in the island');
+    await switcher.locator('.card').focus();await page.keyboard.press('Escape');
+    await page.waitForFunction(()=>!document.querySelector('bindle-account').open,null,{timeout:5000});
+    assert.equal((await page.evaluate(()=>window.events.filter(e=>e.type==='bindle-menu-toggle').at(-1).detail)).reason,'escape');
+  });
+
+  await t.test('app sign-out sends forget: the islands stay mounted, show no account and drop the binding',async()=>{
+    const avatar=islandFrame(page,'avatar');assert.equal(await credentialCount(avatar),1);f.frames={avatar,switcher:islandFrame(page,'account-switcher')};
+    await page.getByRole('button',{name:/^Account: /}).click();await page.getByRole('button',{name:'Sign out of this app'}).click();
+    await page.waitForFunction(()=>!document.querySelector('bindle-session').session);
+    await until(avatar,async()=>await new Promise(ok=>{const req=indexedDB.open('bindle-embed');req.onsuccess=()=>{const db=req.result,c=db.transaction('credentials').objectStore('credentials').count();c.onsuccess=()=>{db.close();ok(c.result===0);};};}),null,10000);
+    assert.equal(islandFrame(page,'avatar'),avatar,'the avatar island was not remounted');assert.equal(islandFrame(page,'account-switcher'),f.frames.switcher,'nor the switcher');
+    for(let i=0;i<50&&!f.log.some(e=>e.method==='POST'&&e.url===`${EMBED}/embed/api/forget`);i++)await sleep(100);
+    assert.ok(f.log.some(e=>e.method==='POST'&&e.url===`${EMBED}/embed/api/forget`),'the provider credential was forgotten too');
+    assert.equal(await page.evaluate(()=>document.querySelector('bindle-account').state.islands.avatar),'live');
+    assert.deepEqual(f.errors.filter(e=>!/ResizeObserver/.test(e)),[]);
+  });
+
+  await t.test('leader pagehide ends its embed session from the island document (session/end, keepalive, bearer only)',async()=>{
+    await page.evaluate(()=>{window.events.length=0;});await islandSignIn(f,page);
+    await page.waitForFunction(()=>document.querySelector('bindle-account').state.islands.avatar==='live',null,{timeout:10000});
+    // The new binding becomes restorable once the app exchanged its code (the leader retries the pending credential).
+    await until(islandFrame(page,'avatar'),boundPicture,null,20000);
+    assert.equal(islandFrame(page,'avatar'),f.frames.avatar,'signing in again reuses the same islands');assert.equal(islandFrame(page,'account-switcher'),f.frames.switcher);
+    const ends=()=>f.log.filter(e=>e.url===`${EMBED}/embed/api/session/end`),before=ends().length;
+    // Playwright does not observe keepalive requests of a document that is being destroyed (navigation or iframe removal
+    // send them past its interception), so the island's own pagehide handler runs on a synthetic event in every island
+    // document while it is still alive. Only the leader holds sessions to end.
+    for(const part of ['avatar','account-switcher','sign-in'])await islandFrame(page,part)?.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
+    for(let i=0;i<30&&!ends().slice(before).some(e=>e.status);i++)await sleep(100);
+    // Chromium sends keepalive requests through its browser-side loader, which Playwright's interception does not see,
+    // so there the request would leave for the unresolvable .example host: recorded, not asserted.
+    if(name==='chromium'&&ends().length===before){t.diagnostic('chromium: keepalive session/end is not observable through Playwright interception');return;}
+    assert.ok(ends().length>before,'session/end reached the Worker');
+    const end=ends().at(-1);assert.equal(end.method,'POST');assert.match(end.headers.authorization,/^BindleEmbedSession /);assert.equal(end.headers.dpop,undefined);assert.equal(end.headers['x-bindle-embed'],'1');
+    assert.equal(ends().length-before,1,'one held session, one end');assert.equal(end.status,204);
+  });
+});

@@ -1,5 +1,6 @@
+import {everPaidEvent} from '../identity/lifecycle-protection.mjs';
 import {accountSessionRoutes,accountRoutePaths,installAccountSession} from './account-session-http.mjs';
-import {accountCookiesEnabled,selectedAccountMember,parseAccountCookies,hasAccountVault,installedAccountCookies,removedAccountCookies,accountFault} from './account-cookies.mjs';
+import {accountCookiesEnabled,selectedAccountMember,parseAccountCookies,hasAccountVault,installedAccountCookies,removedAccountCookies,accountFault,readAccountMember,defaultAccountOwner,removedMemberCookie,accountCookieName} from './account-cookies.mjs';
 import {onboardingEnabled,onboardingOnly} from '../identity/onboarding.mjs';
 import {publicBadgePolicy,compileBadgeSprite} from '../identity/badge-policy.mjs';
 import {developerContactRoutes} from './developer-contact.mjs';
@@ -166,7 +167,7 @@ export default {
     if(path.startsWith('/bindle/objects/'))return handleObjectURL(request,{controller:env.FEDERATION_AUTHORITY,enabled:env.FEDERATION_ENABLED==='true'});
     // Provider-owned authorization entry (adaptive sign-in §7): cookieless creation keyed by the caller's IP
     // pseudonym, owner steps resolved through the multi-account cookies, and its own strict document policy (F7).
-    const entryResponse=await handleAuthorizationEntry(request,{entries:env.FEDERATION_ENTRIES,issuer:env.APP_ORIGIN,assets:env.ASSETS,allowInsecureLocalhost:local,enabled:env.FEDERATION_ENABLED==='true'&&Boolean(env.FEDERATION_ENTRIES),remote:()=>entryRemote,ownerContext:entryRequest=>entryOwnerContext(entryRequest,env,local)});
+    const entryResponse=await handleAuthorizationEntry(request,{entries:env.FEDERATION_ENTRIES,issuer:env.APP_ORIGIN,assets:env.ASSETS,allowInsecureLocalhost:local,enabled:env.FEDERATION_ENABLED==='true'&&Boolean(env.FEDERATION_ENTRIES),remote:()=>entryRemote,ownerContext:entryRequest=>entryOwnerContext(entryRequest,env,local),endSession:(entryRequest,context,subject)=>entryEndSession(entryRequest,env,local,subject)});
     if(entryResponse)return entryResponse.headers.get('Content-Type')?.includes('text/html')?securePage(await brandPage(entryResponse,env),false,false,{keepPolicy:true}):entryResponse;
     const response=await handleFederation(request,{controller:env.FEDERATION_AUTHORITY,issuer:env.APP_ORIGIN,allowInsecureLocalhost:local,assets:env.ASSETS,enabled:env.FEDERATION_ENABLED==='true',ownerContext:ownerRequest=>entryOwnerContext(ownerRequest,env,local)});
     // Contact intents (links §6.4, core feature `intents.v1`): this host accepts `bindle_intent` on its console entry.
@@ -190,7 +191,10 @@ export default {
     const verified=await verifyPolarWebhook(request,env);if(verified.ignored)return json({accepted:true,ignored:true});if(verified.catalog){if(!env.BILLING_CATALOG)throw Object.assign(new Error('Catalog registry is unavailable.'),{code:'billing_unconfigured',status:503});if(!await env.BILLING_CATALOG.relevant(verified))return json({accepted:true,ignored:true});return json(await env.BILLING_CATALOG.applyWebhook(verified));}if(verified.refund){if(!env.BILLING_CATALOG)throw Object.assign(new Error('Catalog registry is unavailable.'),{code:'billing_unconfigured',status:503});Object.assign(verified,await env.BILLING_CATALOG.resolveRefund(verified));}
     if(!verified.owner||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(verified.owner))return json({accepted:true,ignored:true});
     verified.relevant=env.BILLING_CATALOG?await env.BILLING_CATALOG.relevant(verified):Object.values({paid:env.POLAR_PRODUCT_ID_PAID,plus:env.POLAR_PRODUCT_ID_PLUS,ultra:env.POLAR_PRODUCT_ID_ULTRA}).some(id=>id&&(id===verified.productId||verified.productIds?.includes(id)));
-    const account=await env.IDENTITY_REPOSITORY.get(verified.owner);if(!account||(account.status!=='active'&&!(['pending','recovering'].includes(account.status)&&account.admission?.version===1&&account.admission.kind==='paid'&&account.admission.initialPaymentRequired!==false)))return json({accepted:true,ignored:true});
+    const account=await env.IDENTITY_REPOSITORY.get(verified.owner);
+    // Lifecycle ever-paid evidence is kept for every non-deleted identity, before the billing status filter.
+    if(account&&account.status!=='deleted'&&everPaidEvent(verified))await accountHandle(env,verified.owner).lifecycleEverPaid(verified.owner,{type:verified.type,productIds:verified.productIds});
+    if(!account||(account.status!=='active'&&!(['pending','recovering'].includes(account.status)&&account.admission?.version===1&&account.admission.kind==='paid'&&account.admission.initialPaymentRequired!==false)))return json({accepted:true,ignored:true});
     return json(await accountHandle(env,verified.owner).billingWebhookVerified(verified.owner,verified));
    }
    if(path==='/manifest.webmanifest'&&request.method==='GET'){const asset=await env.ASSETS.fetch(request);const manifest=await asset.json();const name=env.BRAND_NAME||'3sln.me';return new Response(JSON.stringify({...manifest,name,short_name:name,...name==='3sln.me'?{}:{icons:[{src:'/generic-icon.svg',sizes:'any',type:'image/svg+xml',purpose:'any'}]}}),{headers:{'Content-Type':'application/manifest+json','Cache-Control':'no-cache'}});}
@@ -338,6 +342,9 @@ export default {
     const id=owner.account.id;const object=accountHandle(env,id);
     // Owner mutations independently require session CSRF, even when not an identity action.
     if(mutation&&context.csrfToken!==owner.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
+    // Restricted lifecycle routes stay reachable while suspended and run before activity is recorded.
+    if(path==='/api/account/lifecycle')return json(await object.lifecycleStatus(id));
+    if(path==='/api/account/lifecycle/reactivate'){const input=await body(request,128);if(Object.keys(input).length)return json({error:'invalid_request'},400);const current=owner.devices?.find(device=>device.current);if(!current)return json({error:'unauthorized'},401);return json(await object.lifecycleReactivate(id,{kind:'owner-session',owner:id,authenticatedAt:current.createdAt}));}
     const automationResponse=await automationRoutes({path,request,owner,object,body,json});if(automationResponse)return automationResponse;
     if(mcpOwnerPath(path))return handleMcpOwner({request,env,owner,body});
     if(['/api/integrations/google/start','/api/integrations/google/complete'].includes(path)){const device=owner.devices?.find(d=>d.current);if(!device)return json({error:'unauthorized'},401);const input=await body(request);return json(await object[path.endsWith('/start')?'googleDriveStart':'googleDriveComplete'](id,device.id,input));}
@@ -426,8 +433,9 @@ export default {
  },
  async scheduled(controller,env,ctx){
    if(env.DEVELOPER_CONTACT_POPULATION)ctx.waitUntil(env.DEVELOPER_CONTACT_POPULATION.censusStep());
-   // No automatic deletion until verified notification/recovery gates are implemented.
-   // Account-object alarms perform safe cold shelving; lifecycle proposals are public docs.
+   // Account lifecycle sweep (present only when LIFECYCLE_ENABLED): arms schedules and nudges bounded ticks;
+   // per-account alarms drive notices, suspension and, only when separately enabled, purge.
+   if(env.LIFECYCLE_SWEEP)ctx.waitUntil(env.LIFECYCLE_SWEEP.run({trigger:'cron'}).catch(()=>{}));
  }
 };
 /** `keepPolicy`: a handler's own CSP stays authoritative; only the build's import-map hash joins its script-src. */
@@ -463,6 +471,26 @@ async function entryOwnerContext(request,env,local){
  const member=await selectedAccountMember(request,env,local,cookies);
  if(member)return {...base,sessionToken:member.token,expectedOwner:member.owner,sessionContext:member.sessionContext};
  return {...base,sessionToken:hasAccountVault(cookies,local)?undefined:sessionToken(request,local)};
+}
+/** Provider end-session for an authorization entry (auth.md D8; multi-account-sessions "App-requested account flows"):
+ * ends only this browser's session for the entry's subject, never other saved accounts or other devices. The
+ * subject's member cookie is authenticated by name; when present, the page must name exactly that member and send its
+ * live CSRF, and the owner session is revoked before success. No session for the subject here is still a success. */
+async function entryEndSession(request,env,local,subject){
+ const owner=typeof subject==='string'&&subject.startsWith(env.APP_ORIGIN+'/entities/')?subject.slice(env.APP_ORIGIN.length+10):'';if(!uuidPattern.test(owner))throw accountFault('invalid_request',400);
+ const context={origin:request.headers.get('Origin')||env.APP_ORIGIN,csrfToken:request.headers.get('X-CSRF-Token'),remoteIP:request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown')};let member;
+ if(accountCookiesEnabled(env)){
+  const jar=parseAccountCookies(request,local);
+  // Without any member cookie the legacy session still authenticates owner steps, so it is the one to end (review 5).
+  if(!hasAccountVault(jar,local))return legacyEnd();
+  try{member=await readAccountMember(env,jar,owner,local);}catch(error){return error.code==='invalid_account_cookie'?[removedMemberCookie(accountCookieName(owner,local),local)]:[];}
+  if(request.headers.get('X-Bindle-Account')!==owner||request.headers.get('X-Bindle-Session-Context')!==member.sessionContext)throw accountFault('account_context_conflict',409);
+  Object.assign(context,{sessionToken:member.token,expectedOwner:owner,sessionContext:member.sessionContext});return revoke(removedAccountCookies(owner,local,await defaultAccountOwner(env,jar,local).catch(()=>null)===owner));
+ }
+ return legacyEnd();
+ async function legacyEnd(){const token=sessionToken(request,local);if(!token||token.split('.')[0]!==owner)return [];context.sessionToken=token;return revoke([cookie('',local,0)]);}
+ // Owner revocation precedes success; a session that is already gone (or no longer usable) has nothing left to end.
+ async function revoke(cookies){const engine=await identity(env);try{await engine.dispatch(new IdentityAction('logout',{},context)).next('result');}catch(error){if(error.code!=='unauthorized')throw error;}finally{engine.dispose();}return cookies;}
 }
 const INERT_ISLAND='<!doctype html><meta charset="utf-8"><title></title>';
 /** Embed routes exist only with federation, mounted entries and their configured dedicated embed origin. */
@@ -533,7 +561,8 @@ function allowedMethods(path){
  if(/^\/api\/apps\/[a-f0-9-]{36}\/notifications$/.test(path))return ['PUT'];
  if(path==='/api/incoming')return ['GET','PATCH'];
  if(['/api/storage/usage','/api/billing','/api/messages/page','/api/search'].includes(path))return ['GET'];
- if(['/api/config','/api/session','/api/account'].includes(path))return ['GET'];
+ if(['/api/config','/api/session','/api/account','/api/account/lifecycle'].includes(path))return ['GET'];
+ if(path==='/api/account/lifecycle/reactivate')return ['POST'];
  if(path==='/api/developer-contact')return ['GET'];
  if(['/api/contact-links','/api/links/respond','/api/links/envelope'].includes(path))return ['POST'];
  if(path==='/api/tags/labels')return ['GET','PUT'];

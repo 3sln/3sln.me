@@ -5,16 +5,16 @@ import assert from 'node:assert/strict';
 import {createSession} from '../packages/sdk/src/flows.mjs';
 import {memoryStorage} from '../packages/sdk/src/testing.mjs';
 import {handleCallback} from '../packages/sdk/src/callback.mjs';
-import {provider,post,providerPage,issuer,clientId,redirectUri} from './authorization-entry-helpers.mjs';
+import {provider,post,providerPage,pageHeaders,issuer,clientId,redirectUri} from './authorization-entry-helpers.mjs';
 const host=new URL(issuer).host;
 function fakeWindow(){const assigned=[];return {assigned,navigator:{language:'en'},location:{href:'https://app.example/',assign:url=>assigned.push(url)},matchMedia:()=>({matches:false})};}
 /** The first-party page outcome for an entry URL: the callback URL the provider would navigate to. */
 async function authorize(p,url,{decision='approve',account=p.accounts[0],authTime}={}){
- const entryId=new URL(url).searchParams.get('entry'),view=(await p.entries.view(entryId)).entry,session=p.signIn(account,authTime);
- if(view.intent==='end-session')return (await(await post(p,`${issuer}/api/oauth/entries/${entryId}/end-session`,{nonce:view.nonce,confirmed:decision==='approve'},{Origin:issuer,Cookie:session.cookie,'X-CSRF-Token':session.csrf})).json()).redirectUri;
- const page=await providerPage(p,entryId,session,{decision});if(page.result?.redirectUri)return page.result.redirectUri;
+ const entryId=new URL(url).searchParams.get('entry'),page=await p.entries.view(entryId),view=page.entry,session=p.signIn(account,authTime);
+ if(view.intent==='end-session')return (await(await post(p,`${issuer}/api/oauth/entries/${entryId}/end-session`,{nonce:view.nonce,confirmed:decision==='approve'},pageHeaders(page,{Cookie:session.cookie,'X-CSRF-Token':session.csrf}))).json()).redirectUri;
+ const done=await providerPage(p,entryId,session,{decision});if(done.result?.redirectUri)return done.result.redirectUri;
  // The page refused the chosen account (wrong account, stale sign-in): the user cancels from the chooser.
- return (await(await post(p,`${issuer}/api/oauth/entries/${entryId}/decision`,{nonce:view.nonce,denied:true},{Origin:issuer,Cookie:session.cookie,'X-CSRF-Token':session.csrf})).json()).redirectUri;
+ return (await(await post(p,`${issuer}/api/oauth/entries/${entryId}/decision`,{nonce:view.nonce,denied:true},pageHeaders(page))).json()).redirectUri;
 }
 function installPopupDriver(p,win,{decide=()=>({decision:'approve'}),blocked=false}={}){
  const opened=[];win.open=(url,target,features)=>{if(blocked)return null;const popup={url,target,features,closed:false,opener:win,document:{title:'',body:{textContent:''}},close(){popup.closed=true;},focus(){},location:{}};

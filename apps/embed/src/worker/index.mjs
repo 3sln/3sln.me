@@ -3,17 +3,17 @@
 // fetch and raster work. The document only renders what this worker returns. Started only after `ready`
 // (the `sign-in` part starts it only on a user activation, profile P10).
 import {openStore,frameKey,randomId,listCredentials,saveCredential,deleteCredentials,updateCredential,readGeneration,nextTerm} from '../keys.mjs';
-import {embedAPI,createEntry,restoreAll} from '../restore.mjs';
+import {embedAPI,createEntry,restoreAll,normalizeView} from '../restore.mjs';
 import {createElection,ELECTION} from './leader.mjs';
 import {monogramPNG,transparentPNG,reencodeAvatar,validBucket} from './avatar.mjs';
 
-const SNAPSHOT_TTL=600000,RENEW_MARGIN=120000,PENDING_RETRY=[2000,4000,8000,16000,32000];
+const SNAPSHOT_TTL=600000,RENEW_MARGIN=120000,PENDING_RETRY=[2000,4000,8000,16000,32000],STREAM_RETRY=[2000,4000,8000,16000,32000,60000];
 export function createIslandWorker({post,storeFactory=openStore,crypto=globalThis.crypto,fetch=globalThis.fetch?.bind(globalThis),indexedDB=globalThis.indexedDB,locks=globalThis.navigator?.locks,BroadcastChannel:Channel=globalThis.BroadcastChannel,clock=()=>Date.now(),timing={}}){
   let config,instance,role,store,key,api,election,scheme='light',visible=true,started=false,generation=0,renewTimer=null;
   // Operations wait for a started worker (IMPL-1): a forget arriving during a bfcache resume is queued, not dropped.
   let ready=Promise.withResolvers();
-  let leadSignal=null,views=[],issuedAt=0,expiry=null,genTimer=null,syncing=null;
-  const buckets=new Map(),sessions=new Map(),retries=new Map(),tiles=new Map();
+  let leadSignal=null,views=[],issuedAt=0,expiry=null,genTimer=null,syncing=null,pagehide=false;
+  const buckets=new Map(),sessions=new Map(),retries=new Map(),tiles=new Map(),streams=new Map(),streamFailures=new Map();
   const scope=()=>({issuer:config.issuer,clientId:config.clientId});
   const emit=()=>post({event:'views',views:views.map(({subject,handle,name,delivered})=>({subject,handle,name,delivered})),issuedAt});
   const clearExpiry=()=>{clearTimeout(expiry);expiry=null;};
@@ -22,7 +22,7 @@ export function createIslandWorker({post,storeFactory=openStore,crypto=globalThi
   // ---- Leader side ----------------------------------------------------------------------------------------
   async function snapshot(){
     const next=[];for(const [id,s] of sessions){if(!s.view||next.length>=8)continue;next.push({id,subject:s.subject,handle:s.view.handle,name:s.view.name,delivered:s.delivered,avatars:{...s.avatars}});}
-    const at=clock();election.publish({views:next,issuedAt:at});adopt(next,at);
+    const at=clock();election.publish({views:next,issuedAt:at});adopt(next,at);announce();
   }
   async function fetchAvatars(id){
     const s=sessions.get(id);if(!s?.view?.avatar)return;
@@ -30,18 +30,45 @@ export function createIslandWorker({post,storeFactory=openStore,crypto=globalThi
   }
   /** One renewal batch for all sessions on the earliest expiry, so redraw frequency does not grow with the binding count (IMPL-7). */
   function scheduleRenew(){clearTimeout(renewTimer);if(!sessions.size)return;const due=Math.min(...[...sessions.values()].map(s=>s.expiresAt));renewTimer=setTimeout(()=>sync({renewAll:true}),Math.max(1000,due-RENEW_MARGIN-clock()));}
+  /** Leader work is serialized: restores, stream updates and snapshots never interleave. */
+  const serial=work=>(syncing=(syncing??Promise.resolve()).then(work).catch(()=>{}));
+  // ---- Data stream (embed-islands §5.1): one `GET /embed/api/events` per held session, leader only ---------------
+  function closeStream(id){streams.get(id)?.abort();streams.delete(id);}
+  /** The document ends held sessions on `pagehide` itself (a worker is often gone before it reads the message), so it
+   * is told the current set of session tokens; nothing else about them leaves the worker. */
+  const announce=()=>post({event:'sessions',tokens:election?.leading?[...sessions.values()].map(s=>s.session):[]});
+  /** Closes streams and drops held sessions. On demotion (a steal) it also ends them; on pagehide the document does. */
+  function release({end=true}={}){for(const id of [...streams.keys()])closeStream(id);if(end)for(const s of sessions.values())api?.end(s.session);sessions.clear();announce();}
+  function openStream(id){
+    const s=sessions.get(id);if(!s||!election?.leading||!leadSignal||leadSignal.aborted)return;
+    closeStream(id);const controller=new AbortController(),signal=AbortSignal.any([leadSignal,controller.signal]),token=s.session;streams.set(id,controller);
+    (async()=>{
+      try{for await(const event of api.events(token,{signal})){if(signal.aborted)return;streamFailures.delete(id);if(event.type==='view')await serial(()=>applyView(id,token,event.view));}}catch{}
+      if(signal.aborted||streams.get(id)!==controller)return;streams.delete(id);
+      // The server ended the stream (expiry, eviction by a newer stream, binding no longer live): restore that binding
+      // again with backoff; a revoked binding then fails restore with 401 and is deleted (settle).
+      const failures=streamFailures.get(id)??0;streamFailures.set(id,failures+1);
+      setTimeout(()=>{if(election?.leading&&!signal.aborted&&sessions.get(id)?.session===token)sync({renew:id});},STREAM_RETRY[Math.min(failures,STREAM_RETRY.length-1)]);
+    })();
+  }
+  /** A changed view from the stream: new labels or picture are fetched and fanned out; an unchanged one costs nothing. */
+  async function applyView(id,token,raw){
+    const s=sessions.get(id),view=normalizeView(raw,{issuer:config.issuer});if(!s||s.session!==token||!view||!election?.leading)return;
+    if(s.view&&['handle','name','avatar'].every(key=>s.view[key]===view[key])&&(s.view.subject??null)===(view.subject??s.subject??null))return;
+    if(!s.subject&&view.subject){s.subject=view.subject;await updateCredential(store,scope(),id,{subject:view.subject});}
+    s.view=view;s.avatars={};tiles.clear();await fetchAvatars(id);await snapshot();
+  }
   /** Re-reads the credential set (the generation is the source of truth) and restores what changed, serially. */
   function sync({renew,renewAll}={}){
-    syncing=(syncing??Promise.resolve()).then(async()=>{
+    return serial(async()=>{
       if(!election?.leading)return;const signal=leadSignal;
       generation=await readGeneration(store,config.clientId);
       const records=await listCredentials(store,scope()),ids=new Set(records.map(r=>r.id));
-      for(const id of [...sessions.keys()])if(!ids.has(id))sessions.delete(id);
+      for(const id of [...sessions.keys()])if(!ids.has(id)){closeStream(id);sessions.delete(id);}
       const todo=records.filter(r=>renewAll||!sessions.has(r.id)||r.id===renew).slice(0,8);
       for(const result of await restoreAll(api,todo,{issuer:config.issuer,clock,pad:timing.restorePadMs,slots:todo.length?8:0,signal}))if(!signal?.aborted)await settle(records.find(r=>r.id===result.id),result);
       if(election?.leading&&!signal?.aborted){scheduleRenew();await snapshot();}
-    }).catch(()=>{});
-    return syncing;
+    });
   }
   async function settle(record,result){
     if(!record)return;
@@ -50,12 +77,14 @@ export function createIslandWorker({post,storeFactory=openStore,crypto=globalThi
       if(!subject&&result.view?.subject){subject=result.view.subject;await updateCredential(store,scope(),record.id,{subject});}
       const previous=sessions.get(record.id);
       sessions.set(record.id,{session:result.session,expiresAt:result.expiresAt,view:result.view,subject,delivered:record.delivered===true,avatars:previous?.view?.avatar&&result.view?.avatar?previous.avatars:{}});
-      await fetchAvatars(record.id);return;
+      // A renewal replaces the session: its stream moves to the new one and the old session is ended.
+      if(previous&&previous.session!==result.session){closeStream(record.id);api.end(previous.session);}
+      await fetchAvatars(record.id);openStream(record.id);return;
     }
     // A pending credential is unusable until the app exchanges the paired code: retry within its window only.
     const attempt=retries.get(record.id)??0;
     if(record.pendingUntil>clock()&&attempt<PENDING_RETRY.length){retries.set(record.id,attempt+1);setTimeout(()=>sync({renew:record.id}),PENDING_RETRY[attempt]);return;}
-    if(result.status===401){retries.delete(record.id);await deleteCredentials(store,scope(),r=>r.id===record.id);}
+    if(result.status===401){retries.delete(record.id);closeStream(record.id);sessions.delete(record.id);await deleteCredentials(store,scope(),r=>r.id===record.id);}
   }
   async function watchGeneration(){if(election?.leading&&await readGeneration(store,config.clientId)!==generation)sync();}
 
@@ -73,7 +102,7 @@ export function createIslandWorker({post,storeFactory=openStore,crypto=globalThi
     // Memory-only storage gives each island its own terms and credentials: lead alone (§5.4; IMPL-4).
     election=createElection({name:`bindle-embed:${config.clientId}`,instance,locks:store.persistent?locks:undefined,openBus:Channel?()=>new Channel(`bindle-embed:${config.clientId}`):undefined,nextTerm:()=>nextTerm(store,config.clientId),
       lead:async({signal})=>{leadSignal=signal;sessions.clear();await sync();},
-      demote:()=>{clearTimeout(renewTimer);sessions.clear();},
+      demote:()=>{clearTimeout(renewTimer);release({end:!pagehide});},
       receive,isVisible:()=>visible,clock,...timing.election});
     election.start();election.send({type:'hello',instance,avatarBucket:buckets.get(instance)??null});
     genTimer=setInterval(()=>watchGeneration().catch(()=>{}),timing.election?.heartbeatMs??ELECTION.heartbeatMs);
@@ -85,7 +114,8 @@ export function createIslandWorker({post,storeFactory=openStore,crypto=globalThi
     if(role==='member')startElection();
     ready.resolve();
   }
-  function stop(){if(!started)return;started=false;ready=Promise.withResolvers();election?.stop();clearInterval(genTimer);clearTimeout(renewTimer);sessions.clear();clearExpiry();store?.close();}
+  // Same teardown in every state (EIR-4): resign, end held sessions with keepalive, close streams, bus and storage.
+  function stop(){if(!started)return;started=false;ready=Promise.withResolvers();pagehide=true;election?.stop();pagehide=false;release({end:false});clearInterval(genTimer);clearTimeout(renewTimer);clearExpiry();store?.close();}
   const hint=message=>election?election.send(message):(()=>{if(!Channel)return;const bus=new Channel(`bindle-embed:${config.clientId}`);bus.postMessage(message);bus.close();})();
 
   // ---- Tiles ----------------------------------------------------------------------------------------------
@@ -103,7 +133,9 @@ export function createIslandWorker({post,storeFactory=openStore,crypto=globalThi
     scheme:value=>{if(value==='light'||value==='dark')scheme=value;},
     bucket:value=>{if(validBucket(value)){buckets.set(instance,value);election?.send({type:'hello',instance,avatarBucket:value});if(election?.leading)receive({type:'hello',instance,avatarBucket:value});}},
     render:async({subjects,bucket})=>{if(!Array.isArray(subjects)||subjects.length>9||!validBucket(bucket))throw new TypeError('render');return Promise.all(subjects.map(s=>tile(typeof s==='string'?s:null,bucket)));},
-    createEntry:({prepare})=>createEntry({...scope(),key,prepare,fetch}),
+    createEntry:({prepare,delivery})=>createEntry({...scope(),key,prepare,delivery:delivery==='embed-fedcm'?'embed-fedcm':'embed-popup',fetch}),
+    /** The FedCM `params.proof`: a fresh single-use nonce from the embed API, signed with the frame key for this entry. */
+    async fedcmProof({entry,assertUrl}){if(typeof entry!=='string'||new URL(assertUrl).origin!==config.issuer)throw new TypeError('fedcm');const {nonce}=await api.nonce();return key.fedcmProof({assertUrl,entry,nonce});},
     proof:({entry,challenge})=>key.embedProof({issuer:config.issuer,entry,challenge}),
     async redeem({claim,delivered}){const value=await api.claim(claim);if(typeof value.credential!=='string'||!value.credential)throw new TypeError('claim');const now=clock();
       await saveCredential(store,scope(),{id:randomId(crypto),credential:value.credential,subject:null,delivered:delivered===true,createdAt:now,pendingUntil:now+Math.min(Number(value.expires_in)||600,600)*1000});

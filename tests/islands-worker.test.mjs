@@ -11,7 +11,7 @@ import {validateBus} from '../apps/embed/src/worker/bus.mjs';
 import {monogramPNG,transparentPNG,rasterKind,reencodeAvatar} from '../apps/embed/src/worker/avatar.mjs';
 import {createIslandWorker} from '../apps/embed/src/worker/index.mjs';
 import {verifyProof,EMBED_PROOF_TYP} from '../packages/federation/dpop.mjs';
-import {provider,post,providerPage,exchange,embedHeaders,issuer,embedOrigin,appOrigin,clientId,redirectUri,pkce,b64} from './authorization-entry-helpers.mjs';
+import {provider,post,providerPage,pageHeaders,exchange,embedHeaders,issuer,embedOrigin,appOrigin,clientId,redirectUri,pkce,b64} from './authorization-entry-helpers.mjs';
 
 const tick=(ms=5)=>new Promise(resolve=>setTimeout(resolve,ms));
 // Same-origin browser metadata for the worker's embed API calls, cross-origin metadata for entry creation.
@@ -47,8 +47,8 @@ test('credentials and the generation counter change together; forget can target 
 async function islandFlow(p,key,log){
   const fetch=browserFetch(p,log),verifier=b64(48),prepare={redirectUri,challenge:pkce(verifier),state:b64(32),requests:[]};
   const entryId=await createEntry({issuer,clientId,key,prepare,fetch});
-  const challenge=(await(await post(p,`${issuer}/oauth/entries/${entryId}/embed-challenge`,{},{Origin:issuer,'Sec-Fetch-Site':'same-origin'})).json()).challenge;
-  const verified=await(await post(p,`${issuer}/oauth/entries/${entryId}/embed-verify`,{proof:await key.embedProof({issuer,entry:entryId,challenge})},{Origin:issuer})).json();
+  const page=pageHeaders(await p.entries.view(entryId)),challenge=(await(await post(p,`${issuer}/oauth/entries/${entryId}/embed-challenge`,{},page)).json()).challenge;
+  const verified=await(await post(p,`${issuer}/oauth/entries/${entryId}/embed-verify`,{proof:await key.embedProof({issuer,entry:entryId,challenge})},page)).json();
   const {result}=await providerPage(p,entryId,p.signIn(),{pageSecret:verified.pageSecret});return {result,verifier,prepare,fetch};
 }
 

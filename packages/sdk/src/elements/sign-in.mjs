@@ -20,14 +20,14 @@ input{min-inline-size:6em;border:0;outline:none;flex:1;font:inherit;background:t
 .submit{margin-block-start:1em}
 .continue{display:block;inline-size:100%;margin-block-end:1em}
 .island{display:block;min-block-size:44px}
-.island:empty,.island[hidden]{display:none}
+.island[hidden]{display:none}
 @media (forced-colors:active){.identity{border-color:FieldText;background:Field;color:FieldText}}
 `;
 const endOutcomes={completed:'completed',canceled:'canceled',dismissed:'canceled','popup-blocked':'popup-blocked','discovery-error':'discovery-error','network-error':'network-error'};
 
 export class BindleSignInElement extends ElementBase {
-  static observedAttributes=['lang','theme','default-host','identity-required'];
-  #session=null;#value='';#status='';#error='';#listeners=[];#connected=false;#unwatch=null;#island=null;#islandState='off';#islandKey='';#form=false;#last=null;#started=false;#discovering=null;
+  static observedAttributes=['lang','theme','default-host','identity-required','island-label','island-variant'];
+  #session=null;#value='';#status='';#error='';#listeners=[];#connected=false;#unwatch=null;#island=null;#islandState='off';#islandKey='';#form=false;#islandPath=false;#last=null;#started=false;#discovering=null;
   connectedCallback(){
     this.#connected=true;this.#unwatch=watchScheme(this,()=>this.render());
     this.render();
@@ -105,33 +105,45 @@ export class BindleSignInElement extends ElementBase {
     if(key===this.#islandKey)return;this.#islandKey=key;this.#unmount();
     if(!spec)return;
     queueMicrotask(async()=>{
-      const container=this.shadowRoot?.querySelector('.island');if(!container||this.#islandKey!==key)return;
-      this.#island=await mountIsland(this,{part:'sign-in',container,session:this.#session,capabilities,onState:state=>{this.#islandState=state;this.render();}});
-      if(!this.#island&&this.#islandKey===key)this.#islandState='off';
+      const container=this.shadowRoot?.querySelector('.island > .island-host');if(!container||this.#islandKey!==key)return;
+      const island=await mountIsland(this,{part:'sign-in',container,session:this.#session,capabilities,onState:state=>{if(this.#islandKey===key){this.#islandState=state;this.render();}}});
+      if(this.#islandKey!==key||!this.#connected){island?.destroy();return;}
+      this.#island=island;if(!island&&this.#islandState!=='fallback'){this.#islandState='off';this.render();}
     });
   }
-  #unmount(){try{this.#island?.destroy?.();}catch{}this.#island=null;this.#islandState='off';}
-  // Called by the island mounter when the island reports a flow (profile §5.4).
-  islandFlow(phase,outcome){
-    if(phase==='started'){this.#started=true;emitLater(this,'bindle-sign-in-start',{source:'island',presentation:'island'});return;}
-    if(phase==='ended'&&this.#started&&outcome!=='completed'){this.#started=false;const mapped=outcome==='unavailable'?'unavailable':endOutcomes[outcome]??'canceled';this.#last=Object.freeze({outcome:mapped});emitLater(this,'bindle-sign-in-end',{outcome:mapped});}
+  // A degraded part stays 'fallback' for the document (profile §11); the standard composition shows.
+  #unmount(){try{this.#island?.destroy?.();}catch{}this.#island=null;if(this.#islandState!=='fallback')this.#islandState='off';}
+  // Called by the island mounter for the island's translated `flow` (profile §5.4). `completed` arrives only
+  // after the app's own exchange of the island's code settled, so the session is ready (EIR-17).
+  islandFlow(phase,outcome,code){
+    if(phase==='started'){this.#started=true;this.#islandPath=false;this.#error='';emitLater(this,'bindle-sign-in-start',{source:'island',presentation:'island'});this.render();return;}
+    if(phase!=='ended'||!this.#started)return;
+    this.#started=false;
+    const mapped=outcome==='unavailable'?'unavailable':endOutcomes[outcome]??'canceled',view=this.#session?.session;
+    // The island cannot finish here (opener lost, popup blocked, sandboxed): offer the app's own path (EI-11).
+    if(['unavailable','popup-blocked'].includes(mapped))this.#islandPath=true;
+    if(mapped==='network-error')this.#error=this.#t()('Sign-in could not be completed. Try again.');
+    this.#last=Object.freeze({outcome:mapped,...code?{code}:{}});
+    emitLater(this,'bindle-sign-in-end',{outcome:mapped,...code?{code}:{},...mapped==='completed'&&view?{session:view}:{}});
+    this.render();
   }
   render(){
     if(!this.#connected)return;
     const t=this.#t(),session=this.#session,flow=session?.flow,mine=this.#mine(),host=this.defaultHost,noDefault=['','none'].includes(host),suffix=noDefault?'':`@${host}`;
-    const capabilities=this.#capabilities(),required=this.#required(),island=this.#islandState==='live';
+    const capabilities=this.#capabilities(),required=this.#required(),island=this.#islandState==='live',appPath=!island||this.#islandPath;
     const identityless=!!capabilities?.identityless&&!noDefault;
     const status=(mine&&flow?.phase==='opening'&&this.#status)||(mine&&flowStatus(flow,t))||this.#status;
     const busy=mine&&flow?.phase==='opening';
     // With a live island the handle form moves behind "Use a different provider".
     const showForm=!island||this.#form;
-    this.#syncIsland();
+    this.#syncIsland();this.#island?.refresh?.();
     const {theme,colorScheme}=schemeFor(this,session);
     reconcileShadow(this,[h('div',
       h('slot').attrs({name:'heading'}),
-      h('div').classes('island').attrs({part:'island'}).props({hidden:!island}),
+      // The iframe lives in a constant inner host (dodo replaces children of a changed node); the box toggles hidden.
+      h('div',h('div').classes('island-host')).classes('island').attrs({part:'island'}).props({hidden:!island}).key('island'),
       island&&!this.#form&&h('button',t('Use a different provider')).props({type:'button'}).attrs({part:'other-provider'}).on({click:()=>{this.#form=true;this.render();this.focus();}}),
-      !island&&identityless&&h('button',t('Continue with {host}',{host})).props({type:'button',disabled:busy}).classes('primary','continue').attrs({part:'continue'}).on({click:this.#onContinue}),
+      appPath&&identityless&&h('button',t('Continue with {host}',{host})).props({type:'button',disabled:busy}).classes('primary','continue').attrs({part:'continue'}).on({click:this.#onContinue}),
       showForm&&h('form',
         h('label',t('Your Bindle identity')).attrs({for:'handle',id:'label',part:'label'}),
         h('div',

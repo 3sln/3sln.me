@@ -5,7 +5,7 @@
 // Failures are never reported outward: callers get null and keep the neutral state. Same-origin embed API calls
 // use referrerPolicy 'same-origin', so a same-origin POST carries the exact Origin. Under 'no-referrer' Fetch serializes
 // it as `null` (observed in Firefox 157); the server accepts `null` only with `Sec-Fetch-Site: same-origin`.
-export const RESTORE_PAD_MS=300;
+export const RESTORE_PAD_MS=300,STREAM_LINE_MAX=65536;
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 export class EmbedAPIError extends Error{constructor(status){super('embed api');this.status=status;}}
 
@@ -25,6 +25,21 @@ export function embedAPI({origin,key,fetch=globalThis.fetch.bind(globalThis)}){
     session:credential=>post('session',{auth:`BindleEmbed ${credential}`,proofOver:credential}),
     state:session=>post('state',{auth:`BindleEmbedSession ${session}`,proofOver:session}),
     forget:credential=>post('forget',{auth:`BindleEmbed ${credential}`,proofOver:credential}),
+    /** The leader's data stream (embed-islands §5.1; server: federation-entry-http.mjs `eventStream`): NDJSON over a GET
+     * with the session bearer and a key proof. Yields `{type:'view',view}` and `{type:'ping'}` until the server ends the
+     * stream (session expiry, eviction by a newer stream, binding no longer live) or `signal` aborts. Lines are bounded. */
+    async *events(session,{signal}={}){const {nonce}=await post('nonce'),htu=url('events');
+      const response=await fetch(htu,{headers:{Authorization:`BindleEmbedSession ${session}`,'X-Bindle-Embed':'1',DPoP:await key.dpop({htm:'GET',htu,nonce,ath:session})},mode:'same-origin',credentials:'omit',cache:'no-store',referrerPolicy:'same-origin',signal});
+      if(!response.ok||!response.body||!/^application\/x-ndjson\b/.test(response.headers.get('Content-Type')??''))throw new EmbedAPIError(response.ok?502:response.status);
+      const reader=response.body.pipeThrough(new TextDecoderStream()).getReader(),stop=()=>{reader.cancel().catch(()=>{});};let buffer='';
+      signal?.addEventListener('abort',stop,{once:true});
+      try{for(;;){const {value,done}=await reader.read();if(done)return;buffer+=value;
+        for(let end=buffer.indexOf('\n');end>=0;end=buffer.indexOf('\n')){if(end>STREAM_LINE_MAX)throw new EmbedAPIError(502);const line=buffer.slice(0,end);buffer=buffer.slice(end+1);let event=null;try{event=JSON.parse(line);}catch{}if(event?.type==='view'||event?.type==='ping')yield event;}
+        if(buffer.length>STREAM_LINE_MAX)throw new EmbedAPIError(502);}}
+      finally{signal?.removeEventListener('abort',stop);stop();}},
+    /** Ends one embed session (`POST /embed/api/session/end`): bearer only and `keepalive`, so it can run during
+     * `pagehide`. Best effort: never throws; the server's oldest-eviction caps bound anything it misses. */
+    end:session=>fetch(url('session/end'),{method:'POST',headers:{'X-Bindle-Embed':'1',Authorization:`BindleEmbedSession ${session}`},mode:'same-origin',credentials:'omit',cache:'no-store',referrerPolicy:'same-origin',keepalive:true}).then(r=>r.ok,()=>false),
     /** Avatar bytes (embed-islands §6.2): session bearer plus a GET key proof (`htu` without the query), fetch-only,
      * never cached. Server: packages/runtime/federation-entry-http.mjs `embedAvatar`. */
     async avatar(session,bucket){const {nonce}=await post('nonce'),htu=url('avatar');
@@ -32,9 +47,11 @@ export function embedAPI({origin,key,fetch=globalThis.fetch.bind(globalThis)}){
   });
 }
 
-/** Creates the authorization entry from the element's public inputs, the clicked intent and the frame key (§7.1). */
-export async function createEntry({issuer,clientId,key,prepare,intent='login',fetch=globalThis.fetch.bind(globalThis)}){
-  const body={clientId,redirectUri:prepare.redirectUri,challenge:prepare.challenge,challengeMethod:'S256',state:prepare.state,intent,requests:prepare.requests,presentation:'popup',delivery:'embed-popup',embedJkt:key.jkt,
+/** Creates the authorization entry from the element's public inputs, the clicked intent and the frame key (§7.1).
+ * `delivery` is 'embed-popup' (popup presentation) or 'embed-fedcm' (FedCM inside the island, adaptive §11.3). */
+export async function createEntry({issuer,clientId,key,prepare,intent='login',delivery='embed-popup',fetch=globalThis.fetch.bind(globalThis)}){
+  const fedcm=delivery==='embed-fedcm';
+  const body={clientId,redirectUri:prepare.redirectUri,challenge:prepare.challenge,challengeMethod:'S256',state:prepare.state,intent,requests:prepare.requests,presentation:fedcm?'fedcm':'popup',delivery:fedcm?'embed-fedcm':'embed-popup',embedJkt:key.jkt,
     ...prepare.loginHint?{loginHint:prepare.loginHint}:{},...prepare.uiLocales?.length?{uiLocales:prepare.uiLocales}:{},...prepare.colorScheme?{colorScheme:prepare.colorScheme}:{},...prepare.dpopJkt?{dpopJkt:prepare.dpopJkt}:{}};
   const response=await fetch(`${issuer}/api/oauth/entries`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),mode:'cors',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer'});
   if(!response.ok)throw new EmbedAPIError(response.status);const {entryId}=await response.json();

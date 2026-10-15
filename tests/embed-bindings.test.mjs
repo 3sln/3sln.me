@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {provider,post,form,createEntry,providerPage,exchange,refresh,dpopKey,tokenNonce,embedHeaders,embedNonce,codeOf,b64,issuer,embedOrigin,appOrigin,clientId} from './authorization-entry-helpers.mjs';
+import {provider,post,form,createEntry,providerPage,pageHeaders,exchange,refresh,dpopKey,tokenNonce,embedHeaders,embedNonce,codeOf,b64,issuer,embedOrigin,appOrigin,clientId} from './authorization-entry-helpers.mjs';
 import {EMBED_PROOF_TYP} from '../packages/federation/dpop.mjs';
 const api=path=>`${embedOrigin}/embed/api/${path}`;
 async function attest(p,key,entryId,{signer=key,typ=EMBED_PROOF_TYP,entry=entryId}={}){
- const challenge=await post(p,`${issuer}/oauth/entries/${entryId}/embed-challenge`,{},{Origin:issuer,'Sec-Fetch-Site':'same-origin'});if(!challenge.ok)return {status:challenge.status};
+ let view;try{view=await p.entries.view(entryId);}catch{view={pageToken:'P'.repeat(43)};}
+ const challenge=await post(p,`${issuer}/oauth/entries/${entryId}/embed-challenge`,{},pageHeaders(view));if(!challenge.ok)return {status:challenge.status};
  const proof=await signer.sign({typ,htu:`${issuer}/oauth/entries/${entryId}/embed-verify`,nonce:(await challenge.json()).challenge,claims:{entry},iat:Math.floor(p.clock()/1000)});
- const verified=await post(p,`${issuer}/oauth/entries/${entryId}/embed-verify`,{proof},{Origin:issuer});return {status:verified.status,...await verified.json()};
+ const verified=await post(p,`${issuer}/oauth/entries/${entryId}/embed-verify`,{proof},pageHeaders(view));return {status:verified.status,...await verified.json()};
 }
 async function embedFlow(p,{key,session=p.signIn()}={}){
  key??=await dpopKey();const {entryId,verifier,body}=await createEntry(p,{delivery:'embed-popup',embedJkt:key.jkt},{Origin:embedOrigin});
@@ -63,7 +64,9 @@ test('without the handshake an embed entry continues only in irreversible plain 
  const after=await createEntry(p,{delivery:'embed-popup',embedJkt:key.jkt},{Origin:embedOrigin});await providerPage(p,after.entryId,alex,{plain:true,decision:'deny'});
  assert.equal((await attest(p,key,after.entryId)).status,400);
  const declared=await createEntry(p,{delivery:'embed-popup',embedJkt:key.jkt},{Origin:embedOrigin}),view=await p.entries.view(declared.entryId);
- await post(p,`${issuer}/api/oauth/entries/${declared.entryId}/select`,{nonce:view.entry.nonce,plain:true},{Origin:issuer,Cookie:alex.cookie,'X-CSRF-Token':alex.csrf});
+ // An owner step never changes embed state; only the plain page's own declaration does.
+ assert.equal((await post(p,`${issuer}/api/oauth/entries/${declared.entryId}/select`,{nonce:view.entry.nonce,plain:true},pageHeaders(view,{Cookie:alex.cookie,'X-CSRF-Token':alex.csrf}))).status,403);assert.equal((await p.entries.view(declared.entryId)).entry.embed.plain,false);
+ assert.equal((await post(p,`${issuer}/api/oauth/entries/${declared.entryId}/plain`,{},pageHeaders(view))).status,200);
  assert.equal((await attest(p,key,declared.entryId)).status,403);assert.equal((await p.fetch(`${issuer}/oauth/authorize?entry=${declared.entryId}`)).headers.get('Cross-Origin-Opener-Policy'),'same-origin');
  // Once attested, neither a plain declaration nor a wrong page secret can decide.
  const attested=await createEntry(p,{delivery:'embed-popup',embedJkt:key.jkt},{Origin:embedOrigin});const {pageSecret}=await attest(p,key,attested.entryId);assert.ok(pageSecret);
@@ -76,6 +79,7 @@ test('the opener handshake requires the entry key, the single-use challenge, the
  assert.equal((await attest(p,key,await make(),{typ:'dpop+jwt'})).status,403);
  const first=await make(),second=await make();assert.equal((await attest(p,key,first,{entry:second})).status,403);
  assert.equal((await attest(p,key,first)).status,200);assert.equal((await attest(p,key,first)).status,403);
+ assert.equal((await post(p,`${issuer}/oauth/entries/${await make()}/embed-challenge`,{},{Origin:issuer,'Sec-Fetch-Site':'same-origin'})).status,403,'the challenge needs the page token');
  const limited=await make();for(let n=0;n<3;n++)await attest(p,key,limited,{signer:other});assert.equal((await attest(p,key,limited)).status,403);
  const app=await createEntry(p);assert.equal((await attest(p,key,app.entryId)).status,403);
  assert.equal((await post(p,`${issuer}/oauth/entries/${await make()}/embed-challenge`,{},{Origin:embedOrigin})).status,403);
@@ -112,10 +116,13 @@ test('revocation cascade: RFC 7009 on the refresh token, refresh reuse and accou
  assert.ok(await tokenNonce(p));
 });
 
-test('an unauthenticated caller holding the entry nonce cannot force plain mode',async()=>{
+test('plain mode needs the page token; a declaration is an irreversible downgrade, never a selection signal',async()=>{
  const p=await provider(),key=await dpopKey(),{entryId}=await createEntry(p,{delivery:'embed-popup',embedJkt:key.jkt},{Origin:embedOrigin}),view=await p.entries.view(entryId);
- const anonymous=await post(p,`${issuer}/api/oauth/entries/${entryId}/select`,{nonce:view.entry.nonce,plain:true},{Origin:issuer,'X-CSRF-Token':'x'});assert.equal(anonymous.status,401);
+ const anonymous=await post(p,`${issuer}/api/oauth/entries/${entryId}/select`,{nonce:view.entry.nonce,plain:true},pageHeaders(view,{'X-CSRF-Token':'x'}));assert.equal(anonymous.status,401);
+ assert.equal((await post(p,`${issuer}/api/oauth/entries/${entryId}/plain`,{},{Origin:issuer,'Sec-Fetch-Site':'same-origin'})).status,403,'no page token');
  assert.equal((await p.entries.view(entryId)).entry.embed.plain,false);const {pageSecret}=await attest(p,key,entryId);assert.ok(pageSecret);
+ assert.equal((await post(p,`${issuer}/api/oauth/entries/${entryId}/plain`,{},pageHeaders(view))).status,403,'an attested entry cannot be downgraded');
+ const other=await createEntry(p,{delivery:'embed-popup',embedJkt:key.jkt},{Origin:embedOrigin}),ov=await p.entries.view(other.entryId);assert.equal((await post(p,`${issuer}/api/oauth/entries/${other.entryId}/plain`,{},pageHeaders(ov))).status,200);assert.equal((await attest(p,key,other.entryId)).status,403,'declared plain: no handshake');
 });
 
 import {encodePNG,decodePNG,squareResample,reencodeAvatar,readAvatarSource,avatarOrigins,AVATAR} from '../packages/federation/embed-avatar.mjs';

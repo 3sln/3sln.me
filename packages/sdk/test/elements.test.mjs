@@ -150,7 +150,7 @@ test('full provider: provider manage URL, island hook consulted, islands="off" a
   const provider=createMockProvider({issuer:'https://3sln.example',declaration:'full',profile:true,picture:true});
   const {session,uninstall}=await mount(page(),{provider});
   assert.equal(session.capabilities.profile,true);assert.ok(session.capabilities.islands.signIn);
-  // The islands slice has not landed: the hook mounts nothing and the standard composition stays.
+  // This window has no MessageChannel, so the mounter declines and the standard composition stays (islands: elements-islands.test.mjs).
   await tick();assert.equal(document.querySelector('bindle-sign-in').state.islands,'off');assert.ok(shadow('bindle-sign-in').querySelector('form'));
   await signIn();
   const account=document.querySelector('bindle-account'),root=account.shadowRoot;root.querySelector('.trigger').click();

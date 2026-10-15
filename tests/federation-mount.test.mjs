@@ -6,6 +6,9 @@ import assert from 'node:assert/strict';
 import application from '../packages/runtime/http.mjs';
 import {provider,entryBody,issuer,embedOrigin,clientId,appOrigin} from './authorization-entry-helpers.mjs';
 import {federationEntriesRemote,ENTRY_METHODS} from '../packages/runtime/federation.mjs';
+import {AuthorizationEntries,entryShard} from '../packages/federation/authorization-entries.mjs';
+import {MemoryFederationStore} from '../packages/federation/index.mjs';
+import {installedAccountCookies} from '../packages/runtime/account-cookies.mjs';
 const PROFILE='https://3sln.me/artefacts/profiles/components/v1',SHELL='<!doctype html><title>Islands</title><script type="application/json" id="config">{{CONFIG}}</script><script type="module" src="/embed/assets/boot.0123456789.js"></script>';
 const SHELL_HASH='sha256-'+'B'.repeat(43)+'=',SHELL_BUILD={v:1,worker:'/embed/assets/apps/embed/src/worker/index.0123456789.js',sw:'/embed/sw.js',scripts:[SHELL_HASH]};
 const MAP_HASH='sha256-'+'A'.repeat(43)+'=';
@@ -96,14 +99,44 @@ test('embed origin: mounted only with entries, cookieless shell with per-client 
  assert.equal((await f.fetch(issuer+'/embed?client='+encodeURIComponent(clientId))).headers.get('Content-Security-Policy')?.includes('trusted-types bindle-embed')??false,false);
 });
 
-test('Worker entry facade: local manifest, structured fault envelopes and no end-session',async()=>{
- const calls=[],config={APP_ORIGIN:issuer,FEDERATION_ENTRY_ENABLED:'true',EMBED_ORIGIN:embedOrigin,KEY_ENCRYPTION_KEY:'k',FEDERATION_CLIENTS:JSON.stringify([{id:clientId,name:'App',origin:appOrigin,redirectUris:[appOrigin+'/callback']}]),FEDERATION_END_SESSION_ENABLED:'true'};
+test('Worker entry facade: local manifest, structured fault envelopes, shard routing and end-session only with the hook',async()=>{
+ const calls=[],config={APP_ORIGIN:issuer,FEDERATION_ENTRY_ENABLED:'true',EMBED_ORIGIN:embedOrigin,KEY_ENCRYPTION_KEY:'k',FEDERATION_CLIENTS:JSON.stringify([{id:clientId,name:'App',origin:appOrigin,redirectUris:[appOrigin+'/callback']}])};
  assert.equal(federationEntriesRemote({config:{...config,FEDERATION_ENTRY_ENABLED:'false'},invoke:()=>{}}),null);
- const remote=federationEntriesRemote({config,invoke:async(method,args)=>{calls.push(method);return method==='view'?{ok:false,error:{code:'invalid_request',message:'expired',retryAfter:5}}:{ok:true,result:{entryId:'x'}};}});
+ const id='Q'.repeat(43),remote=federationEntriesRemote({config,invoke:async(shard,method,args)=>{calls.push([shard,method]);return method==='view'?{ok:false,error:{code:'invalid_request',message:'expired',retryAfter:5}}:{ok:true,result:{entryId:id}};}});
  assert.deepEqual(remote.manifest().features['authorization-entry.v1'].intents,['login','select-account','reauthenticate']);assert.equal(remote.manifest().profiles,undefined);assert.ok(remote.manifest({components:true}).profiles[PROFILE]);
+ assert.deepEqual(federationEntriesRemote({config,endSession:true,invoke:()=>{}}).manifest().features['authorization-entry.v1'].intents,['login','select-account','reauthenticate','end-session']);
  assert.equal(remote.clients.get(clientId).origin,appOrigin);assert.equal(remote.embedOrigin,embedOrigin);
- assert.deepEqual(await remote.create({}),{entryId:'x'});await assert.rejects(remote.view('id'),error=>error.code==='invalid_request'&&error.retryAfter===5);
+ assert.deepEqual(await remote.create({clientId},{remote:'r'}),{entryId:id});assert.deepEqual(calls.map(c=>c[1]),['admit','create']);
+ await assert.rejects(remote.view(id),error=>error.code==='invalid_request'&&error.retryAfter===5);assert.deepEqual(calls.at(-1),[entryShard(id),'view']);
+ await assert.rejects(remote.select('bad',{},{}),{code:'invalid_request'});
  assert.deepEqual(ENTRY_METHODS.filter(m=>typeof remote[m]!=='function'),[]);assert.equal(remote.cleanup,undefined,'cleanup stays inside the store');
+});
+
+test('provider end-session hook: ends only the named member of the entry subject, after its live CSRF, and clears its cookie',async()=>{
+ const p=await provider(),key=Buffer.alloc(32,7).toString('base64url'),owner=p.accounts[0].owner,subject=p.accounts[0].subject,dispatched=[];let refuse=null;
+ const engine={IDENTITY_ENGINE:async()=>({dispatch:action=>({next:async()=>{dispatched.push({method:action.method,context:action.context});if(refuse)throw Object.assign(new Error(refuse),{code:refuse});return {loggedOut:true};}}),dispose(){}})};
+ const entries=new AuthorizationEntries({store:new MemoryFederationStore(),issuer,clients:[...p.entries.clients.values()],authority:p.authority,embedOrigin,endSession:true});
+ const f=await fixture({extra:{...engine,SESSION_COOKIE_KEY:key,FEDERATION_ENTRIES:entries}});
+ const member={owner,token:`${owner}.${'t'.repeat(43)}`,expiresAt:Date.now()+3600000,sessionContext:'ctx-1'},[memberCookie,defaultCookie]=await installedAccountCookies(f.env,member,false);
+ const jar=[memberCookie,defaultCookie].map(c=>c.split(';')[0]).join('; ');
+ const end=async(headers={},confirmed=true)=>{const {entryId}=await entries.create({...entryBody().body,intent:'end-session',subjectConstraint:subject},{origin:appOrigin,remote:'r'+Math.random()});const view=await entries.view(entryId);return f.fetch(`${issuer}/api/oauth/entries/${entryId}/end-session`,{method:'POST',headers:{'Content-Type':'application/json',Origin:issuer,'Sec-Fetch-Site':'same-origin','X-Bindle-Entry-Token':view.pageToken,...headers},body:JSON.stringify({nonce:view.entry.nonce,confirmed})});};
+ // No session for the subject in this browser: completed, nothing revoked, no cookie written.
+ const none=await end();assert.equal(none.status,200);assert.equal(new URL((await none.json()).redirectUri).searchParams.get('result'),'completed');assert.deepEqual(dispatched,[]);assert.deepEqual(none.headers.getSetCookie(),[]);
+ // A present member must be named exactly; otherwise nothing ends and the entry stays open.
+ assert.equal((await end({Cookie:jar})).status,409);assert.equal((await end({Cookie:jar,'X-Bindle-Account':owner,'X-Bindle-Session-Context':'other'})).status,409);assert.deepEqual(dispatched,[]);
+ const named={Cookie:jar,'X-Bindle-Account':owner,'X-Bindle-Session-Context':'ctx-1','X-CSRF-Token':'member-csrf'};
+ refuse='csrf';assert.equal((await end(named)).status,403);assert.equal(dispatched.at(-1).context.csrfToken,'member-csrf');
+ refuse='temporarily_unavailable';assert.equal((await end(named)).status,503,'revocation precedes success');
+ refuse=null;const done=await end(named);assert.equal(done.status,200);assert.equal(new URL((await done.json()).redirectUri).searchParams.get('result'),'completed');
+ assert.deepEqual({method:dispatched.at(-1).method,token:dispatched.at(-1).context.sessionToken,owner:dispatched.at(-1).context.expectedOwner,context:dispatched.at(-1).context.sessionContext},{method:'logout',token:member.token,owner,context:'ctx-1'});
+ const cleared=done.headers.getSetCookie();assert.ok(cleared.some(c=>c.startsWith(`__Host-bindle_account_${owner}=;`)&&c.includes('Max-Age=0')));assert.ok(cleared.some(c=>c.startsWith('__Host-bindle_default_account=;')),'the default pointed at this member, so it is cleared');
+ // An already revoked session has nothing left to end; staying signed in never calls the hook.
+ refuse='unauthorized';assert.equal((await end(named)).status,200);const count=dispatched.length;assert.equal((await end(named,false)).status,200);assert.equal(dispatched.length,count);
+ // A browser that still holds only the legacy session (no member cookies) has that session ended (review finding 5).
+ refuse=null;const legacy=`${owner}.${'l'.repeat(43)}`,old=await end({Cookie:`__Host-bindle_session=${legacy}`,'X-CSRF-Token':'legacy-csrf'});assert.equal(old.status,200);
+ assert.equal(dispatched.at(-1).context.sessionToken,legacy);assert.ok(old.headers.getSetCookie().some(c=>c.startsWith('__Host-bindle_session=;')&&c.includes('Max-Age=0')));
+ // An undecryptable member cookie for the subject is cleared rather than reported as signed out with it in place.
+ const broken=await end({Cookie:`__Host-bindle_account_${owner}=ac1.${'A'.repeat(16)}.${'B'.repeat(40)}`});assert.equal(broken.status,200);assert.ok(broken.headers.getSetCookie().some(c=>c.startsWith(`__Host-bindle_account_${owner}=;`)));
 });
 
 test('admin routes are mounted inside /api/, same-origin POST only and inert without a service',async()=>{
@@ -117,15 +150,15 @@ test('admin routes are mounted inside /api/, same-origin POST only and inert wit
  assert.equal((await g.fetch(issuer+'/api/admin/unknown',{method:'POST',headers:{Origin:issuer,'Content-Type':'application/json'},body:'{}'})).status,404);
 });
 
-test('Node composition: one entry store, admin store and the embed host behind their flags',async t=>{
+test('Node composition: a sharded entry store, admin store and the embed host behind their flags',async t=>{
  const {createNodeServer}=await import('../apps/node/server.mjs'),{mkdtemp,rm}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path');
  const origin='http://localhost:8797',embed='http://127.0.0.1:8797',directory=await mkdtemp(join(tmpdir(),'3sln-mount-'));
  const app=await createNodeServer({directory,config:{APP_ORIGIN:origin,FEDERATION_ENABLED:'true',FEDERATION_ENTRY_ENABLED:'true',EMBED_ORIGIN:embed,FEDERATION_CLIENTS:JSON.stringify([{id:clientId,name:'App',origin:appOrigin,redirectUris:[appOrigin+'/callback']}])}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const manifest=await(await app.fetch(new Request(origin+'/.well-known/bindle/manifest.json',{headers:{'CF-Connecting-IP':'203.0.113.9'}}))).json();
- assert.deepEqual(manifest.features['authorization-entry.v1'].intents,['login','select-account','reauthenticate'],'end-session has no Node hook and is never offered');
+ assert.deepEqual(manifest.features['authorization-entry.v1'].intents,['login','select-account','reauthenticate','end-session'],'Node mounts the session-ending hook');
  const {body}=entryBody(),created=await app.fetch(new Request(origin+'/api/oauth/entries',{method:'POST',headers:{'Content-Type':'application/json',Origin:appOrigin,'CF-Connecting-IP':'203.0.113.9'},body:JSON.stringify({...body,redirectUri:appOrigin+'/callback'})}));
- assert.equal(created.status,201);assert.ok(await app.resources.federationEntries.store.transaction(tx=>tx.get('@alarm')),'creation arms the cleanup alarm');
+ assert.equal(created.status,201);const {entryId}=await created.json();assert.ok(await app.resources.federationEntries.store(entryShard(entryId)).transaction(tx=>tx.get('@alarm')),'creation arms the entry shard cleanup alarm');
  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));const port=app.server.address().port;
  const get=(host,path)=>new Promise((resolve,reject)=>{import('node:http').then(({request})=>{const req=request({host:'127.0.0.1',port,path,headers:{Host:host}},res=>{let data='';res.on('data',c=>data+=c);res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,body:data}));});req.on('error',reject);req.end();});});
  const shell=await get('127.0.0.1:8797','/embed?client='+encodeURIComponent(clientId));assert.equal(shell.status,200);assert.match(shell.headers['content-security-policy'],/frame-ancestors https:\/\/app\.example/);assert.equal(shell.headers['set-cookie'],undefined);

@@ -20,7 +20,7 @@ export class BindleAvatarElement extends ElementBase {
     for(const type of ['bindle-session-change','bindle-capabilities-change']){session.addEventListener(type,rerender);this.#listeners.push([type,rerender]);}
     this.render();
   }
-  #unmount(){try{this.#island?.destroy?.();}catch{}this.#island=null;this.#islandState='off';}
+  #unmount(){try{this.#island?.destroy?.();}catch{}this.#island=null;if(this.#islandState!=='fallback')this.#islandState='off';}
   render(){
     if(!this.#connected)return;
     const {t}=localize(this),session=this.#session,view=session?.session,win=this.ownerDocument.defaultView,size=Number.parseInt(this.getAttribute('size')??'',10);
@@ -30,9 +30,11 @@ export class BindleAvatarElement extends ElementBase {
     const model=view&&avatarModel(view,{pictureFailed:this.#pictureFailed===view.profile?.picture});this.#source=model?.source??'monogram';
     reconcileShadow(this,[h('span',
       model?avatarView(model,{label:this.getAttribute('label')||t('Identity picture'),onPictureError:()=>{this.#pictureFailed=view.profile?.picture;this.render();}}):null,
-      h('span').classes('island').attrs({part:'avatar-frame','aria-hidden':'true'}),
-    ).classes('root',theme).style({...colorScheme?{'color-scheme':colorScheme}:{},...size>=16&&size<=512?{'--bindle-avatar-size':`${size}px`}:{}})],[...avatarStyles?[avatarStyles(win)]:[],css.in(win)`:host{display:inline-block}.root{position:relative;display:inline-grid}.island{position:absolute;inset:0;pointer-events:none}.island:empty{display:none}`]);
-    const spec=view?islandPart(session,'avatar'):null,key=spec?`${spec.issuer} ${spec.version}`:'';
-    if(key!==this.#islandKey){this.#islandKey=key;this.#unmount();if(spec)queueMicrotask(async()=>{const container=this.shadowRoot?.querySelector('.island');if(container&&this.#islandKey===key)this.#island=await mountIsland(this,{part:'avatar',container,session,onState:state=>{this.#islandState=state;}});});}
+      h('span',h('span').classes('island-host')).classes('island').attrs({part:'avatar-frame','aria-hidden':'true'}).key('island'),
+    ).classes('root',theme).style({...colorScheme?{'color-scheme':colorScheme}:{},...size>=16&&size<=512?{'--bindle-avatar-size':`${size}px`}:{}})],[...avatarStyles?[avatarStyles(win)]:[],css.in(win)`:host{display:inline-block}.root{position:relative;display:inline-grid}.island{position:absolute;inset:0;pointer-events:none}.island-host{display:block;inline-size:100%;block-size:100%}`]);
+    // Once mounted, the island stays while the element is connected, so app sign-out reaches it (session{null}, forget).
+    const spec=view||this.#islandKey?islandPart(session,'avatar'):null,key=spec?`${spec.issuer} ${spec.version}`:'';
+    if(key!==this.#islandKey){this.#islandKey=key;this.#unmount();if(spec)queueMicrotask(async()=>{const container=this.shadowRoot?.querySelector('.island > .island-host');if(!container||this.#islandKey!==key)return;const island=await mountIsland(this,{part:'avatar',container,session,onState:state=>{if(this.#islandKey===key)this.#islandState=state;}});if(this.#islandKey!==key||!this.#connected)island?.destroy();else this.#island=island;});}
+    else this.#island?.refresh?.();
   }
 }

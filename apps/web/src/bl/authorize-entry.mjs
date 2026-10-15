@@ -23,17 +23,29 @@ export function parseEntryLocation({pathname,search}){
 }
 export const plainURL=entryId=>`/oauth/authorize?entry=${encodeURIComponent(entryId)}&mode=plain`;
 export const subjectOf=(issuer,owner)=>`${issuer}/entities/${owner}`;
-/** Session-independent request metadata from GET /api/oauth/entries/<id>, checked before it drives any UI. */
+/** Session-independent request metadata from GET /api/oauth/entries/<id>, checked before it drives any UI. The
+ * view's page token is read separately (`entryToken`) and never enters the rendered model. */
 export function validEntryView(value,issuer){
  const e=value?.entry;
- if(!exactKeys(value,['entry'])||!exactKeys(e,['client','redirectUri','intent','requests','presentation','delivery','nonce','expiresAt','loginHint','subjectConstraint','maxAge','uiLocales','colorScheme','embed']))fail('invalid_entry','This sign-in request is not valid.');
+ if(!exactKeys(value,['entry','pageToken'])||!exactKeys(e,['client','redirectUri','intent','requests','presentation','delivery','nonce','expiresAt','loginHint','subjectConstraint','maxAge','uiLocales','colorScheme','embed']))fail('invalid_entry','This sign-in request is not valid.');
  let redirect;try{redirect=new URL(e.redirectUri);}catch{fail('invalid_entry','This sign-in request is not valid.');}
  const client=e.client;
- if(!client||typeof client.id!=='string'||typeof client.origin!=='string'||client.origin!==redirect.origin||client.name!==undefined&&typeof client.name!=='string'||!INTENTS.includes(e.intent)||!Array.isArray(e.requests)||e.requests.length>8||!['redirect','popup'].includes(e.presentation)||!['redirect','popup','embed-popup'].includes(e.delivery)||typeof e.nonce!=='string'||!/^[A-Za-z0-9_-]{16,64}$/.test(e.nonce)||!Number.isSafeInteger(e.expiresAt)||!webScheme(redirect)||redirect.username||redirect.password||redirect.hash)fail('invalid_entry','This sign-in request is not valid.');
+ if(!client||typeof client.id!=='string'||typeof client.origin!=='string'||client.origin!==redirect.origin||client.name!==undefined&&typeof client.name!=='string'||client.reviewed!==undefined&&client.reviewed!==false||client.claimedName!==undefined&&(typeof client.claimedName!=='string'||[...client.claimedName].length>100||client.reviewed!==false)||!INTENTS.includes(e.intent)||!Array.isArray(e.requests)||e.requests.length>8||!['redirect','popup'].includes(e.presentation)||!['redirect','popup','embed-popup'].includes(e.delivery)||typeof e.nonce!=='string'||!/^[A-Za-z0-9_-]{16,64}$/.test(e.nonce)||!Number.isSafeInteger(e.expiresAt)||!webScheme(redirect)||redirect.username||redirect.password||redirect.hash)fail('invalid_entry','This sign-in request is not valid.');
  const constrained=['reauthenticate','end-session'].includes(e.intent),owner=typeof e.subjectConstraint==='string'&&e.subjectConstraint.startsWith(`${issuer}/entities/`)?e.subjectConstraint.slice(issuer.length+10):null;
  if(constrained!==(e.subjectConstraint!==undefined)||constrained&&!UUID.test(owner??'')||(e.intent==='reauthenticate')!==(e.maxAge!==undefined)||e.maxAge!==undefined&&(!Number.isSafeInteger(e.maxAge)||e.maxAge<0||e.maxAge>86400)||e.loginHint!==undefined&&(typeof e.loginHint!=='string'||e.loginHint.length>320))fail('invalid_entry','This sign-in request is not valid.');
  if(e.delivery==='embed-popup'&&!exactKeys(e.embed,['attested','plain','origin']))fail('invalid_entry','This sign-in request is not valid.');
- return Object.freeze({client:Object.freeze({id:client.id,name:client.name||client.origin,origin:client.origin}),redirectUri:e.redirectUri,intent:e.intent,requests:structuredClone(e.requests),presentation:e.presentation,delivery:e.delivery,nonce:e.nonce,expiresAt:e.expiresAt,...e.loginHint?{loginHint:e.loginHint}:{},...constrained?{subjectConstraint:e.subjectConstraint,subjectOwner:owner}:{},...e.maxAge!==undefined?{maxAge:e.maxAge}:{},...e.delivery==='embed-popup'?{embed:Object.freeze({attested:e.embed.attested===true,plain:e.embed.plain===true,...typeof e.embed.origin==='string'?{origin:e.embed.origin}:{}})}:{}});
+ // An unreviewed (metadata-document) client is named by its verified host, never by its own claim.
+ const unreviewed=client.reviewed===false,host=new URL(client.origin).host;
+ return Object.freeze({client:Object.freeze({id:client.id,name:unreviewed?host:client.name||client.origin,origin:client.origin,...unreviewed?{reviewed:false,...client.claimedName?{claimedName:client.claimedName}:{}}:{}}),redirectUri:e.redirectUri,intent:e.intent,requests:structuredClone(e.requests),presentation:e.presentation,delivery:e.delivery,nonce:e.nonce,expiresAt:e.expiresAt,...e.loginHint?{loginHint:e.loginHint}:{},...constrained?{subjectConstraint:e.subjectConstraint,subjectOwner:owner}:{},...e.maxAge!==undefined?{maxAge:e.maxAge}:{},...e.delivery==='embed-popup'?{embed:Object.freeze({attested:e.embed.attested===true,plain:e.embed.plain===true,...typeof e.embed.origin==='string'?{origin:e.embed.origin}:{}})}:{}});
+}
+/** The per-entry page token from the same view: sent with every entry mutation as X-Bindle-Entry-Token. */
+export function entryToken(value){if(typeof value?.pageToken!=='string'||!ID.test(value.pageToken))fail('invalid_entry','This sign-in request is not valid.');return value.pageToken;}
+/** "Already approved" selections from the select response: provider-page data for this owner only, resubmitted as
+ * the same click's decision. Anything malformed is ignored and the ordinary consent review runs. */
+export function priorApproval(value,requests){
+ if(!Array.isArray(value)||!value.length||value.length!==requests.length)return null;
+ for(const [index,item] of value.entries()){const request=requests[index];if(!exactKeys(item,['fragment','fields','revision','resources','methods'])||item.fragment!==request?.fragment||!Array.isArray(item.fields)||item.fields.length!==request.fields.length||item.fields.some(field=>!request.fields.includes(field))||typeof item.revision!=='string'||item.resources!==undefined&&!exactKeys(item.resources,request.fields)||item.methods!==undefined&&!exactKeys(item.methods,request.fields))return null;}
+ return structuredClone(value);
 }
 /** A provider-produced callback must be exactly the entry's registered redirect URI plus the allowed result keys. */
 export function callbackTarget(href,redirectUri,issuer,allowed){
@@ -64,8 +76,8 @@ export const failureMessage=(error,t)=>t(failures[error?.code]??'The request cou
 
 /** Same-origin JSON client. Private requests name their member (`X-Bindle-Account`/`-Session-Context`). */
 export function createEntryAPI({fetch=(...args)=>globalThis.fetch(...args)}={}){
- async function call(path,{method='GET',body,member,csrf,anonymous=false}={}){
-  const headers={Accept:'application/json'};
+ async function call(path,{method='GET',body,member,csrf,entryToken,anonymous=false}={}){
+  const headers={Accept:'application/json'};if(entryToken)headers['X-Bindle-Entry-Token']=entryToken;
   if(member&&!member.legacy){headers['X-Bindle-Account']=member.id;headers['X-Bindle-Session-Context']=member.sessionContext;}
   if(body!==undefined){headers['Content-Type']='application/json';if(csrf)headers['X-CSRF-Token']=csrf;}
   const response=await fetch(path,{method,credentials:anonymous?'omit':'same-origin',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers,...body!==undefined?{body:JSON.stringify(body)}:{}});
@@ -79,8 +91,9 @@ export function createEntryAPI({fetch=(...args)=>globalThis.fetch(...args)}={}){
 // Phases: loading → (framed|sandboxed|invalid|expired|unavailable) | handshake → choose|end-session → reauth|consent → returning → closed.
 export const TERMINAL=Object.freeze(['framed','sandboxed','invalid','expired','unavailable','returning','closed']);
 export function createEntryModel(){return {phase:'loading',entryId:null,mode:null,entry:null,accounts:null,accountsLoading:false,selected:null,reauth:null,consent:null,busy:false,error:'',notice:'',outcome:null,surface:0,selection:new Map(),drafts:new Map(),dirty:new Set()};}
-/** Per-page secrets stay outside the rendered model: the attested page secret and the chosen member's CSRF. */
-export const createEntrySecrets=()=>({pageSecret:null,embedOrigin:null,member:null});
+/** Per-page secrets stay outside the rendered model: the entry's page token, the attested page secret and the chosen
+ * member's CSRF. */
+export const createEntrySecrets=()=>({entryToken:null,pageSecret:null,embedOrigin:null,member:null});
 const changed=ctx=>ctx.engineFeed.dispatchEvent(new Event('entry-changed'));
 export class EntryView extends Query {static deps=['model'];boot({model},{notify,engineFeed}){this.feed=engineFeed;this.publish=()=>notify({...model});engineFeed.addEventListener('entry-changed',this.publish);this.publish();}kill(){this.feed.removeEventListener('entry-changed',this.publish);}}
 const phase=(model,next)=>{if(model.phase!==next){model.phase=next;model.surface++;}};
@@ -110,18 +123,22 @@ export class EntryAction extends Action {
   if(!parsed){phase(model,'invalid');return;}
   if(browser.sandboxed()){phase(model,'sandboxed');return;}
   model.entryId=parsed.entryId;
-  let entry;try{entry=validEntryView(await api.get(`/api/oauth/entries/${parsed.entryId}`),browser.origin);}catch(error){phase(model,['rate_limited','temporarily_unavailable'].includes(error.code)?'unavailable':'expired');return;}
+  let entry;try{const value=await api.get(`/api/oauth/entries/${parsed.entryId}`);entry=validEntryView(value,browser.origin);secrets.entryToken=entryToken(value);}catch(error){phase(model,['rate_limited','temporarily_unavailable'].includes(error.code)?'unavailable':'expired');return;}
   if(entry.expiresAt<=browser.now()){phase(model,'expired');return;}
   if(entry.delivery==='embed-popup'&&!parsed.plain){
    // §7.3: nothing account-related renders in this COOP-less document until the opener proves the entry's key.
    phase(model,'handshake');changed(ctx);
    let manifest=null;if(!entry.embed.origin&&!entry.embed.attested&&!entry.embed.plain)try{manifest=await api.get('/.well-known/bindle/manifest.json');}catch{}
    const embedOrigin=entry.embed.attested||entry.embed.plain?null:embedOriginFor({entry,manifest,issuer:browser.origin});
-   const pageSecret=embedOrigin?await runHandshake({win:browser.win,api,entryId:parsed.entryId,embedOrigin}):null;
+   const pageSecret=embedOrigin?await runHandshake({win:browser.win,api,entryId:parsed.entryId,embedOrigin,entryToken:secrets.entryToken}):null;
    // No proof: replace this document with the COOP-isolated plain page, which severs the opener (AS-R2-1).
    if(!pageSecret){browser.replace(plainURL(parsed.entryId));return;}
    Object.assign(secrets,{pageSecret,embedOrigin});model.mode='embed';
-  }else model.mode=entry.delivery==='embed-popup'?'plain':'standard';
+  }else if(entry.delivery==='embed-popup'){
+   // The plain page declares plain mode as it loads, before any account UI, so the embed state never tracks a choice.
+   if(!entry.embed.plain)try{await api.post(`/api/oauth/entries/${parsed.entryId}/plain`,{},{entryToken:secrets.entryToken,anonymous:true});}catch(error){phase(model,['rate_limited','temporarily_unavailable'].includes(error.code)?'unavailable':'expired');return;}
+   model.mode='plain';
+  }else model.mode='standard';
   model.entry=entry;phase(model,entry.intent==='end-session'?'end-session':'choose');changed(ctx);
   await this.loadAccounts(deps,ctx);
  }
@@ -150,12 +167,16 @@ export class EntryAction extends Action {
   let member;
   try{
    member=await this.member(deps,account);
-   const {requestId}=await api.post(`/api/oauth/entries/${model.entryId}/select`,{nonce:entry.nonce,...this.gate(deps)},{member,csrf:member.csrf});
+   const {requestId,approved}=await api.post(`/api/oauth/entries/${model.entryId}/select`,{nonce:entry.nonce,...this.gate(deps)},{member,csrf:member.csrf,entryToken:secrets.entryToken});
    if(typeof requestId!=='string'||!REQUEST.test(requestId)||!requestId.startsWith(owner+'.'))fail('request_failed','The request could not be completed.');
    secrets.member=member;model.selected={id:owner,handle:account.handle};model.reauth=null;model.notice='';
    const view=await this.inspect(deps,requestId);model.consent=view;model.selection.clear();model.drafts.clear();model.dirty.clear();
    // Identity-only sign-in: "Continue as …" (with the disclosure next to it) is the decision click.
    if(!view.requests.length){await this.decide(deps,ctx,[]);return;}
+   // Access this account already granted this app: the same click resubmits it (R1). A refusal (the grant or its
+   // preferences changed since) falls back to the consent review for this account.
+   const prior=priorApproval(approved,entry.requests);
+   if(prior){try{await this.decide(deps,ctx,prior);return;}catch(error){if(!['invalid_grant','stale_consent','consent_stale','consent_required','invalid_preferences'].includes(error.code))throw error;model.consent=await this.inspect(deps,requestId);}}
    phase(model,'consent');
   }catch(error){
    if(error.code==='reauthentication_required'){model.reauth={id:owner,handle:account.handle};phase(model,'reauth');model.surface++;return;}
@@ -179,15 +200,14 @@ export class EntryAction extends Action {
  }
  async decide(deps,ctx,approved){
   const {model,secrets,api}=deps;
-  const result=await api.post(`/api/oauth/entries/${model.entryId}/decision`,{nonce:model.entry.nonce,approved,...this.gate(deps)},{member:secrets.member,csrf:secrets.member?.csrf});
+  const result=await api.post(`/api/oauth/entries/${model.entryId}/decision`,{nonce:model.entry.nonce,approved,...this.gate(deps)},{member:secrets.member,csrf:secrets.member?.csrf,entryToken:secrets.entryToken});
   await this.deliver(deps,ctx,result,'completed');
  }
  async cancel(deps,ctx){
   const {model,secrets,api}=deps;if(!model.entry||model.entry.intent==='end-session')return;
-  // Before an account is chosen the cancel is anonymous: the server needs no owner and returns a generic denial.
-  // Its CSRF header carries the entry nonce, which only a same-origin reader of the entry view has.
-  const member=secrets.member;
-  const result=await api.post(`/api/oauth/entries/${model.entryId}/decision`,{nonce:model.entry.nonce,denied:true,...this.gate(deps)},{member,csrf:member?.csrf??model.entry.nonce,anonymous:!member});
+  // Cancel is always anonymous: the server consults no owner and returns one generic denial, bound to this page by
+  // the entry's page token.
+  const result=await api.post(`/api/oauth/entries/${model.entryId}/decision`,{nonce:model.entry.nonce,denied:true,...this.gate(deps)},{entryToken:secrets.entryToken,anonymous:true});
   await this.deliver(deps,ctx,result,'canceled');
  }
  async deliver(deps,ctx,result,outcome){
@@ -210,10 +230,11 @@ export class EntryAction extends Action {
   phase(model,'returning');model.outcome=outcome;changed(ctx);browser.assign(target.href);
  }
  async 'end-session'(deps,ctx,{confirmed}){
-  const {model,api}=deps;if(model.phase!=='end-session'||typeof confirmed!=='boolean')return;
+  const {model,secrets,api}=deps;if(model.phase!=='end-session'||typeof confirmed!=='boolean')return;
+  // Confirming names the signed-in member and sends its live CSRF; staying signed in is anonymous.
   const account=model.accounts?.[0];let member=null;
   if(account&&confirmed)member=await this.member(deps,account);
-  const result=await api.post(`/api/oauth/entries/${model.entryId}/end-session`,{nonce:model.entry.nonce,confirmed},{member,csrf:member?.csrf??model.entry.nonce,anonymous:!member});
+  const result=await api.post(`/api/oauth/entries/${model.entryId}/end-session`,{nonce:model.entry.nonce,confirmed},{member,csrf:member?.csrf,entryToken:secrets.entryToken,anonymous:!member});
   await this.deliver(deps,ctx,result,confirmed?'completed':'canceled');
  }
 }

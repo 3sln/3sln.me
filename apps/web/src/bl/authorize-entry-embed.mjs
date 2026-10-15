@@ -23,16 +23,17 @@ function awaitMessage(win,{source,origin,accept,timeoutMs,setTimer=setTimeout,cl
   const done=value=>{win.removeEventListener('message',listener);clearTimer(timer);resolve(value);};
   win.addEventListener('message',listener);timer=setTimer(()=>done(null),timeoutMs);});
 }
-/** Opener-key handshake. Returns the per-page secret, or null for plain mode (no opener, no proof in time, refused). */
-export async function runHandshake({win,api,entryId,embedOrigin,timeoutMs=HANDSHAKE_MS,timers={}}){
+/** Opener-key handshake. Returns the per-page secret, or null for plain mode (no opener, no proof in time, refused).
+ * Both requests carry the entry's page token from the view. */
+export async function runHandshake({win,api,entryId,embedOrigin,entryToken,timeoutMs=HANDSHAKE_MS,timers={}}){
  const opener=win.opener;if(!opener||!embedOrigin)return null;
- let challenge;try{({challenge}=await api.post(`/oauth/entries/${entryId}/embed-challenge`,{}));}catch{return null;}
+ let challenge;try{({challenge}=await api.post(`/oauth/entries/${entryId}/embed-challenge`,{},{entryToken}));}catch{return null;}
  if(typeof challenge!=='string'||!/^[A-Za-z0-9_-]{16,128}$/.test(challenge))return null;
  // The listener is armed before the hello so a fast frame cannot be missed.
  const reply=awaitMessage(win,{source:opener,origin:embedOrigin,accept:validProof,timeoutMs,...timers});
  try{opener.postMessage({v:1,type:'bindle-embed-hello',entry:entryId,challenge},embedOrigin);}catch{return null;}
  const message=await reply;if(!message)return null;
- try{const {pageSecret}=await api.post(`/oauth/entries/${entryId}/embed-verify`,{proof:message.proof});return typeof pageSecret==='string'&&/^[A-Za-z0-9_-]{43}$/.test(pageSecret)?pageSecret:null;}catch{return null;}
+ try{const {pageSecret}=await api.post(`/oauth/entries/${entryId}/embed-verify`,{proof:message.proof},{entryToken});return typeof pageSecret==='string'&&/^[A-Za-z0-9_-]{43}$/.test(pageSecret)?pageSecret:null;}catch{return null;}
 }
 /** Posts the approval to the attested opener and waits for its acknowledgement. False means: use the callback. */
 export async function deliverToOpener({win,embedOrigin,entryId,result,timeoutMs=ACK_MS,timers={}}){

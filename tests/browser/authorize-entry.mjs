@@ -8,7 +8,7 @@ const window=new Window({url:'https://provider.example/oauth/authorize?entry='+'
 const previous=Object.fromEntries(names.map(n=>[n,globalThis[n]]));for(const n of names)globalThis[n]=window[n];
 test.after(async()=>{await window.happyDOM.close();for(const n of names)globalThis[n]=previous[n];});
 const entryLogic=await import('../../apps/web/src/bl/authorize-entry.mjs');
-const {parseEntryLocation,validEntryView,callbackTarget,eligibleAccounts,parseAccounts,durationOf}=entryLogic;
+const {parseEntryLocation,validEntryView,entryToken,priorApproval,callbackTarget,eligibleAccounts,parseAccounts,durationOf}=entryLogic;
 const {embedOriginFor,validProof,validAck,runHandshake,deliverToOpener}=await import('../../apps/web/src/bl/authorize-entry-embed.mjs');
 const {createArming}=await import('../../apps/web/src/bl/authorize-entry-arming.mjs');
 const {startEntryPage}=await import('../../apps/web/src/bl/authorize-entry-page.mjs');
@@ -16,7 +16,7 @@ const {authorizeCatalogue,authorizeLocalization}=await import('../../packages/i1
 const issuer='https://provider.example',embed='https://embed.provider.example',app='https://app.example',entryId='E'.repeat(43),nonce='N'.repeat(22);
 const A='550e8400-e29b-41d4-a716-446655440001',B='550e8400-e29b-41d4-a716-446655440002';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const view=(overrides={})=>({entry:{client:{id:app+'/client',name:'Example app',origin:app},redirectUri:app+'/callback',intent:'login',requests:[],presentation:'popup',delivery:'popup',nonce,expiresAt:Date.now()+600000,...overrides}});
+const pageToken='T'.repeat(43),view=(overrides={})=>({entry:{client:{id:app+'/client',name:'Example app',origin:app},redirectUri:app+'/callback',intent:'login',requests:[],presentation:'popup',delivery:'popup',nonce,expiresAt:Date.now()+600000,...overrides},pageToken});
 const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
 
 test('location, entry view, callback and inventory validation fail closed',()=>{
@@ -26,7 +26,10 @@ test('location, entry view, callback and inventory validation fail closed',()=>{
  assert.equal(parseEntryLocation({pathname:'/oauth/other',search:'?entry='+entryId}),null);
  const entry=validEntryView(view(),issuer);assert.equal(entry.client.origin,app);assert.equal(entry.intent,'login');
  assert.throws(()=>validEntryView(view({redirectUri:'https://evil.example/callback'}),issuer),/not valid/);
- assert.throws(()=>validEntryView(view({intent:'admin'}),issuer));assert.throws(()=>validEntryView({entry:{...view().entry,extra:1}},issuer));
+ assert.throws(()=>validEntryView(view({intent:'admin'}),issuer));assert.throws(()=>validEntryView({entry:{...view().entry,extra:1}},issuer));assert.throws(()=>validEntryView({...view(),extra:1},issuer));
+ assert.equal(entryToken(view()),pageToken);assert.throws(()=>entryToken({...view(),pageToken:'short'}),/not valid/);assert.throws(()=>entryToken({entry:view().entry}),'the page token is required');
+ const requested=[{fragment:'https://schema.example/s/v1',required:true,purpose:'x',fields:['theme']}],prior=[{fragment:'https://schema.example/s/v1',fields:['theme'],revision:'r1',resources:{},methods:{}}];
+ assert.deepEqual(priorApproval(prior,requested),prior);for(const bad of [null,[],[{...prior[0],fields:['other']}],[{...prior[0],fragment:'https://x.example/v1'}],[{...prior[0],extra:1}],[{...prior[0],revision:1}],[...prior,...prior]])assert.equal(priorApproval(bad,requested),null,JSON.stringify(bad));
  assert.throws(()=>validEntryView(view({intent:'reauthenticate',subjectConstraint:`${issuer}/entities/${A}`}),issuer),'reauthenticate needs maxAge');
  assert.throws(()=>validEntryView(view({intent:'end-session',subjectConstraint:`https://other.example/entities/${A}`}),issuer));
  assert.equal(validEntryView(view({intent:'end-session',subjectConstraint:`${issuer}/entities/${A}`}),issuer).subjectOwner,A);
@@ -115,8 +118,8 @@ test('app-initiated popup: chooser lists browser accounts; one armed click selec
  await until(()=>!h.root.querySelector('[data-entry-approve]')?.hasAttribute('aria-disabled'),1500);sam.dispatchEvent(new window.MouseEvent('click',{bubbles:true,detail:1}));await sleep(20);assert.equal(h.calls.some(c=>c.path.endsWith('/select')),false,'untrusted (script-dispatched) clicks are ignored');
  press([...h.root.querySelectorAll('[data-entry-approve]')].find(b=>b.textContent.includes('sam@')));
  await until(()=>h.nav.some(n=>n.assign));
- const select=h.calls.find(c=>c.path.endsWith('/select'));assert.deepEqual(select.body,{nonce});assert.equal(select.headers['X-Bindle-Account'],B);assert.equal(select.headers['X-Bindle-Session-Context'],'cb');assert.equal(select.headers['X-CSRF-Token'],'csrf-sam');
- const decision=h.calls.find(c=>c.path.endsWith('/decision'));assert.deepEqual(decision.body,{nonce,approved:[]});
+ const select=h.calls.find(c=>c.path.endsWith('/select'));assert.deepEqual(select.body,{nonce});assert.equal(select.headers['X-Bindle-Account'],B);assert.equal(select.headers['X-Bindle-Session-Context'],'cb');assert.equal(select.headers['X-CSRF-Token'],'csrf-sam');assert.equal(select.headers['X-Bindle-Entry-Token'],pageToken);
+ const decision=h.calls.find(c=>c.path.endsWith('/decision'));assert.deepEqual(decision.body,{nonce,approved:[]});assert.equal(decision.headers['X-Bindle-Entry-Token'],pageToken);
  assert.deepEqual(h.nav,[{assign:`${app}/callback?code=CODE&state=S&iss=${encodeURIComponent(issuer)}`}]);
  // Before the click the only requests were the entry view and this browser's own same-origin inventory.
  const before=h.calls.slice(0,h.calls.indexOf(h.calls.find(c=>c.path==='/api/session')));assert.deepEqual(before.map(c=>`${c.method} ${c.path}`),[`GET /api/oauth/entries/${entryId}`,'GET /api/auth/accounts']);
@@ -150,6 +153,7 @@ test('frame-initiated popup: nothing renders or loads before the opener proves t
  assert.equal(h.calls.some(c=>c.path==='/api/auth/accounts'||c.path==='/api/session'),false,'no account request before attestation');
  release();await until(()=>h.root.querySelector('.account-row'));
  assert.deepEqual(posts[0],{data:{v:1,type:'bindle-embed-hello',entry:entryId,challenge:'C'.repeat(22)},origin:embed});
+ assert.deepEqual(h.calls.filter(c=>c.path.includes('/embed-')).map(c=>c.headers['X-Bindle-Entry-Token']),[pageToken,pageToken],'the handshake carries the page token');
  await until(()=>!h.root.querySelector('[data-entry-approve]').hasAttribute('aria-disabled'),1500);press(h.root.querySelector('[data-entry-approve]'));
  await until(()=>h.nav.some(n=>n.close));
  assert.deepEqual(h.calls.find(c=>c.path.endsWith('/select')).body,{nonce,pageSecret:'S'.repeat(43)});assert.deepEqual(h.calls.find(c=>c.path.endsWith('/decision')).body,{nonce,approved:[],pageSecret:'S'.repeat(43)});
@@ -163,8 +167,9 @@ test('frame-initiated entry without a provable opener is replaced by the plain p
  await until(()=>h.nav.length);assert.deepEqual(h.nav,[{replace:`/oauth/authorize?entry=${entryId}&mode=plain`}]);assert.equal(h.calls.some(c=>/accounts|session|challenge/.test(c.path)),false);assert.doesNotMatch(h.root.textContent,/alex/);h.page.dispose();
  // The plain page (COOP same-origin) runs as an ordinary flow and declares plain mode on every owner step.
  const requestId=`${A}.${'R'.repeat(43)}`;
- const p=harness({location:`?entry=${entryId}&mode=plain`,routes:[[`GET /api/oauth/entries/${entryId}`,()=>view({delivery:'embed-popup',embed:{attested:false,plain:false}})],...accountRoutes([[A,'alex','ca']]),[`POST /api/oauth/entries/${entryId}/select`,()=>({requestId})],[`GET /api/oauth/requests/${encodeURIComponent(requestId)}`,()=>({requestId,authenticated:true,client:{id:app+'/client',origin:app},requests:[]})],[`POST /api/oauth/entries/${entryId}/decision`,()=>({redirectUri:`${app}/callback?code=C&state=S&iss=${encodeURIComponent(issuer)}`})]]});
+ const p=harness({location:`?entry=${entryId}&mode=plain`,routes:[[`GET /api/oauth/entries/${entryId}`,()=>view({delivery:'embed-popup',embed:{attested:false,plain:false}})],[`POST /api/oauth/entries/${entryId}/plain`,()=>({plain:true})],...accountRoutes([[A,'alex','ca']]),[`POST /api/oauth/entries/${entryId}/select`,()=>({requestId})],[`GET /api/oauth/requests/${encodeURIComponent(requestId)}`,()=>({requestId,authenticated:true,client:{id:app+'/client',origin:app},requests:[]})],[`POST /api/oauth/entries/${entryId}/decision`,()=>({redirectUri:`${app}/callback?code=C&state=S&iss=${encodeURIComponent(issuer)}`})]]});
  await until(()=>p.root.querySelector('.account-row'));await until(()=>!p.root.querySelector('[data-entry-approve]').hasAttribute('aria-disabled'),1500);press(p.root.querySelector('[data-entry-approve]'));await until(()=>p.nav.length);
+ const declared=p.calls.find(c=>c.path.endsWith('/plain'));assert.equal(declared.credentials,'omit');assert.equal(declared.headers['X-Bindle-Entry-Token'],pageToken);assert.ok(p.calls.indexOf(declared)<p.calls.findIndex(c=>c.path==='/api/auth/accounts'),'declared before any account request');
  assert.deepEqual(p.calls.find(c=>c.path.endsWith('/select')).body,{nonce,plain:true});assert.equal(p.calls.some(c=>c.path.includes('embed-')),false);assert.match(p.nav[0].assign,/code=C/);p.page.dispose();
 });
 
@@ -189,15 +194,28 @@ test('end-session: explicit confirmation names the account; both answers return 
   const button=[...h.root.querySelectorAll('button')].find(b=>b.textContent===label);
   if(confirmed){await until(()=>!button.hasAttribute('aria-disabled')||!h.root.querySelector('[data-entry-approve]').hasAttribute('aria-disabled'),1500);press(h.root.querySelector('[data-entry-approve]'));}else button.click();
   await until(()=>h.nav.length);const call=h.calls.find(c=>c.path.endsWith('/end-session'));assert.deepEqual(call.body,{nonce,confirmed});
-  if(confirmed){assert.equal(call.headers['X-Bindle-Account'],A);assert.equal(call.headers['X-CSRF-Token'],'csrf-alex');}
+  assert.equal(call.headers['X-Bindle-Entry-Token'],pageToken);if(confirmed){assert.equal(call.headers['X-Bindle-Account'],A);assert.equal(call.headers['X-CSRF-Token'],'csrf-alex');}else{assert.equal(call.headers['X-CSRF-Token'],undefined);assert.equal(call.credentials,'omit');}
   assert.equal(new URL(h.nav[0].assign).searchParams.get('result'),result);h.page.dispose();
+ }
+});
+
+test('already approved: the account click resubmits the granted access with no consent screen; a refusal falls back to review',async()=>{
+ const fragment='https://schema.example/settings/v1',requestId=`${A}.${'R'.repeat(43)}`,approved=[{fragment,fields:['theme'],revision:'r1',resources:{},methods:{}}];
+ const consent={requestId,authenticated:true,client:{id:app+'/client',name:'Example app',origin:app,redirectUris:[app+'/callback']},requests:[{fragment,required:true,purpose:'Theme',fields:['theme'],schema:{title:'Settings',description:'Shared settings',publisher:'https://schema.example',fields:{theme:{title:'Theme',type:'enum',values:['dark','light']}}},values:{theme:'dark'},revision:'r1',resources:[],affectedApps:[]}]};
+ for(const refuse of [false,true]){
+  const h=harness({routes:[[`GET /api/oauth/entries/${entryId}`,()=>view({requests:[{fragment,required:true,purpose:'Theme',fields:['theme']}]})],...accountRoutes([[A,'alex','ca']]),[`POST /api/oauth/entries/${entryId}/select`,()=>({requestId,approved})],[`GET /api/oauth/requests/${encodeURIComponent(requestId)}`,()=>consent],
+   [`POST /api/oauth/entries/${entryId}/decision`,()=>refuse?json({error:'stale_consent',message:'x'},409):{redirectUri:`${app}/callback?code=C&state=S&iss=${encodeURIComponent(issuer)}`}]]});
+  await until(()=>h.root.querySelector('.account-row'));await until(()=>!h.root.querySelector('[data-entry-approve]').hasAttribute('aria-disabled'),1500);press(h.root.querySelector('[data-entry-approve]'));
+  if(!refuse){await until(()=>h.nav.length);assert.match(h.nav[0].assign,/code=C/);assert.deepEqual(h.calls.find(c=>c.path.endsWith('/decision')).body,{nonce,approved});assert.equal(h.calls.filter(c=>c.path.includes('/requests/')).length,1,'inspected once (connection review), no consent screen');}
+  else{await until(()=>h.root.querySelector('main').dataset.phase==='consent');assert.match(h.root.textContent,/Review what .*Example app.* can access/);assert.deepEqual(h.nav,[]);}
+  h.page.dispose();
  }
 });
 
 test('anonymous cancel, framed documents and expired entries reveal nothing',async()=>{
  const h=harness({routes:[[`GET /api/oauth/entries/${entryId}`,()=>view()],...accountRoutes(),[`POST /api/oauth/entries/${entryId}/decision`,()=>({redirectUri:`${app}/callback?error=access_denied&state=S&iss=${encodeURIComponent(issuer)}`})]]});
  await until(()=>h.root.querySelector('.account-row'));[...h.root.querySelectorAll('button')].find(b=>b.textContent==='Cancel').click();await until(()=>h.nav.length);
- const cancel=h.calls.find(c=>c.path.endsWith('/decision'));assert.deepEqual(cancel.body,{nonce,denied:true});assert.equal(cancel.headers['X-Bindle-Account'],undefined,'no member is named before a choice');assert.equal(cancel.headers['X-CSRF-Token'],nonce);assert.equal(cancel.credentials,'omit','an anonymous cancel carries no cookies');
+ const cancel=h.calls.find(c=>c.path.endsWith('/decision'));assert.deepEqual(cancel.body,{nonce,denied:true});assert.equal(cancel.headers['X-Bindle-Account'],undefined,'no member is named before a choice');assert.equal(cancel.headers['X-CSRF-Token'],undefined,'the public nonce is never a CSRF token');assert.equal(cancel.headers['X-Bindle-Entry-Token'],pageToken);assert.equal(cancel.credentials,'omit','an anonymous cancel carries no cookies');
  assert.equal(new URL(h.nav[0].assign).searchParams.get('error'),'access_denied');h.page.dispose();
  const framed=harness({framed:true,routes:[]});await until(()=>framed.root.querySelector('main')?.dataset.phase==='framed');assert.deepEqual(framed.calls,[],'a framed document makes no request');assert.equal(framed.root.querySelectorAll('button').length,0);framed.page.dispose();
  const gone=harness({routes:[[`GET /api/oauth/entries/${entryId}`,()=>json({error:'invalid_request',message:'This sign-in expired. Start again from the application.'},400)]]});await until(()=>gone.root.querySelector('main')?.dataset.phase==='expired');assert.match(gone.root.textContent,/This sign-in has expired/);assert.equal(gone.calls.length,1);gone.page.dispose();

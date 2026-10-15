@@ -14,10 +14,10 @@ export const fragment='https://schema.example/settings/v1';
 const schema={id:fragment,title:'Settings',description:'Shared settings',publisher:'https://schema.example',fields:{theme:{title:'Theme',type:'enum',values:['dark','light']}}};
 export const pkce=verifier=>createHash('sha256').update(verifier).digest('base64url');
 export const b64=size=>base64url(webcrypto.getRandomValues(new Uint8Array(size)));
-export async function provider({endSession,limits,handles=['alex','sam'],refreshEnabled=true,entryConfig=true,avatars={},embed={}}={}){
+export async function provider({endSession,limits,handles=['alex','sam'],refreshEnabled=true,entryConfig=true,avatars={},embed={},store}={}){
  let offset=0;const clock=()=>Date.now()+offset,time={advance:ms=>offset+=ms};
  const owners=new Map(handles.map(handle=>[randomUUID(),{handle,status:'active',sessions:new Map()}]));
- const config={APP_ORIGIN:issuer,FEDERATION_ENABLED:'true',FEDERATION_CLIENTS:JSON.stringify([{id:clientId,name:'Example app',origin:appOrigin,redirectUris:[redirectUri]}]),FEDERATION_SCHEMAS:JSON.stringify({[fragment]:schema}),KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),...entryConfig?{FEDERATION_ENTRY_ENABLED:'true',EMBED_ORIGIN:embedOrigin}:{},...endSession?{FEDERATION_END_SESSION_ENABLED:'true'}:{}};
+ const config={APP_ORIGIN:issuer,FEDERATION_ENABLED:'true',FEDERATION_CLIENTS:JSON.stringify([{id:clientId,name:'Example app',origin:appOrigin,redirectUris:[redirectUri]}]),FEDERATION_SCHEMAS:JSON.stringify({[fragment]:schema}),KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),...entryConfig?{FEDERATION_ENTRY_ENABLED:'true',EMBED_ORIGIN:embedOrigin}:{}};
  const clients=federationClients(config),repository={get:async id=>owners.has(id)?{id,...owners.get(id)}:null,findByHandle:async handle=>{for(const [id,o]of owners)if(o.handle===handle)return {id,...o};return null;}};
  const shards=new Map(),failures={beginEntry:0};
  const shard=owner=>{if(!shards.has(owner)){const subject=`${issuer}/entities/${owner}`;const controller=new FederationController({metadata:new MemoryFederationStore(),issuer,clients,crypto:webcrypto,clock,routingKey:owner,refreshEnabled,schemaHosts:['schema.example'],schemaFetcher:async()=>structuredClone(schema),dispatcher:async()=>({ok:true}),dpop:{secret:config.KEY_ENCRYPTION_KEY},embedOrigin,embedView:async s=>({handle:owners.get(s.split('/').at(-1)).handle,name:'Display '+owners.get(s.split('/').at(-1)).handle,avatar:avatars[owners.get(s.split('/').at(-1)).handle]??null}),
@@ -25,11 +25,13 @@ export async function provider({endSession,limits,handles=['alex','sam'],refresh
    const begin=controller.beginEntryAuthorization.bind(controller);controller.beginEntryAuthorization=async(...args)=>{if(failures.beginEntry>0){failures.beginEntry--;throw Object.assign(new Error('Temporarily unavailable.'),{code:'temporarily_unavailable'});}return begin(...args);};
    shards.set(owner,controller);}return shards.get(owner);};
  const authority=federationAuthority({config,repository,shard,clock});
- const ended=[];const entries=new AuthorizationEntries({store:new MemoryFederationStore(),issuer,clients,authority,embedOrigin,crypto:webcrypto,clock,dpop:true,limits,...endSession?{endSession:async(context,subject)=>{ended.push({context,subject});}}:{}});
+ const ended=[];const entries=new AuthorizationEntries({store:store??new MemoryFederationStore(),issuer,clients,authority,embedOrigin,crypto:webcrypto,clock,dpop:true,limits,endSession:Boolean(endSession)});
+ // Session-ending hook double: records the subject and the caller's authenticated owner (the real hook is in http.mjs).
+ const endHook=async(request,context,subject)=>{ended.push({context,subject});return typeof endSession==='function'?endSession(request,context,subject):[];};
  const assets={fetch:async()=>new Response('<!doctype html><title>Authorize</title>',{headers:{'Content-Type':'text/html'}})};
  const log=[];
  const fetch=async(input,init)=>{const request=input instanceof Request?input:new Request(input,init);log.push({method:request.method,url:request.url,headers:Object.fromEntries(request.headers)});
-  const response=await handleEmbedAPI(request,{authority,embedOrigin,...embed})??await handleAuthorizationEntry(request,{entries,issuer,assets,remote:async r=>r.headers.get('X-Test-Remote')??'test-remote'})??await handleFederation(request,{controller:authority,issuer,assets})??new Response('Not found',{status:404});
+  const response=await handleEmbedAPI(request,{authority,embedOrigin,...embed})??await handleAuthorizationEntry(request,{entries,issuer,assets,remote:async r=>r.headers.get('X-Test-Remote')??'test-remote',...endSession?{endSession:endHook}:{}})??await handleFederation(request,{controller:authority,issuer,assets})??new Response('Not found',{status:404});
   // As the root adapter does: mounted entry routes (and here the embed origin) join the core manifest (review F8).
   if(new URL(request.url).pathname!=='/.well-known/bindle/manifest.json'||!response.ok||!entryConfig)return response;
   const manifest=await response.json(),extra=entries.manifest({components:true});return new Response(JSON.stringify({...manifest,features:{...manifest.features,...extra.features},...extra.profiles?{profiles:extra.profiles}:{}}),{status:200,headers:response.headers});};
@@ -42,10 +44,15 @@ export const post=(p,url,body,headers={})=>p.fetch(url,{method:'POST',headers:{'
 export const form=(p,url,fields,headers={})=>p.fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded',...headers},body:new URLSearchParams(fields)});
 export function entryBody(overrides={}){const verifier=b64(48);return {verifier,body:{clientId,redirectUri,challenge:pkce(verifier),challengeMethod:'S256',state:b64(32),intent:'login',requests:[],presentation:'popup',...overrides}};}
 export async function createEntry(p,overrides={},headers={Origin:appOrigin}){const {verifier,body}=entryBody(overrides);const response=await post(p,`${issuer}/api/oauth/entries`,body,headers);const json=await response.json();return {response,entryId:json.entryId,verifier,body};}
+/** Headers of a provider-page mutation: exact Origin, browser Fetch Metadata and the entry's page token from its view. */
+export const pageHeaders=(view,extra={})=>({Origin:issuer,'Sec-Fetch-Site':'same-origin','X-Bindle-Entry-Token':view.pageToken,...extra});
+export const viewOf=async(p,entryId)=>(await p.fetch(`${issuer}/api/oauth/entries/${entryId}`,{headers:{Origin:issuer}})).json();
 /** The static provider page: view, choose an owner, then decide through the entry route. */
 export async function providerPage(p,entryId,session,{decision='approve',pageSecret,plain,approved}={}){
- const headers={Origin:issuer,Cookie:session.cookie,'X-CSRF-Token':session.csrf};
- const view=await(await p.fetch(`${issuer}/api/oauth/entries/${entryId}`,{headers:{Origin:issuer}})).json();if(!view.entry)return {view};
+ const view=await viewOf(p,entryId);if(!view.entry)return {view};
+ // The plain page declares plain mode when it loads, before any owner step.
+ if(plain)await post(p,`${issuer}/api/oauth/entries/${entryId}/plain`,{},pageHeaders(view));
+ const headers=pageHeaders(view,{Cookie:session.cookie,'X-CSRF-Token':session.csrf});
  const extra={...pageSecret?{pageSecret}:{},...plain?{plain:true}:{}};
  const selected=await post(p,`${issuer}/api/oauth/entries/${entryId}/select`,{nonce:view.entry.nonce,...extra},headers);const selection=await selected.json();if(!selected.ok)return {view,selected,selection};
  const inspect=await(await p.fetch(`${issuer}/api/oauth/requests/${selection.requestId}`,{headers:{Origin:issuer,Cookie:session.cookie}})).json();

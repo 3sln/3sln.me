@@ -4,8 +4,8 @@ import {hex} from './boot.mjs';
 // hold even for a buggy caller: optimistic revisions, forever-consumed boot
 // tokens, a hash-chained append-only audit log and per-actor windows.
 const fail=(code,message,status=409)=>{throw Object.assign(new Error(message),{code,status});};
-const KEY=/^(?:boot\/(?:principal|sessions)|boot-token\/[a-f0-9]{64}|catalog|reservation\/[a-z0-9][a-z0-9_-]{2,31}|claim\/[a-f0-9-]{36}|claim-name\/[a-z0-9][a-z0-9_-]{2,31}|principal\/[a-f0-9-]{36})$/;
-const LIST=/^(?:audit\/|principal\/|reservation\/|claim\/)$/;
+const KEY=/^(?:boot\/(?:principal|sessions)|boot-token\/[a-f0-9]{64}|catalog|reservation\/[a-z0-9][a-z0-9_-]{2,31}|claim\/[a-f0-9-]{36}|claim-name\/[a-z0-9][a-z0-9_-]{2,31}|principal\/[a-f0-9-]{36}|client-block\/[a-z0-9.-]{1,253})$/;
+const LIST=/^(?:audit\/|principal\/|reservation\/|claim\/|client-block\/)$/;
 const canonical=value=>Array.isArray(value)?'['+value.map(canonical).join(',')+']':value&&typeof value==='object'?'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}':JSON.stringify(value??null);
 const auditHash=async(prev,entry)=>hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(prev+'\n'+canonical(entry))));
 const pad=seq=>String(seq).padStart(12,'0');
@@ -13,7 +13,7 @@ export class AdminStorage {
  constructor(metadata){this.metadata=metadata;}
  async invoke(method,args){if(!['get','list','commit','verifyAudit'].includes(method))throw new TypeError('Unknown admin storage method');return this[method](...args);}
  async get(key){if(!KEY.test(key)&&key!=='audit-head')throw new TypeError('Invalid admin key');return await this.metadata.get('admin/'+key)??null;}
- async list(prefix,{startAfter='',limit=50}={}){if(!LIST.test(prefix)||typeof startAfter!=='string'||startAfter.length>64||!Number.isInteger(limit)||limit<1||limit>100)throw new TypeError('Invalid admin listing');const rows=await this.metadata.list({prefix:'admin/'+prefix,startAfter:startAfter?'admin/'+prefix+startAfter:'',limit});return [...rows].map(([key,value])=>({key:key.slice(6+prefix.length),value}));}
+ async list(prefix,{startAfter='',limit=50}={}){if(!LIST.test(prefix)||typeof startAfter!=='string'||startAfter.length>253||!Number.isInteger(limit)||limit<1||limit>100)throw new TypeError('Invalid admin listing');const rows=await this.metadata.list({prefix:'admin/'+prefix,startAfter:startAfter?'admin/'+prefix+startAfter:'',limit});return [...rows].map(([key,value])=>({key:key.slice(6+prefix.length),value}));}
  /** expect {key: revision|null}; writes {key: value|null}; audit entry; rate {key,limit,windowMs,now}. */
  async commit({expect={},writes={},audit,rate}={}){
   for(const key of [...Object.keys(expect),...Object.keys(writes)])if(!KEY.test(key))throw new TypeError('Invalid admin key');

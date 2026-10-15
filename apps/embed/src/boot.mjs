@@ -27,7 +27,10 @@ export function readConfig(doc){
   if(!c||typeof c!=='object'||c.v!==1||!origin(c.issuer)||typeof c.clientId!=='string'||!c.clientId||c.clientId.length>2048)return null;
   if(!Array.isArray(c.origins)||!c.origins.length||c.origins.length>16||!c.origins.every(origin)||!Array.isArray(c.parts)||!c.parts.every(p=>PART_NAMES.includes(p))||!allowedScriptPath(c.worker)||c.sw!==undefined&&!allowedScriptPath(c.sw))return null;
   let manage=c.issuer+'/';if(c.manageUrl!==undefined){try{const url=new URL(c.manageUrl);if(url.origin!==c.issuer||url.hash||url.username)return null;manage=url.href;}catch{return null;}}
-  return Object.freeze({issuer:c.issuer,clientId:c.clientId,origins:Object.freeze([...c.origins]),parts:Object.freeze([...c.parts]),worker:c.worker,sw:c.sw,manage});
+  // Optional FedCM-in-frame endpoints (adaptive §11.3), both on the issuer origin; absent means popup only.
+  const issuerURL=value=>{try{const url=new URL(value);return url.origin===c.issuer&&!url.hash&&!url.username&&!url.password?url.href:null;}catch{return null;}};
+  let fedcm=null;if(c.fedcm!==undefined){fedcm={configUrl:issuerURL(c.fedcm?.configUrl),assertUrl:issuerURL(c.fedcm?.assertUrl)};if(!fedcm.configUrl||!fedcm.assertUrl||Object.keys(c.fedcm).length!==2)return null;fedcm=Object.freeze(fedcm);}
+  return Object.freeze({issuer:c.issuer,clientId:c.clientId,origins:Object.freeze([...c.origins]),parts:Object.freeze([...c.parts]),worker:c.worker,sw:c.sw,manage,fedcm});
 }
 
 export function bootIsland({win=globalThis.window,doc=globalThis.document}={}){
@@ -46,11 +49,11 @@ export function bootIsland({win=globalThis.window,doc=globalThis.document}={}){
   paint();
   const theme=createTheme(doc),policy=createScriptURLPolicy([config.worker,...config.sw?[config.sw]:[]],{tt:win.trustedTypes,origin:embedOrigin});
   const services={channel:null,client:null};
-  let pendingClient=null,deferredForget=null;
+  let pendingClient=null,deferredForget=null,held=[];
   const worker=()=>pendingClient??=(async()=>{
     const instance=btoa(String.fromCharCode(...win.crypto.getRandomValues(new Uint8Array(16)))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
     const client=createWorkerClient(new win.Worker(policy.scriptURL(config.worker),{type:'module',name:'bindle-island'}));
-    client.on(event=>{if(event.event==='views'){model.views=event.views;changed();}});
+    client.on(event=>{if(event.event==='views'){model.views=event.views;changed();}else if(event.event==='sessions')held=Array.isArray(event.tokens)?event.tokens.filter(token=>typeof token==='string'&&/^[\x21-\x7e]{1,512}$/.test(token)).slice(0,8):[];});
     await client.call('start',{config:{issuer:config.issuer,clientId:config.clientId,origin:embedOrigin},instance,role:part==='sign-in'?'none':'member',bucket:model.bucket,scheme:model.scheme,visible:doc.visibilityState!=='hidden'});
     if(deferredForget){await client.call('forget',deferredForget).catch(()=>{});deferredForget=null;}
     services.client=client;return client;
@@ -75,7 +78,7 @@ export function bootIsland({win=globalThis.window,doc=globalThis.document}={}){
   const send=message=>services.channel?.send(message)??false;
   const arming=createArming({win,doc,onChange:armed=>{model.armed=armed;paint();}});
   const openProvider=()=>{try{win.open(config.manage,'_blank','noopener,noreferrer');}catch{}};
-  const startFlow=createFlows({model,send,worker,issuer:config.issuer,win,refresh:changed});
+  const startFlow=createFlows({model,send,worker,issuer:config.issuer,clientId:config.clientId,fedcm:config.fedcm,win,doc,refresh:changed});
   const context={model,t:(s,v)=>l10n.t(s,v),host,arming,worker,send,swap,nextTicket,startFlow,openProvider,refresh:changed,doc,win};
   const view=part==='avatar'?avatarPart(context):part==='sign-in'?signInPart(context):accountSwitcherPart(context);
   function applyState(m,message){
@@ -105,7 +108,12 @@ export function bootIsland({win=globalThis.window,doc=globalThis.document}={}){
   win.addEventListener('message',onInit);
   win.addEventListener('resize',()=>{const bucket=bucketFor();if(bucket!==model.bucket){model.bucket=bucket;services.client?.notify('bucket',bucket);view.update();}});
   doc.addEventListener('visibilitychange',()=>services.client?.notify('visible',doc.visibilityState!=='hidden'));
-  win.addEventListener('pagehide',()=>services.client?.notify('pagehide'));
+  // Same teardown in every state (EIR-4). The leader's embed sessions are ended from here with keepalive, because the
+  // worker is often terminated before it reads `pagehide`; followers hold none. Bearer only (server: endSession).
+  win.addEventListener('pagehide',()=>{
+    for(const token of held.splice(0))win.fetch('/embed/api/session/end',{method:'POST',headers:{'X-Bindle-Embed':'1',Authorization:`BindleEmbedSession ${token}`},mode:'same-origin',credentials:'omit',cache:'no-store',referrerPolicy:'same-origin',keepalive:true}).catch(()=>{});
+    services.client?.notify('pagehide');
+  });
   win.addEventListener('pageshow',event=>{if(event.persisted)services.client?.notify('pageshow');});
   return Object.freeze({model,engine});
 }

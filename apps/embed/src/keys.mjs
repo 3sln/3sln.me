@@ -53,6 +53,8 @@ export async function frameKey(store,{issuer,clientId,crypto=globalThis.crypto,c
     dpop:async({htm='POST',htu,nonce,ath})=>signer.sign({typ:'dpop+jwt',payload:{jti:randomId(crypto),htm,htu,iat:Math.floor(clock()/1000),nonce,...ath!==undefined?{ath:await sha256(ath,crypto)}:{}}}),
     /** Opener-key handshake proof (profile §9.1): single-use challenge, entry-bound, verification URL. */
     embedProof:({issuer:iss,entry,challenge})=>signer.sign({typ:'bindle-embed+jwt',payload:{jti:randomId(crypto),htm:'POST',htu:`${iss}/oauth/entries/${entry}/embed-verify`,iat:Math.floor(clock()/1000),nonce:challenge,entry}}),
+    /** FedCM-in-frame proof (adaptive §11.3, profile §9.1): entry-bound, single-use server nonce, `htu` = the assertion endpoint. */
+    fedcmProof:({assertUrl,entry,nonce})=>signer.sign({typ:'bindle-embed+jwt',payload:{jti:randomId(crypto),htm:'POST',htu:assertUrl,iat:Math.floor(clock()/1000),nonce,entry}}),
   });
 }
 

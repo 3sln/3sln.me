@@ -2,8 +2,7 @@
 // E2E_AUTHORIZATION_ENTRIES=1 node scripts/run-browser-checks.mjs tests/e2e/authorization-entry-ui.test.mjs).
 // Exercises the provider entry page (slice A7) end to end: real member cookies, real entry routes, real
 // handshake, real code exchange. Only the app documents (https://bindle-client.example, a reserved .example host)
-// are Playwright fixtures. One exception is marked: end-session has no Worker session-ending hook yet, so the
-// Worker refuses end-session entries; that check runs the real page against a simulated end-session route.
+// are Playwright fixtures; end-session runs against the Worker's real session-ending hook.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -112,20 +111,22 @@ test('reauthenticate honours maxAge: a stale session needs a fresh sign-in, then
  assert.equal(token.status,200,JSON.stringify(token.body));assert.equal(tokenSubject(token.body),subject(f.first));assert.deepEqual(f.errors,[]);
 });
 
-test('end-session: explicit confirmation naming the account; completed/canceled only (Worker refuses end-session entries until it has a hook)',async t=>{
+test('end-session: explicit confirmation naming the account ends only that account in this browser; completed/canceled only',async t=>{
  const f=await fixture(t);
- const refused=await f.app.evaluate(s=>window.createEntry({intent:'end-session',presentation:'redirect',subjectConstraint:s}),subject(f.first));assert.equal(refused.status,400,'no Worker end-session hook: the intent is not offered');
- const manifest=await(await f.context.request.get(baseURL+'/.well-known/bindle/manifest.json')).json();assert.equal(manifest.features['authorization-entry.v1'].intents.includes('end-session'),false);
- // SIMULATED SERVER: only the entry view and end-session POST for a synthetic entry ID; page, session and inventory are real.
- const entryId='Q'.repeat(43),posted=[];
- await f.context.route(`${baseURL}/api/oauth/entries/${entryId}**`,async route=>{const request=route.request();if(request.method()==='GET')return route.fulfill({contentType:'application/json',body:JSON.stringify({entry:{client:{id:clientId,name:'Independent fixture app',origin:appOrigin},redirectUri,intent:'end-session',requests:[],presentation:'redirect',delivery:'redirect',nonce:'n'.repeat(22),expiresAt:Date.now()+600000,subjectConstraint:subject(f.first)}})});
-  const body=request.postDataJSON();posted.push({body,headers:request.headers()});return route.fulfill({contentType:'application/json',body:JSON.stringify({redirectUri:`${redirectUri}?result=${body.confirmed?'completed':'canceled'}&state=S&iss=${encodeURIComponent(baseURL)}`})});});
- await f.app.goto(`${baseURL}/oauth/authorize?entry=${entryId}`);await f.app.getByText(f.first.handle+'@').first().waitFor();
+ const manifest=await(await f.context.request.get(baseURL+'/.well-known/bindle/manifest.json')).json();assert.equal(manifest.features['authorization-entry.v1'].intents.includes('end-session'),true,'the Worker mounts the session-ending hook');
+ const kept=await entryFrom(f.app,{intent:'end-session',presentation:'redirect',subjectConstraint:subject(f.first)});
+ await f.app.goto(`${baseURL}/oauth/authorize?entry=${kept.body.entryId}`);await f.app.getByRole('button',{name:'Stay signed in'}).click();
+ const canceled=await callbackOf(f.app);assert.deepEqual(Object.fromEntries(canceled.searchParams),{result:'canceled',state:kept.state,iss:baseURL});
+ await f.app.goto(appOrigin+'/'); const created=await entryFrom(f.app,{intent:'end-session',presentation:'redirect',subjectConstraint:subject(f.first)}),posted=[];
+ f.context.on('request',request=>{if(request.url().endsWith('/end-session'))posted.push({body:request.postDataJSON(),headers:request.headers()});});
+ await f.app.goto(`${baseURL}/oauth/authorize?entry=${created.body.entryId}`);await f.app.getByText(f.first.handle+'@').first().waitFor();
  const text=await f.app.locator('main').innerText();assert.match(await f.app.locator('h1').innerText(),new RegExp(`Sign out .*${f.first.handle}@`));assert.match(text,/Other accounts on this browser/);assert.equal(text.includes(f.second.handle),false,'other accounts are not shown');
  await screenshot(f.app,'authorization-entry-end-session');
- await f.app.getByRole('button',{name:'Sign out'}).click();const done=await callbackOf(f.app);assert.equal(done.searchParams.get('result'),'completed');
- assert.deepEqual(posted[0].body,{nonce:'n'.repeat(22),confirmed:true});assert.equal(posted[0].headers['x-bindle-account'],f.first.id);assert.ok(posted[0].headers['x-csrf-token']&&posted[0].headers['x-csrf-token']!=='n'.repeat(22),'the member CSRF');
- await f.app.goto(`${baseURL}/oauth/authorize?entry=${entryId}`);await f.app.getByRole('button',{name:'Stay signed in'}).click();assert.equal((await callbackOf(f.app)).searchParams.get('result'),'canceled');assert.deepEqual(posted[1].body,{nonce:'n'.repeat(22),confirmed:false});
+ await f.app.getByRole('button',{name:'Sign out'}).click();const done=await callbackOf(f.app);assert.deepEqual(Object.fromEntries(done.searchParams),{result:'completed',state:created.state,iss:baseURL});
+ assert.equal(posted[0].body.confirmed,true);assert.equal(posted[0].headers['x-bindle-account'],f.first.id);assert.ok(posted[0].headers['x-csrf-token'],'the member CSRF');assert.match(posted[0].headers['x-bindle-entry-token'],/^[A-Za-z0-9_-]{43}$/);
+ // Only the named account left this browser: the other account stays signed in.
+ const inventory=await(await f.context.request.get(baseURL+'/api/auth/accounts',{headers:{Origin:baseURL}})).json(),accounts=inventory.accounts.map(a=>a.account.id);
+ assert.equal(accounts.includes(f.first.id),false);assert.equal(accounts.includes(f.second.id),true);assert.deepEqual(f.errors,[]);
 });
 
 test('frame-initiated popup: the real embed bridge and keys attest the opener; delivery reaches only the embed origin',async t=>{

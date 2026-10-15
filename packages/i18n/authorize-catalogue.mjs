@@ -59,6 +59,8 @@ const es={
  'Review what {app} can access':'Revisa a qué puede acceder {app}',
  'Sign out {account}?':'¿Cerrar la sesión de {account}?',
  'App website: ':'Sitio web de la aplicación: ',
+ '{host} has not reviewed this app. Continue only if you trust {site}.':'{host} no ha revisado esta aplicación. Continúa solo si confías en {site}.',
+ 'Name the app gives itself (not verified): ':'Nombre que la aplicación se da a sí misma (no verificado): ',
  '{app} asks you to confirm your account. You need to have signed in less than {duration} ago.':'{app} te pide que confirmes tu cuenta. Debes haber iniciado sesión hace menos de {duration}.',
  '{app} will receive your account’s ID, the same one other apps receive. Your handle, preferences and resources are not shared.':'{app} recibirá el ID de tu cuenta, el mismo que reciben otras aplicaciones. No se comparten tu nombre de usuario, tus preferencias ni tus recursos.',
  'You’re signed in on this browser, but not as the account {app} asked about.':'Tienes una sesión iniciada en este navegador, pero no con la cuenta por la que preguntó {app}.',

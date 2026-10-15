@@ -334,3 +334,71 @@ The islands browser run uses the real shell, assets, worker, embed API, entries,
 - Service-worker registration in a browser: Playwright cannot route a service worker's script fetch for a `.example` host. The headers are checked against the Worker instead.
 - FedCM.
 - Deployed Workers.
+
+## Element integration (2026-10-14)
+
+Scope: the element side of the islands (`packages/sdk/src/elements/islands.mjs`, previously a stub) and its wiring into `<bindle-sign-in>`, `<bindle-account>` and `<bindle-avatar>`; the controller's new `sign-out` event (`flows.mjs`); client consumption of `GET /embed/api/events` and `POST /embed/api/session/end` in the island worker and shell; FedCM inside the island (`apps/embed/src/parts/flow.mjs`); a browser test for the service worker; and the islands entry in `scripts/run-browser-checks.mjs`. One independent reviewer (browser security and developer experience) read the diff without editing it. This is implementation review only. It implies no human sign-off, and nothing is production-verified.
+
+| Reviewer | Date | Outcome |
+| --- | --- | --- |
+| | | |
+
+### What was built
+
+- **Mounter.** For each part the provider declares, the mounter creates the profile §3.1 iframe:
+  - `src` and `name` are set before insertion;
+  - `referrerpolicy="no-referrer"`, with no `sandbox` and no `credentialless`;
+  - `allow` delegates `identity-credentials-get` only when the part's FedCM is honored, and names `'none'` for the other features.
+  - It handshakes with the exact `embed_origin` as `targetOrigin`. It validates every port message with `islands-protocol.mjs` and translates it into calls on the host element.
+- **Teardown and degradation.** The part degrades for the issuer and document on any of:
+  - the 3 s handshake window, with a one-macrotask grace;
+  - a 10 s load deadline (Firefox fires no `load` for a refused or failed frame);
+  - three violations in a minute;
+  - attribute tampering or a second `load`.
+
+  A foreign `ready.issuer` degrades the whole profile.
+- **Lifetime.** Island containers are keyed and use a constant inner host, because dodo replaces the children of any node whose vnode changed. Islands therefore live as long as the element is connected, including across sign-in and sign-out.
+- **Sign-out.** App sign-out sends `forget{subject}` before `session{null}` to every live island of that controller and issuer. It also queues the forget for islands mounted later; signing in again as that subject withdraws it. A fresh `prepare` is sent afterwards, because sign-out clears every pending transaction.
+- **Events.** `bindle-sign-in-end` and switcher `ended` arrive only after the app's own exchange has settled. Select is deduped per element.
+- **Island worker.** The leader streams `/embed/api/events` for each held session. It applies changed views, restores again with backoff when the server ends a stream, ends the replaced session on renewal, and ends its sessions when demoted.
+- **Session end on `pagehide`.** The island document sends `session/end` (bearer, keepalive) itself on `pagehide`, using the session tokens the worker announces. A worker is usually terminated before it reads `pagehide`: the worker-side keepalive reached the Worker 0 times in Chromium and Firefox.
+- **FedCM in the island.** Used only when the shell config names the provider's endpoints (`fedcm:{configUrl, assertUrl}` on the issuer origin), `IdentityCredential` exists and the frame was delegated the permission. Otherwise the island falls back, decided synchronously, to the popup.
+  - Request: an `embed-fedcm` entry and `mediation:'required'`, with `params:{v:1, entry, proof}`. The proof is a `bindle-embed+jwt` from the frame key, carrying an embed-API nonce, `htu` set to the assertion URL, and the entry.
+  - Token handling: the token is validated exactly; a claimless (auto-selected) token gives the app its code but creates no binding.
+  - Verified only against a test double, because the server endpoints do not exist.
+- **First render.** 16.94 KiB min+brotli (budget 18; HEAD measured 17.68). The public `monogramPattern` re-export had pulled the shared `islands-protocol` chunk into first render, so the pattern now lives in `monogram-pattern.mjs`. The lazy mounter is 3.10 KiB (design budget 4).
+
+### Findings and resolutions
+
+| ID | Severity | Finding | Resolution |
+| --- | --- | --- | --- |
+| EL-1 | High | Provider end-session never sent `forget`: `completeEndSession` clears the tokens before `#end` checks for a session. | **Fixed.** Held sessions are captured before completion and `sign-out` is dispatched. DOM test added. |
+| EL-2 | Medium | `pagehide` departs from EIR-4: only the leader's document sends N keepalive fetches, and session tokens now reach the island document. | **Kept and recorded.** The tokens can only end sessions; every read also needs a key proof, and the document is same-origin with the key store anyway. The worker-side request was never delivered. Open: a `notRestoredReasons` check for 0 and 1 binding, and possibly an end-only server handle. The coordinator should reflect this in embed-islands EI-13 and §5.3. |
+| EL-3 | Medium | FedCM may fail before its dialog: worker start, entry creation and a nonce fetch precede `credentials.get` and can outlast transient activation (about 5 s). `NotAllowedError` (also used for a user setting or a dismissal cooldown) reports `unavailable` with no popup retry. | **Open.** Pre-creating the entry would break P10 (no storage or network before activation). It needs Chromium evidence once the server endpoints exist. |
+| EL-4 | Medium | Teardown in mid-flow left `-start` unpaired and element state stuck. | **Fixed.** Teardown ends an open flow once, with `unavailable`, after any exchange in flight. DOM test added. |
+| EL-5 | Medium | `island-label`, `island-variant` and `density` were not observed. `compact` did not change the 320 px height. The frame title ignored the label and locale. | **Fixed.** Attributes are observed, `compact` is 248 px, and the title follows the label and locale. These attributes still need integration docs (I8). |
+| EL-6 | Low | `forget` fan-out was keyed by issuer only, so it crossed controllers. | **Fixed.** It is keyed by (controller, issuer). |
+| EL-7 | Low | A next flow could overtake or clobber an ending one. The rate limiter could drop `flow{ended}`. | **Fixed.** Per-flow state is taken synchronously and element calls are serialized. `flow` and `code` are exempt from the 10/s limit, bounded by the state machine, where any extra message is a violation (a small deviation from profile §5.2). |
+| EL-8 | Low | A `code` followed by `ended{canceled}` reported `canceled` while the app held a new session. | **Fixed.** The exchange result decides the outcome. Test added. |
+| EL-9 | Low (uncertain) | A keyed move could reload the switcher iframe. | **Checked.** The browser test now asserts that the same avatar and switcher frames survive sign-out and sign-in. |
+| EL-10 | Low | The stream line bound applied late, and the content type was not checked. | **Fixed.** Each line is bounded before parsing, and `application/x-ndjson` is required. No idle timeout: the server ticks every 25 s. |
+| EL-11 | Info | An iframe removed by the embedder stays `live` with a dead port. | **Open.** It is harmless, because messages go nowhere. |
+
+### Found during implementation
+
+- The account switcher's container toggled `hidden` on the node that held the iframe, so dodo removed the live frame (this predates this slice). The constant inner host fixes it.
+- Server streams are per session, up to 8. Over HTTP/1.1 they can exhaust the per-host connection pool. Cloudflare serves HTTP/2 and HTTP/3; a single multiplexed stream per instance would remove the risk (server follow-up).
+- Playwright route interception does not see keepalive requests from a document being destroyed (Chromium also routes them through its browser-side loader). The browser check therefore runs the island's `pagehide` handler on a synthetic event in the live document.
+
+### Evidence (2026-10-14)
+
+| Check | Result |
+| --- | --- |
+| `npm test` | 1159/1159 after the review fixes |
+| Full browser gate (`npm run test:e2e`, before the review fixes; the island suites were rerun after them) | 85/85 portal, 4/4 federation, 2/2 and 5/5 authorization entry, islands 30/32 (WebKit skipped), service worker 10/10 |
+| `npm run test:dom` | Passes |
+| `tests/browser/islands-embed.mjs` (harness and real elements) | Chromium and Firefox pass; WebKit skipped (`newPage()` hangs) |
+| `tests/browser/islands-sw.mjs` (real HTTPS through a test CONNECT proxy) | Chromium and Firefox: registration with scope `/embed`, partitioned by top-level site; new islands are controlled; only the shell and hashed assets are cached; `/embed/api/*` is never stored and fails offline; the offline shell completes the handshake |
+| `provider-matrix.mjs`, `embed-elements.mjs` | Chromium and Firefox pass (an unreachable embed origin degrades to the standard composition) |
+
+**Not verified:** FedCM against a real provider (no server endpoints) or in Chromium's real dialog; WebKit and iOS; bfcache parity for the document-side `session/end`; deployed Workers.

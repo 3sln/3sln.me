@@ -76,7 +76,7 @@ export const ERRORS={
  unexpected_response:'The service returned an unexpected response.'
 };
 export const errorText=error=>error?ERRORS[error.code]??tx('The request could not be completed ({code}).',{code:String(error.code??'unknown').slice(0,64)}):null;
-export const NOTICES={reserved:'Reservation saved.',unreserved:'Reservation released.',revoked:'Claim token revoked.','catalog-saved':'Role catalog saved.','roles-saved':'Roles saved.','badges-saved':'Badges saved.',suspended:'Account suspended.',reactivated:'Account reactivated.','step-up-cancelled':'Not confirmed. Nothing was changed.','signed-out':'You signed out of boot.',claimed:'Boot is claimed. This browser now holds a boot session.',restored:'Boot is restored. Older boot sessions no longer work.'};
+export const NOTICES={reserved:'Reservation saved.',unreserved:'Reservation released.',revoked:'Claim token revoked.','catalog-saved':'Role catalog saved.','roles-saved':'Roles saved.','badges-saved':'Badges saved.',suspended:'Account suspended.',reactivated:'Account reactivated.','step-up-cancelled':'Not confirmed. Nothing was changed.','signed-out':'You signed out of boot.',claimed:'Boot is claimed. This browser now holds a boot session.',restored:'Boot is restored. Older boot sessions no longer work.','client-blocked':'Client host blocked.','client-unblocked':'Client host unblocked.'};
 export const noticeText=notice=>NOTICES[notice]??notice;
 export const data=(value,tag='span')=>h(tag,String(value??'')).attrs({translate:'no'});
 export function formatTime(value,locale){if(!Number.isFinite(value))return '—';try{return new Intl.DateTimeFormat(locale,{dateStyle:'medium',timeStyle:'short'}).format(new Date(value));}catch{return new Date(value).toISOString();}}

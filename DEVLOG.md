@@ -1427,3 +1427,104 @@ Other open items:
 - hard-coded brand text.
 
 Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Authorization entry hardening
+
+All seven server gaps from the A7 review are fixed:
+- **S1 pre-consent leak.** Selection is per account. Owner steps verify session and CSRF before reading entry state. Cancel never consults an owner. The plain page declares plain mode on load. A test runs 20 probes × 4 selection states × plain/embed-plain and compares bytes and work counts.
+- **End-session hook (Worker/Node).** Ends only this browser's session for that account after that member's CSRF, revoking first. `end-session` is advertised only when the hook exists.
+- **CSRF.** Every entry POST requires exact Origin, same-origin Fetch Metadata and a per-entry token from the view.
+- **`maxAge:0`.** Satisfied by a sign-in or step-up after entry creation. Device-approval sessions count only after step-up.
+- **`embed.origin`.** Now included in the view.
+- **Already approved.** A provider-page-only resubmittable access signal.
+- **M5.** The entry store is sharded 64 ways by entry ID, with budgets on the caller's shard.
+
+[Review](docs/release/authorization-entry-hardening-review.md): 6 findings fixed (plain-mode leak, double code, priorApproval scope, legacy end-session, device-approval freshness). Gates green: core 1133/1133, Worker 51/51, UI-state 185/185, browser gate 85+4+2+5.
+
+`FEDERATION_ENTRY_ENABLED` remains off pending:
+- human sign-off;
+- registered production clients or `client-id-metadata.v1`;
+- Firefox/WebKit/mobile evidence;
+- checks against a deployed Worker.
+
+Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Account lifecycle runner wired (flags off, dry run)
+
+The lifecycle executor is wired behind `LIFECYCLE_ENABLED=false` and `LIFECYCLE_DRY_RUN=true`.
+
+- **Scheduling.** Worker: cron `17 */6 * * *` drives a bounded, leased, resumable sweep in a new `LifecycleScheduler` DO (migration v7), which arms accounts that have no traffic. Account DO alarms run lifecycle ticks. Node: the same sweep every 6 h and at startup.
+- **Notices.** Push to all devices plus email from `accounts@sys.3sln.me` when a verified email exists, with spaced attempts.
+- **Suspension.** 423 on every account method outside an allowlist (status, reactivation, billing/webhooks, unsubscribe).
+- **Reactivation.** `/api/account/lifecycle(/reactivate)` requires a sign-in within 15 minutes; the console shows an "I'm still using it" prompt.
+- **Cold tiering.** R2 bindings offer no copy or in-place class change, so objects are moved with an etag-guarded same-key `put` to `InfrequentAccess`.
+- **Purge.** Requires `LIFECYCLE_PURGE_ENABLED` and the final grace period. It commits a `purging` fence, tombstones the identity (handle kept, email released) and deletes only owned blobs. Accounts with external connectors are held.
+- **Unused-account threshold.** 2 days, per spec.
+
+Tests: core 1135/1135, Worker 51/51, UI-state 185/185, Worker dry run passes. [Review](docs/release/lifecycle-runner-review.md): 9 of 10 fixed, including purge after an unenforced period, tombstones enforced only in live mode, and webhooks refused while suspended.
+
+In progress before purge can ever be enabled:
+- refunded, charged-back and archived-product payers must count as ever-paid (item 5);
+- a cost-based size threshold for cold tiering;
+- documentation status updates.
+
+Reviewer ___ Date ___ Outcome ___.
+
+Lifecycle follow-ups:
+- **Ever-paid marker.** Any order, refund, chargeback or subscription, observed by webhook or live Polar check, sets a permanent marker. Purge additionally requires a fresh successful Polar check; failure or ambiguity holds the account. All six cases are tested: refund, chargeback, archived product, deleted product, missed webhook recovered by API, API down.
+- **Cold tiering threshold.** Only objects of 4 MiB or more move to InfrequentAccess (break-even about 1.9 MB). Hosted objects are currently capped at 1 MiB, so in practice nothing tiers. Suspended reads are still blocked.
+- **Docs.** Retention and email docs now state the flags default off with dry run.
+
+Unverified offline: Polar list behavior; a sandbox check is required before purge is ever enabled. Core 1141/1141, Worker 51/51, UI-state 185/185. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Client ID metadata documents (`client-id-metadata.v1`)
+
+Implemented locally behind `CLIENT_METADATA_ENABLED` (default false), following the provisional decision to declare it.
+
+**Resolution (`ClientDirectory`, `packages/federation/client-metadata.mjs`).**
+- Exact URL syntax, GET with no redirects, 16 KiB limit, 3 s abort, exact validation.
+- Cached 5 min–24 h; failures cached for 60 s and never as documents.
+- Global, per-site and per-site entry budgets are charged before any fetch.
+- Blocked hosts (including subdomains) and the provider's own hosts are refused. Static registrations take precedence and are never fetched.
+
+**Egress.** Node uses the DNS-pinned adapter. Workers use strictly-public global fetch plus a DoH screen, which does not pin the connection.
+
+**Trust and consent.**
+- A validated snapshot passes as a separate argument and is persisted on owner approval (at most 128 per owner), so codes, refresh and RPC never refetch.
+- CORS origin is derived from the client ID.
+- Consent and entry pages name the app by verified host. `client_name` is shown only as isolated text labelled unverified, with a "not reviewed" notice; logos are never shown.
+
+**Admin.** `blockClient`/`clientBlocks` with audit, plus a "Client hosts" console screen. The manifest declares the feature only when enabled with an egress port.
+
+Tests: core 1157/1157, Worker 51/51, UI-state 189/189, Worker dry run passes. [Review](docs/release/client-metadata-review.md): no High findings; subdomain block bypass, budget churn, self-host clients and others fixed.
+
+Residual risks:
+- a distinct-ID flood can exhaust the global budget and evict cached clients;
+- Node ignores `Cache-Control`;
+- an existing token used without Origin survives up to 5 minutes after a block.
+
+Production declaration still needs Workers egress verification against private and rebinding targets, plus sign-off. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Elements mount provider islands
+
+`packages/sdk/src/elements/islands.mjs` now mounts provider islands per the declared parts:
+- handshake to the exact embed origin;
+- every message validated and translated into element events;
+- island sign-in completes only after the app's own code exchange;
+- failures fall back to the standard UI.
+
+Islands stay mounted across sign-out so `forget` precedes `session{null}`. The leader consumes `/embed/api/events`. The island page sends `session/end` on pagehide, since worker requests did not reach the server. FedCM in the frame (`mediation:'required'`, key proof over a server nonce, feature-detected) is verified only against a test double; the provider FedCM endpoints do not exist yet. Fixed: app sign-out wiped the islands' pending sign-in. `islands-embed` and a new `islands-sw` suite (service worker over real HTTPS) joined the browser gate.
+
+Tests: core 1159/1159, DOM smoke; islands, SW, provider-matrix and embed-elements pass in Chromium and Firefox. First render 16.94 KiB min+brotli; the mounter is 3.10 KiB, lazy.
+
+[Review](docs/release/embed-islands-review.md) "Element integration": 8 of 11 fixed. Open:
+- EL-2: the pagehide session end departs from EIR-4;
+- EL-3: FedCM can lose user activation on slow networks;
+- EL-11.
+
+Server work remaining:
+- FedCM endpoints and `fedcm:{configUrl,assertUrl}` in the shell config;
+- entries accepting `embed-fedcm`;
+- possibly one event stream per instance.
+
+Reviewer ___ Date ___ Outcome ___.

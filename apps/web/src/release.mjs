@@ -23,6 +23,7 @@ import {createLocalization,catalogueForContributions} from './shared/i18n.mjs';
 import localizeTree from './ui/localize.mjs';
 import BrowserStateProvider from './providers/browser-state.mjs';
 import * as actions from './bl/release.mjs';
+import {ReactivateAccount} from './bl/lifecycle.mjs';
 import createApp from './ui/release-app.mjs';
 
 // Composition is the only layer naming concrete browser resources and domain
@@ -83,6 +84,7 @@ const constructors={
   'save-shortcut':actions.SetShortcut,'reset-shortcut':actions.ResetShortcuts,
   'reset-shortcuts':actions.ResetShortcuts,
   'load-billing':actions.LoadBilling,'billing-currency':actions.ChangeBillingCurrency,'review-plan-change':actions.ReviewPlanChange,'review-scheduled-cancel':actions.ReviewScheduledCancel,'confirm-scheduled-cancel':actions.ConfirmScheduledCancel,'cancel-plan-change-review':actions.CancelPlanChangeReview,'confirm-plan-change':actions.ConfirmPlanChange,'billing-checkout':actions.BillingCheckout,
+  'reactivate-account':ReactivateAccount,
   'save-semantic-preferences':actions.SaveSemanticPreferences,'billing-portal':actions.BillingPortal,'search-space':actions.SearchSpace,
   'search-next-page':actions.SearchSpace,'read-search-message':actions.ReadSearchMessage
 };

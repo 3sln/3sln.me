@@ -7,6 +7,7 @@ import {defaultKeybindings as defaultBindings} from '../shared/portal-bindings.m
 import {compileKeybindings,inspectKeybindings,resolveKeybinding,portalContext} from '../../../../packages/portal/keybindings.mjs';
 import {resolveLocale,createLocalization} from '../shared/i18n.mjs';
 import { Action,Query } from '../shared/stack.mjs';
+import {showLifecycle} from './lifecycle.mjs';
 const changed=(feed)=>feed.dispatchEvent(new Event('browser-state-updated'));
 function commit(state,feed,recipe){state.transition(recipe);changed(feed);}
 const update=(resources,ctx,patch)=>commit(resources.state,ctx.engineFeed,next=>Object.assign(next,patch));
@@ -77,7 +78,7 @@ class Flow extends Action {
   static deps={state:{write:true},api:{},browser:{},portalContributions:{},recoveryFile:{}};
   #detail;
   constructor(detail={}){super();this.#detail=detail;}
-  async execute(r,ctx){const detail=this.#detail;let values;try{values=detail.operationId?r.browser.consumeSubmission(detail.operationId):detail.values;}catch(error){update(r,ctx,{error:error.message});return;}if(!r.state.reserve())return;const generation=current(r).beamGeneration??0;changed(ctx.engineFeed);try{await this.perform(r,ctx,{...detail,values});}catch(error){if((current(r).beamGeneration??0)!==generation)return;if(error.status===401||accountContextError(error))clearAccount(r,ctx);update(r,ctx,{error:error.message,...accountContextError(error)?{accountPicker:true}:{}});}finally{if((current(r).beamGeneration??0)===generation)update(r,ctx,{busy:false});}}
+  async execute(r,ctx){const detail=this.#detail;let values;try{values=detail.operationId?r.browser.consumeSubmission(detail.operationId):detail.values;}catch(error){update(r,ctx,{error:error.message});return;}if(!r.state.reserve())return;const generation=current(r).beamGeneration??0;changed(ctx.engineFeed);try{await this.perform(r,ctx,{...detail,values});}catch(error){if((current(r).beamGeneration??0)!==generation)return;if(error.status===401||accountContextError(error))clearAccount(r,ctx);update(r,ctx,{error:error.message,...accountContextError(error)?{accountPicker:true}:{}});if(error.code==='account_suspended')await showLifecycle(r,ctx);}finally{if((current(r).beamGeneration??0)===generation)update(r,ctx,{busy:false});}}
 }
 export class InitializeSpace extends Flow {
   async perform(r,ctx,detail){const route=r.browser.route(),restored=r.browser.restorePending(),preferences=r.browser.preferences(),locale=resolveLocale(route.locale??preferences.locale??r.browser.language());let overrides=preferences.keybindingOverrides??[];try{compileKeybindings(defaultBindings(r.portalContributions),overrides,r.portalContributions.list('commands'));}catch{overrides=[];}r.browser.applyLocale(locale);update(r,ctx,{route,locale,messageAnimations:preferences.messageAnimations!==false,signupMode:route.tokenOnboarding?'onboarding':route.systemBootstrap?'system':'ordinary',signupPlan:route.tokenOnboarding?'free':route.signupPlan??'free',signupStep:route.tokenOnboarding?'onboarding':route.systemBootstrap?'invitation':'method',keybindingOverrides:overrides,offline:!r.browser.online(),pending:!!restored,pendingStage:restored?.stage,brand:{name:'3sln.me',host:'3sln.me'},pushPermission:r.browser.pushPermission()});

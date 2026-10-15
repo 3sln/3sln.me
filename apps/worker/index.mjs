@@ -21,10 +21,15 @@ export {SemanticBudgetObject} from './semantic-budget.mjs';
 export {McpAuthorizationObject} from './mcp-object.mjs';
 import {mcpAuthorities} from '../../packages/mcp/runtime.mjs';
 import {MCP_LAYOUT} from '../../packages/mcp/service.mjs';
-import {federationAuthority,federationEntriesRemote,FEDERATION_LAYOUT} from '../../packages/runtime/federation.mjs';
+import {federationAuthority,federationEntriesRemote,FEDERATION_LAYOUT,federationClientDirectory,clientMetadataEnabled} from '../../packages/runtime/federation.mjs';
+import {createWorkerClientMetadataFetch} from './client-metadata-fetch.mjs';
+import {adminClientBlocked} from '../../packages/identity/admin.mjs';
 import {federationRemote} from '../../packages/federation/runtime.mjs';
 export {FederationObject} from './federation.mjs';
-import {FEDERATION_ENTRIES_NAME} from './federation.mjs';
+export {LifecycleScheduler} from './lifecycle.mjs';
+import {LIFECYCLE_SCHEDULER_NAME} from './lifecycle.mjs';
+import {lifecycleMode} from '../../packages/runtime/lifecycle-runner.mjs';
+import {entryStoreName} from './federation.mjs';
 
 // Workers Assets canonicalizes .html URLs; retain the authenticated snapshot's
 // public URL while following only this exact same-origin internal canonicalization.
@@ -39,6 +44,15 @@ function assetResource(binding){return {async fetch(request){
  return terminal.status===200&&terminal.headers.get('Content-Type')?.includes('text/html')?terminal:new Response('Asset unavailable',{status:502});
 }};}
 
+// client-id-metadata.v1 resolution is isolate-scoped so its document and block caches outlive one request; budgets
+// use the fleet-wide ABUSE objects and blocks the admin authority. Off unless CLIENT_METADATA_ENABLED=true.
+let clientDirectory,clientDirectoryEnv;
+function workerClientDirectory(env,limiter){
+ if(clientDirectoryEnv===env&&clientDirectory)return clientDirectory;
+ // Without the admin authority there is no block list, so the feature stays off (fails closed).
+ const enabled=clientMetadataEnabled(env)&&Boolean(env.ADMIN_AUTHORITY),store=env.ADMIN_AUTHORITY?remoteAdminStore((method,args)=>env.ADMIN_AUTHORITY.get(env.ADMIN_AUTHORITY.idFromName('admin-v1')).invoke(method,args)):null;
+ clientDirectory=federationClientDirectory(env,enabled?{fetch:createWorkerClientMetadataFetch({publicRouting:true}),limiter,blocked:store?host=>adminClientBlocked(store,host):undefined}:{});clientDirectoryEnv=env;return clientDirectory;
+}
 function resources(env,resolveIdentityBadges){
  const repository=new ShardedIdentityRepository({shard:name=>env.IDENTITIES.get(env.IDENTITIES.idFromName(name)),layout:env.IDENTITY_LAYOUT,config:env});
  const devices=repository;
@@ -49,11 +63,14 @@ function resources(env,resolveIdentityBadges){
  // Island avatar sources on operator-approved origins (EMBED_AVATAR_ORIGINS) use the global fetch, which
  // global_fetch_strictly_public keeps off private and internal addresses. Node has no equivalent guard, so it injects none.
  value.EMBED_AVATAR_FETCH=(input,init)=>fetch(input,init);
+ if(env.LIFECYCLE_SCHEDULER&&lifecycleMode(env)!=='off')value.LIFECYCLE_SWEEP={run:input=>env.LIFECYCLE_SCHEDULER.get(env.LIFECYCLE_SCHEDULER.idFromName(LIFECYCLE_SCHEDULER_NAME)).run(input)};
  value.PUSH_AVAILABLE=Boolean(pushTransport);value.EMAIL_SETUP_AVAILABLE=typeof mailer?.sendSetupCode==='function';
  if(env.MCP_AUTH)value.MCP_AUTHORITY=mcpAuthorities(shard=>({invoke:(method,args)=>env.MCP_AUTH.get(env.MCP_AUTH.idFromName(`${MCP_LAYOUT}-${shard}`)).invoke(shard,method,args)}));
- // One global entry store (a single FederationObject instance); null unless FEDERATION_ENTRY_ENABLED.
- if(env.FEDERATION)value.FEDERATION_ENTRIES=federationEntriesRemote({config:env,invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(FEDERATION_ENTRIES_NAME)).entries(method,args)});
- if(env.FEDERATION)value.FEDERATION_AUTHORITY=federationAuthority({config:env,repository,shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
+ // The entry store, sharded by entry ID over FederationObject instances (review M5); null unless FEDERATION_ENTRY_ENABLED.
+ // packages/runtime/http.mjs always mounts the provider session-ending hook here, so end-session is offered.
+ const directory=env.FEDERATION?workerClientDirectory(env,value.ABUSE):undefined;
+ if(env.FEDERATION)value.FEDERATION_ENTRIES=federationEntriesRemote({config:env,endSession:true,directory,invoke:(shard,method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(entryStoreName(shard))).entries(method,args,shard)});
+ if(env.FEDERATION)value.FEDERATION_AUTHORITY=federationAuthority({config:env,repository,directory,shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
  // Administration is mounted only once boot is configured (BOOTSTRAP_TOKEN_SHA256) or the operator keeps it on
  // afterwards with ADMIN_ENABLED=true. One identity resource set serves the engine and the host administration service (docs/architecture/boot-and-admin.md).
  let identityResources,adminService;const admin=env.ADMIN_AUTHORITY&&(bootConfigured(env)||env.ADMIN_ENABLED==='true')?()=>adminService??=sharedIdentity().then(shared=>new AdminService({store:remoteAdminStore((method,args)=>env.ADMIN_AUTHORITY.get(env.ADMIN_AUTHORITY.idFromName('admin-v1')).invoke(method,args)),identity:new IdentityService(shared),onboarding:shared.onboarding,webauthn:shared.webauthn,passwordHasher:shared.passwordHasher,rateLimiter:shared.rateLimiter,config:env})):null;

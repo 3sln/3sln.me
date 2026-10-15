@@ -65,9 +65,10 @@ export class EnterConsole extends ConsoleAction {static intent='reload-overview'
 export class LoadOverview extends ConsoleAction {static intent='reload-overview';async perform(r,ctx){await refreshOverview(r,ctx);}async clear(r,ctx){update(r,ctx,{overview:null});}}
 export class Navigate extends Action {
  static deps={state:{write:true},api:{},browser:{}};constructor(detail){super();this.detail=detail;}
- execute(r,ctx){const view=this.detail.view;if(!['overview','reservations','claims','roles','users','audit'].includes(view)||current(r).busy)return;
+ execute(r,ctx){const view=this.detail.view;if(!['overview','reservations','claims','roles','users','clients','audit'].includes(view)||current(r).busy)return;
   // A revealed claim link is shown once: leaving the screen drops it.
   update(r,ctx,{view,reveal:view==='claims'&&current(r).view==='claims'?current(r).reveal:null,error:null,notice:''});r.browser.focus('#admin-heading');
+  if(view==='clients'&&!current(r).clientBlocks)ctx.engineFeed.dispatchEvent(new CustomEvent('admin-retry',{detail:{kind:'load-client-blocks'}}));
   if(view==='audit'&&!current(r).audit)ctx.engineFeed.dispatchEvent(new CustomEvent('admin-retry',{detail:{kind:'load-audit'}}));
   if(!current(r).overview)ctx.engineFeed.dispatchEvent(new CustomEvent('admin-retry',{detail:{kind:'reload-overview'}}));}
 }
@@ -185,6 +186,23 @@ export class LoadPrincipals extends ConsoleAction {
  async clear(r,ctx){update(r,ctx,{principals:null});}
 }
 export class PrincipalsBack extends LoadPrincipals {async perform(r,ctx){const trail=current(r).principals?.trail??[];const cursor=trail.at(-1)??'';const result=await this.call(r,'/api/admin/principals',cursor?{startAfter:cursor}:{});update(r,ctx,{principals:{rows:result.principals??[],next:result.next??null,cursor,trail:trail.slice(0,-1)}});}}
+// ---- metadata-document client hosts (client-id-metadata.v1) ----
+const HOST=/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+export const clientHostOf=value=>{const host=String(value??'').trim().toLowerCase().replace(/\.$/,'');return HOST.test(host)&&!/^[0-9.]+$/.test(host)?host:null;};
+export class LoadClientBlocks extends ConsoleAction {
+ static intent='load-client-blocks';
+ async perform(r,ctx){const result=await this.call(r,'/api/admin/clients/blocks',{});update(r,ctx,{clientBlocks:{rows:Array.isArray(result.blocks)?result.blocks.slice(0,50):[],next:typeof result.next==='string'?result.next:null}});}
+ async clear(r,ctx){update(r,ctx,{clientBlocks:null});}
+}
+export class BlockClient extends ConsoleAction {
+ async perform(r,ctx,detail){const host=clientHostOf(detail.values?.host??detail.host),reason=String(detail.values?.reason??detail.reason??'').trim();if(!host)throw failure('invalid_host');if(reason.length>200)throw failure('invalid_request');
+  if(confirmFirst(r,ctx,{...detail,host,reason,values:undefined},{title:'Block this client host?',body:'Apps whose client ID is a metadata URL on this host can no longer start sign-in, exchange codes or refresh. Reviewed apps registered by configuration are not affected. Other servers take up to 30 seconds to apply it.',confirmLabel:'Block host',subject:host}))return;
+  update(r,ctx,{modal:null});await this.call(r,'/api/admin/clients/block',{host,blocked:true,...reason?{reason}:{}});update(r,ctx,{notice:'client-blocked',noticeSubject:host});r.browser.restoreFocus();await new LoadClientBlocks({}).perform(r,ctx);}
+}
+export class UnblockClient extends ConsoleAction {
+ async perform(r,ctx,detail){const host=clientHostOf(detail.host);if(!host)throw failure('invalid_host');if(confirmFirst(r,ctx,detail,{title:'Unblock this client host?',body:'Apps on this host can start sign-in again through their metadata documents.',confirmLabel:'Unblock host',subject:host}))return;
+  update(r,ctx,{modal:null});await this.call(r,'/api/admin/clients/block',{host,blocked:false});update(r,ctx,{notice:'client-unblocked',noticeSubject:host});r.browser.restoreFocus();await new LoadClientBlocks({}).perform(r,ctx);}
+}
 // ---- audit ----
 export class LoadAudit extends ConsoleAction {
  static intent='load-audit';
@@ -202,5 +220,6 @@ export const constructors={
  reserve:Reserve,unreserve:Unreserve,'mint-claim':MintClaim,'claim-link':ClaimLink,'revoke-claim':RevokeClaim,'copy-reveal':CopyReveal,'dismiss-reveal':DismissReveal,
  'save-role':SaveRole,'delete-role':DeleteRole,'save-capability':SaveCapability,'delete-capability':DeleteCapability,'set-capability-class':SetCapabilityClass,'save-badge-classes':SaveBadgeClasses,
  lookup:Lookup,'set-roles':SetRoles,'set-badges':SetBadges,suspend:Suspend,reactivate:Reactivate,'load-principals':LoadPrincipals,'principals-back':PrincipalsBack,
+ 'load-client-blocks':LoadClientBlocks,'block-client':BlockClient,'unblock-client':UnblockClient,
  'load-audit':LoadAudit,'end-boot':EndBoot
 };

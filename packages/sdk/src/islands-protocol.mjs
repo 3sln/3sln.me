@@ -3,6 +3,7 @@
 // Shared read-only by the SDK elements and the island bundle (apps/embed). Dependency-free, side-effect free.
 // Validators return a frozen, normalized copy or null; they never throw and never echo rejected input.
 // Provisional: the profile is an unsigned draft; nothing here is production-verified.
+import {monogramPattern} from './monogram-pattern.mjs';
 const freeze=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;};
 const own=(value,key)=>Object.prototype.hasOwnProperty.call(value,key);
 
@@ -160,15 +161,8 @@ export function validateOutbound(data,{part,version,issuer}){
 }
 
 // ---- Monogram (profile Appendix A) ------------------------------------------------------------------------
-function fnv(text,seed=0x811c9dc5){let hash=seed>>>0;for(let i=0;i<text.length;i++){hash^=text.charCodeAt(i);hash=Math.imul(hash,0x01000193)>>>0;}return hash>>>0;}
-/** 5×5 symmetric cells (row-major) from 15 bits of `a`; colour index from `b`. Null for an unusable subject. */
-export function monogramPattern(subject){
-  if(typeof subject!=='string'||!subject||subject.length>2048)return null;
-  const a=fnv(subject),b=fnv(subject,(a^0x9e3779b9)>>>0),cells=[];
-  for(let r=0;r<5;r++)for(let c=0;c<5;c++)cells.push(((a>>>(r*3+(c<3?c:4-c)))&1)===1);
-  if(!cells.some(Boolean))cells[12]=true;
-  const index=b%24;return freeze({cells,index,hue:index*15+7.5});
-}
+// The pattern lives in its own module so the elements' first render (which re-exports it) never pulls in this file.
+export {monogramPattern};
 const TONES=freeze({light:{background:[0.93,0.03],cells:[0.40,0.065]},dark:{background:[0.36,0.06],cells:[0.93,0.03]}});
 /** OKLCH → opaque sRGB hex (gamut-clamped), so islands and elements paint identical bytes. */
 export function oklchToHex(l,c,h){

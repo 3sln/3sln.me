@@ -17,6 +17,7 @@ const PROVIDER_CODES = new Set([
 const ACCOUNT_NOTICES = Object.freeze({
   'suspension-warning': ['Action required: your {brand} account will be suspended in {days} days', 'We have tried to reach you about your unpaid account. Sign in and confirm you still want to use it before the deadline. Otherwise, your account will be suspended in {days} days. Suspension retains your hosted data but blocks normal account access and changes.'],
   'deletion-warning': ['Action required: your {brand} account will be deleted in {days} days', 'Your unpaid account is suspended. Sign in and confirm you still want to use it within {days} days to reactivate it. Otherwise, your account and data stored on {brand} will be deleted. Data in connected external storage providers will not be deleted by us.'],
+  'suspended-notice': ['Action required: your {brand} account is suspended', 'Your unpaid account is suspended after a period without use. Sign in and confirm you still want to use it to reactivate it. Suspension retains your hosted data but blocks normal account access and changes.'],
   'inactivity-warning': ['Review your {brand} account', 'Your account needs an activity review. Open your personal space to review its current status and options.'],
   'deletion-scheduled': ['Review scheduled {brand} account deletion', 'Account deletion has been scheduled. Open your personal space to review the schedule and available options.'],
   'deletion-cancelled': ['{brand} account deletion cancelled', 'Scheduled account deletion has been cancelled. Open your personal space to review your account.']
@@ -93,11 +94,14 @@ export function mailTransport(env = {}) {
       });
     }
   };
-  const notice = (templates, from, { email, type, days }) => {
+  const notice = (templates, from, { email, type, days, owner }) => {
     if (!Object.hasOwn(templates, type)) throw new Error('Invalid mail notice type.');
+    if (owner !== undefined && (typeof owner !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(owner))) throw new Error('Invalid mail notice account.');
     const [subject, text] = templates[type];
     if ((subject.includes('{days}') || text.includes('{days}')) && (!Number.isInteger(days) || days < 1 || days > 3650)) throw new Error('Invalid account notice deadline.');
     const format = value => value.replaceAll('{brand}', () => brand).replaceAll('{days}', () => String(days));
+    // Lifecycle notices link to the signed-in review prompt; the link carries no secret.
+    if (templates === ACCOUNT_NOTICES && ['suspension-warning', 'deletion-warning', 'suspended-notice'].includes(type)) return send({ from, to: email, subject: format(subject), text: `${format(text)}\n\nKeep your account: ${origin}/console?${owner ? `account=${owner}&` : ''}lifecycle=review\n\nThis notice was sent to the email associated with your account.` });
     return send({ from, to: email, subject: format(subject), text: `${format(text)}\n\nOpen ${origin}/console\n\nIf you did not request this change, review your account security in your personal space.` });
   };
   return {
@@ -132,8 +136,8 @@ export function mailTransport(env = {}) {
         text: `You have unread messages in your personal space.\n\nOpen ${origin}/console\n\nTurn off email notifications: ${url}`,
         headers: { 'List-Unsubscribe': `<${url}>` } });
     },
-    // Resources for future lifecycle/security callers; these do not schedule
-    // notices or establish that the corresponding event has occurred.
+    // sendAccountNotice is called by the account lifecycle executor (packages/runtime/lifecycle-runner.mjs);
+    // security alert callers remain unconnected. Acceptance is not proof of delivery.
     sendAccountNotice: input => notice(ACCOUNT_NOTICES, senders.account, input),
     sendSecurityAlert: input => notice(SECURITY_ALERTS, senders.security, input)
   };

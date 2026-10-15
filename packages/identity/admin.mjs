@@ -14,8 +14,12 @@ const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}
 const exact=(value,keys,optional=[])=>value&&Object.getPrototypeOf(value)===Object.prototype&&Object.keys(value).every(key=>keys.includes(key)||optional.includes(key))&&keys.every(key=>Object.hasOwn(value,key));
 const MUTATION_MS=300000,READ_MS=900000,BOOT_SESSION_MS=3600000,RATE={limit:60,windowMs:600000};
 const mask=email=>{if(typeof email!=='string')return null;const [local,domain]=email.split('@');return local.slice(0,1)+'***@'+domain;};
+const clientHost=value=>{if(typeof value!=='string')fail('invalid_host','Enter a client host name such as app.example.',400);const host=value.trim().toLowerCase().replace(/\.$/,'');if(host.length>253||!host.includes('.')||!host.split('.').every(label=>/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))||/^[0-9.]+$/.test(host))fail('invalid_host','Enter a client host name such as app.example.',400);return host;};
 const name=value=>{let selected;try{selected=validateHostAlias(value);}catch{fail('invalid_handle','Choose a named handle of 3–32 characters.',400);}if(selected===BOOT_HANDLE)fail('boot_reserved','The boot handle is permanently reserved.');return selected;};
 const bootSummary=p=>p&&{status:p.status,generation:p.generation,claimedAt:p.claimedAt,restoredAt:p.restoredAt,expiresAt:p.expiresAt,tokenDigest:p.tokenDigest.slice(0,12),methods:[...p.passwordHash?['password']:[],...p.credentials.length?['passkey']:[]]};
+/** Block-list read for adapters that hold the admin store but not the service. Invalid hosts read as blocked; store
+ * errors propagate so callers fail closed. */
+export async function adminClientBlocked(store,host){if(typeof host!=='string'||!/^[a-z0-9.-]{1,253}$/.test(host))return true;return Boolean(await store.get('client-block/'+host));}
 export class AdminService {
  constructor({store,identity,onboarding,webauthn,passwordHasher,rateLimiter,clock=()=>Date.now(),config}){if(!store||!identity||!webauthn||!passwordHasher||!rateLimiter||!config?.APP_ORIGIN)throw new TypeError('Admin resources are required');Object.assign(this,{store,identity,repository:identity.repository,onboarding,webauthn,passwordHasher,rateLimiter,clock,config});}
  hash(purpose,value){return this.identity.crypto.hash(purpose,value);}
@@ -160,6 +164,18 @@ export class AdminService {
  // (set before suspension commits, cleared after reactivation) freezes automatic
  // lifecycle steps; `releasedAt` lets a hold missed between two steps still resume safely.
  async lifecycleHold(owner){if(!uuid(owner))throw new TypeError('Invalid account identifier');const row=await this.store.get('principal/'+owner),account=await this.repository.get(owner),same=Boolean(account&&row&&row.assignmentId===account.assignmentId);return {held:Boolean(same&&row.hold),since:same&&Number.isSafeInteger(row.hold?.at)?row.hold.at:null,releasedAt:same&&Number.isSafeInteger(row.lastHold?.releasedAt)?row.lastHold.releasedAt:null};}
+ // ---- metadata-document client hosts (client-id-metadata.v1 abuse control) ----
+ /** Narrow capability: block or unblock one client host. Blocking refuses new metadata resolution, entries, code
+  * exchange, refresh and cross-origin calls for URL client IDs on that host and its subdomains; reviewed static clients are
+  * configuration and are unaffected. Every change is audited with its reason. */
+ async blockClient(input,context){return this.run(context,false,async(actor,now)=>{if(!exact(input,['host','blocked'],['reason'])||typeof input.blocked!=='boolean')fail('invalid_request','Provide the client host and whether it is blocked.',400);const host=clientHost(input.host),reason=input.reason===undefined?null:input.reason;
+  if(reason!==null&&(typeof reason!=='string'||reason.trim()!==reason||!reason||[...reason].length>200||/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(reason)))fail('invalid_request','Give a reason of at most 200 characters.',400);
+  const key='client-block/'+host,old=await this.store.get(key),{revision:_r,...before}=old??{};
+  if(!input.blocked){if(!old)return {host,blocked:false};await this.commit({expect:{...actor.expect,[key]:old.revision},writes:{[key]:null},rate:this.rate(actor,now),audit:this.entry(actor,now,'client.unblock',host,before,null)});return {host,blocked:false};}
+  const next={host,reason,blockedAt:old?.blockedAt??now,updatedAt:now,by:actor.audit};await this.commit({expect:{...actor.expect,[key]:old?.revision??null},writes:{[key]:next},rate:this.rate(actor,now),audit:this.entry(actor,now,'client.block',host,old?before:null,{reason})});return {host,blocked:true,block:next};});}
+ async clientBlocks(input,context){return this.run(context,true,async(actor,now)=>{if(!exact(input??{},[],['startAfter']))fail('invalid_request','Unsupported fields.',400);const startAfter=input?.startAfter===undefined?'':clientHost(input.startAfter);await this.readAudit(actor,now,'client.blocks',null,{startAfter});const rows=await this.store.list('client-block/',{startAfter,limit:50});return {blocks:rows.map(({value:{revision:_r,...v}})=>v),next:rows.length===50?rows.at(-1).key:null};});}
+ /** Trusted federation port, never an HTTP operation. Throws when the store is unreachable, so callers fail closed. */
+ clientBlocked(host){return adminClientBlocked(this.store,host);}
  /** Embedder port: effective roles/capabilities for an account (fails closed). */
  async authority(owner){const account=uuid(owner)&&await this.repository.get(owner);if(!account)return {roles:[],capabilities:[],admin:false};const {catalog}=await this.catalog(),target=await this.principalFor(account);return effectiveAuthority(catalog,target.principal,{internal:target.internal,active:account.status==='active'});}
 }

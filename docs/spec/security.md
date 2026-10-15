@@ -59,7 +59,7 @@ Record account and grant changes, credential enrollment/removal, session transit
 | Passkeys | Wrong origin/RP/challenge/type/signature; replay; missing verification; account binding; enrollment/deletion authorization; synced counter handling. |
 | Authorization | Cross-user/client/resource/method rejection; assignment removal immediate; expansion consent; immutable revision checks; optional fragment privacy; @profile restrictions. |
 | RPC | Payload-changing idempotency collision; cross-principal tx IDs; revocation on replay; race between revoke and mutation; bounded resource exhaustion. |
-| Network | Private/IPv6/metadata and redirect targets; DNS rebinding; compressed oversized content; hostile schema nesting; connectors returning unsafe paths/content. |
+| Network | Private/IPv6/metadata and redirect targets; DNS rebinding; compressed oversized content; hostile schema nesting; connectors returning unsafe paths/content. Client ID metadata documents (`client-id-metadata.v1`): verified Workers egress against private and rebinding targets before declaring the feature in production. |
 | Consent | User tests accurately identifying recipients, field data, resource powers, shared-fragment consequences and revocation limits; keyboard/screen-reader flow and cancellation. |
 | Operations | No secret leakage; connector disconnect; encrypted backup restore; rate-limit abuse and enumeration review; dependency/security review. |
 

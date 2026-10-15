@@ -35,7 +35,12 @@ export function entryView(model,ctx){
  const status=[model.error?h('p',model.error).attrs({role:'alert'}).classes('alert','error'):null];
  const live=h('div',model.notice?h('p',model.notice).classes('security-note'):null).attrs({role:'status','aria-live':'polite'}).key('entry-live');
  // The registered origin is the trust anchor; the client name is registration data shown beside it.
- const origin=entry?h('p',t('App website: '),h('strong',hostOf(entry.client.origin)).attrs({translate:'no'}),' ',h('span',entry.client.origin).classes('field-help').attrs({translate:'no'})).key('entry-origin'):null;
+ // An app this provider has not reviewed (client-id-metadata.v1) is named by its verified website alone; the name it
+ // gives itself is shown only as an unverified claim, so a look-alike name cannot stand in for the real origin.
+ const unreviewed=entry?.client.reviewed===false;
+ const origin=entry?h('div',h('p',t('App website: '),h('strong',hostOf(entry.client.origin)).attrs({translate:'no'}),' ',h('span',entry.client.origin).classes('field-help').attrs({translate:'no'})),
+  unreviewed?h('p',t('{host} has not reviewed this app. Continue only if you trust {site}.',{host,site:isolate(hostOf(entry.client.origin))})).classes('security-note').data({unreviewedClient:'true'}):null,
+  unreviewed&&entry.client.claimedName?h('p',t('Name the app gives itself (not verified): '),h('span',isolate(entry.client.claimedName)).attrs({translate:'no'})).classes('field-help').data({claimedName:'true'}):null).key('entry-origin'):null;
  const cancel=entry&&entry.intent!=='end-session'?plain(model.phase==='consent'?t('Cancel connection'):t('Cancel'),()=>dispatch('cancel')):null;
  const account=handle=>isolate(handle+'@'+host);
  // A real link (never window.open with noopener, whose null result hides a blocked popup); middle-click works too.

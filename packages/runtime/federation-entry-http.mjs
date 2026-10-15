@@ -2,22 +2,32 @@
 // Mounted by packages/runtime/http.mjs ahead of handleFederation; returns null for unrelated requests. Root
 // adapters keep IP/subnet admission, asset serving and page hardening (securePage) as for /oauth/authorize.
 const privateHeaders={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'; base-uri 'none'"};
-const json=(value,status=200,headers={})=>new Response(JSON.stringify(value),{status,headers:{...privateHeaders,'Content-Type':'application/json',...headers}});
+const json=(value,status=200,headers={},cookies=[])=>{const response=new Response(JSON.stringify(value),{status,headers:{...privateHeaders,'Content-Type':'application/json',...headers}});for(const cookie of cookies)response.headers.append('Set-Cookie',cookie);return response;};
 const error=(code,message,status=400)=>Object.assign(new Error(message),{code,status});
 const statuses={unauthorized:401,rate_limited:429,csrf:403,forbidden:403,not_found:404,temporarily_unavailable:503,account_already_chosen:409,account_mismatch:409,reauthentication_required:401,embed_attestation_required:403,embed_attestation_failed:403,consent_stale:409,stale_consent:409,account_context_conflict:409,session_context_conflict:409};
-const ENTRY_PATH=/^\/api\/oauth\/entries\/([A-Za-z0-9_-]{43})(?:\/(select|decision|end-session))?$/,EMBED_PATH=/^\/oauth\/entries\/([A-Za-z0-9_-]{43})\/(embed-challenge|embed-verify)$/;
+const ENTRY_PATH=/^\/api\/oauth\/entries\/([A-Za-z0-9_-]{43})(?:\/(select|decision|end-session|plain))?$/,EMBED_PATH=/^\/oauth\/entries\/([A-Za-z0-9_-]{43})\/(embed-challenge|embed-verify)$/;
 async function body(request,max=32768){
  if(request.headers.get('Content-Type')?.split(';')[0].trim()!=='application/json')throw error('json_required','Use JSON.',415);if(!request.body)return {};
  const reader=request.body.getReader(),chunks=[];let size=0;try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>max)throw error('body_too_large','Request is too large.',413);chunks.push(value);}}catch(e){await reader.cancel();throw e;}
  const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
  try{const value=size?JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)):{};if(!value||typeof value!=='object'||Array.isArray(value))throw 0;return value;}catch{throw error('invalid_request','Invalid JSON.');}
 }
+/** With metadata-document clients (client-id-metadata.v1) the creating app's origin cannot be known before the body
+ * names its client, so any HTTPS origin may preflight; creation itself requires Origin to equal the client's origin. */
+const metadataOrigin=origin=>{try{const u=new URL(origin);return u.protocol==='https:'&&u.origin===origin;}catch{return false;}};
 /** Legacy single-cookie owner context; multi-account mounts pass their own resolver. */
 export function legacyOwnerContext(request,{issuer,allowInsecureLocalhost=false}){const name=allowInsecureLocalhost?'bindle_session':'__Host-bindle_session';let sessionToken;for(const part of(request.headers.get('Cookie')??'').split(';')){const [k,...v]=part.trim().split('=');if(k===name){try{sessionToken=decodeURIComponent(v.join('='));}catch{throw error('unauthorized','Invalid session.',401);}}}return {sessionToken,csrfToken:request.headers.get('X-CSRF-Token'),origin:request.headers.get('Origin')??issuer};}
 // Browsers omit Origin on same-origin GETs, so a GET without Origin must carry Sec-Fetch-Site: same-origin instead.
 const sameOrigin=(request,issuer)=>{const site=request.headers.get('Sec-Fetch-Site'),origin=request.headers.get('Origin');if(origin===null?request.method!=='GET'||site!=='same-origin':origin!==issuer||site!==null&&site!=='same-origin')throw error('forbidden','Use the provider page.',403);};
-/** Issuer-origin routes. `entries` is an AuthorizationEntries instance. */
-export async function handleAuthorizationEntry(request,{entries,issuer,assets,ownerContext,remote,enabled=true,allowInsecureLocalhost=false}){
+/** Entry mutations come only from the provider page (hardening item 3): the exact Origin, browser-set Fetch Metadata
+ * (`Sec-Fetch-Site: same-origin`) and the per-entry page token that only the same-origin view returns, sent as
+ * X-Bindle-Entry-Token. The entry nonce is public and is never a CSRF token. */
+export const ENTRY_TOKEN_HEADER='X-Bindle-Entry-Token';
+function pageRequest(request,issuer){const token=request.headers.get(ENTRY_TOKEN_HEADER);if(request.headers.get('Origin')!==issuer||request.headers.get('Sec-Fetch-Site')!=='same-origin'||!token||!/^[A-Za-z0-9_-]{43}$/.test(token))throw error('csrf','Reload the provider page before continuing.',403);return {token};}
+/** Issuer-origin routes. `entries` is an AuthorizationEntries instance (or the Worker facade). `endSession(request,
+ * context,subject)` is the adapter's provider session-ending hook: it ends only this browser's session for `subject`
+ * after verifying that member and its CSRF, and returns the Set-Cookie values to send. */
+export async function handleAuthorizationEntry(request,{entries,issuer,assets,ownerContext,remote,endSession,enabled=true,allowInsecureLocalhost=false}){
  const url=new URL(request.url),path=url.pathname,entry=ENTRY_PATH.exec(path),embed=EMBED_PATH.exec(path);
  const document=path==='/oauth/authorize'&&url.searchParams.has('entry');
  if(path!=='/api/oauth/entries'&&!entry&&!embed&&!document)return null;let cors={};
@@ -25,7 +35,7 @@ export async function handleAuthorizationEntry(request,{entries,issuer,assets,ow
   if(url.origin!==issuer)throw error('invalid_origin','Use the configured provider origin.',403);
   if(!enabled||!entries)throw error('temporarily_unavailable','Application sign-in is not available.',503);
   if(path==='/api/oauth/entries'){
-   const origin=request.headers.get('Origin')??undefined,allowed=origin!==undefined&&([...entries.clients.values()].some(c=>c.origin===origin)||origin===entries.embedOrigin);
+   const origin=request.headers.get('Origin')??undefined,allowed=origin!==undefined&&([...entries.clients.values()].some(c=>c.origin===origin)||origin===entries.embedOrigin||entries.clientMetadata===true&&metadataOrigin(origin));
    if(origin!==undefined&&!allowed)throw error('forbidden','Application origin is not registered.',403);if(allowed)cors={'Access-Control-Allow-Origin':origin,Vary:'Origin'};
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{...privateHeaders,...cors,'Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type','Access-Control-Max-Age':'600'}});
    if(request.method!=='POST')throw error('method_not_allowed','Use POST.',405);
@@ -44,13 +54,18 @@ export async function handleAuthorizationEntry(request,{entries,issuer,assets,ow
   }
   if(entry&&!entry[2]){if(request.method!=='GET')throw error('method_not_allowed','Use GET.',405);sameOrigin(request,issuer);return json(await entries.view(entry[1]));}
   if(request.method!=='POST')throw error('method_not_allowed','Use POST.',405);
-  if(embed){sameOrigin(request,issuer);const input=await body(request,8192);if(embed[2]==='embed-verify')return json(await entries.verify(embed[1],input));if(Object.keys(input).length)throw error('invalid_request','No parameters.');return json(await entries.challenge(embed[1]));}
-  // Owner-authenticated provider mutations: exact Origin plus CSRF; owner checks happen in the owner shard.
-  if(request.headers.get('Origin')!==issuer||!request.headers.get('X-CSRF-Token'))throw error('csrf','Reload the provider page before continuing.',403);
+  const page=pageRequest(request,issuer);
+  if(embed){const input=await body(request,8192);if(embed[2]==='embed-verify')return json(await entries.verify(embed[1],input,page));if(Object.keys(input).length)throw error('invalid_request','No parameters.');return json(await entries.challenge(embed[1],page));}
+  // Cookies are authenticated (member AEAD) before any entry branch; owner steps then authenticate the live session
+  // and its CSRF before reading entry state, and cancel never uses the owner at all (S1).
   const context=typeof ownerContext==='function'?await ownerContext(request):legacyOwnerContext(request,{issuer,allowInsecureLocalhost}),input=await body(request,131072);
-  if(entry[2]==='select')return json(await entries.select(entry[1],context,input));
-  if(entry[2]==='decision')return json(await entries.decide(entry[1],context,input));
-  return json(await entries.finishSession(entry[1],context,input));
+  if(entry[2]==='plain'){if(Object.keys(input).length)throw error('invalid_request','No parameters.');return json(await entries.declarePlain(entry[1],page));}
+  if(entry[2]==='select')return json(await entries.select(entry[1],context,input,page));
+  if(entry[2]==='decision')return json(await entries.decide(entry[1],context,input,page));
+  // End-session: the confirmed subject's session in this browser ends before the entry completes.
+  const {subject}=await entries.endTarget(entry[1],input,page);let cookies=[];
+  if(input.confirmed){if(typeof endSession!=='function')throw error('temporarily_unavailable','Signing out is not available.',503);cookies=await endSession(request,context,subject)??[];}
+  return json(await entries.finishSession(entry[1],input,page),200,{},cookies);
  }catch(e){const status=e.status??statuses[e.code]??400;return json({error:e.code??'invalid_request',message:e.code?e.message:'The sign-in request could not be completed.'},status,{...cors,...Number.isSafeInteger(e.retryAfter)&&e.retryAfter>0?{'Retry-After':String(e.retryAfter)}:{}});}
 }
 const EMBED_AUTH={session:'BindleEmbed',forget:'BindleEmbed',state:'BindleEmbedSession',avatar:'BindleEmbedSession',events:'BindleEmbedSession','session/end':'BindleEmbedSession'};

@@ -69,4 +69,11 @@ if(process.argv.length===2){
   const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);});
   if(code!==0)process.exitCode=process.exitCode||code||1;
  }
+ // The islands suites start their own Worker (embed origin, dedicated client; islands-sw adds real HTTPS through a test
+ // proxy), so they run once, directly, after the shared Worker has stopped.
+ for(const suite of ['tests/browser/islands-embed.mjs','tests/browser/islands-sw.mjs']){
+  const child=spawn(process.execPath,['--test',suite],{stdio:'inherit',env:{...process.env,E2E_ARTIFACTS:'artifacts/browser'}});
+  const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);});
+  if(code!==0)process.exitCode=process.exitCode||code||1;
+ }
 }

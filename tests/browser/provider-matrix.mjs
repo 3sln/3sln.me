@@ -76,7 +76,7 @@ async function popupSignIn(f,start){
 }
 const signInForm=async(page,handle)=>{await page.getByLabel('Your Bindle identity').fill(handle);await page.getByRole('button',{name:'Continue',exact:true}).click();};
 
-for(const engine of [chromium,firefox])test(`${engine.name()}: full declaration: popup, DPoP-bound session with a non-extractable key, provider manage URL, islands hook mounts nothing`,async t=>{
+for(const engine of [chromium,firefox])test(`${engine.name()}: full declaration: popup, DPoP-bound session with a non-extractable key, provider manage URL, an unreachable embed origin degrades islands to the standard composition`,async t=>{
   // FedCM is declared off here: real Chromium would try the mock config URL. The FedCM path is covered by DOM tests.
   const f=await fixture(t,{engine,providers:{'3sln.example':{declaration:'full',fedcm:false,profile:true,picture:true}}});if(!f)return;const {page,mocks,requests,embedRequests,errors}=f,mock=mocks['https://3sln.example'];
   await page.goto(app+'/popup');await ready(page);
@@ -96,8 +96,12 @@ for(const engine of [chromium,firefox])test(`${engine.name()}: full declaration:
   await trigger.click();
   assert.deepEqual(await panelActions(page),['Use another account','Use a different provider','Sign out of this app','Manage at 3sln.example']);
   assert.equal(await page.getByRole('link',{name:'Manage at 3sln.example'}).getAttribute('href'),'https://3sln.example/console/apps');
-  assert.deepEqual(await page.evaluate(()=>({account:document.querySelector('bindle-account').state.islands})),{account:{avatar:'off',switcher:'off'}});
-  assert.deepEqual(embedRequests,[],'no request to the embed origin until the islands slice mounts something');
+  // The embed origin is unreachable here: each island times out (3 s after load, or 10 s without one, as Firefox fires
+  // no load for a failed frame) and its part degrades for the document.
+  await page.waitForFunction(()=>{const s=document.querySelector('bindle-account').state.islands;return s.avatar==='fallback'&&s.switcher==='fallback';},null,{timeout:15000});
+  assert.equal(await page.evaluate(()=>document.querySelector('bindle-session').capabilities.islands.avatar),null);
+  assert.ok(embedRequests.length>0&&embedRequests.every(url=>url.startsWith('https://embed.3sln.example/embed?client=')),'only island shells were requested');
+  assert.deepEqual(await panelActions(page),['Use another account','Use a different provider','Sign out of this app','Manage at 3sln.example'],'the fallback keeps every action');
   await page.screenshot({path:resolve(artifacts,`provider-matrix-full-${engine.name()}.png`)});
   assert.deepEqual(errors,[]);
 });
@@ -174,12 +178,12 @@ test('chromium: partial declarations: login without select-account, and a profil
   await page.goto(app+'/popup');await ready(page);
   const caps=await page.evaluate(()=>document.querySelector('bindle-session').capabilities);
   assert.ok(caps.islands.signIn);assert.equal(caps.islands.avatar,null);assert.equal(caps.islands.switcher,null);
-  assert.equal(await page.evaluate(()=>document.querySelector('bindle-sign-in').state.islands),'off');
+  assert.equal(await page.evaluate(()=>document.querySelector('bindle-sign-in').state.islands),'mounting','the sign-in island mounts; the standard button shows meanwhile');
   await popupSignIn(f,()=>page.getByRole('button',{name:'Continue with 3sln.example'}).click());
   await page.getByRole('button',{name:/^Account: /}).click();
   await popupSignIn(f,()=>page.getByRole('button',{name:'Use another account'}).click());
   const last=[...mock.entries.values()].at(-1);assert.equal(last.intent,'login');assert.equal(last.loginHint,undefined);
-  assert.deepEqual(embedRequests,[]);assert.deepEqual(errors,[]);
+  assert.ok(embedRequests.every(url=>/^https:\/\/embed\.3sln\.example\/embed\?client=[^#]+$/.test(url)),'only the sign-in shell, never avatar or switcher (no credential binding)');assert.deepEqual(errors,[]);
 });
 
 test('chromium: unsupported and below-floor providers are errors without a window or fallback; a 404 host offers only the default host',async t=>{

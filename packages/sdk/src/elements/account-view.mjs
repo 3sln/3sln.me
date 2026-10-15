@@ -20,7 +20,8 @@ const styles=view=>css.in(view)`
 .trigger.avatar-only{padding-inline:.3em}
 .avatar-box{position:relative;display:inline-grid;flex:none}
 .avatar-island{position:absolute;inset-block-start:.3em;inset-inline-start:.3em;inline-size:var(--bindle-avatar-size,32px);block-size:var(--bindle-avatar-size,32px);pointer-events:none}
-.avatar-island:empty{display:none}
+.avatar-island[hidden],.wrap[hidden]{display:none}
+.island-host{display:block;inline-size:100%;block-size:100%}
 .label{overflow-wrap:anywhere}
 .panel{box-sizing:border-box;min-inline-size:16em;max-inline-size:min(24rem,calc(100vw - 16px));margin:0;padding:.35em;border:1px solid var(--_border);border-radius:var(--_radius);background:var(--_raised);color:var(--_text);box-shadow:0 6px 24px rgb(0 0 0 / .18);overflow:auto;overscroll-behavior:contain}
 .panel.inline{position:absolute;inset-inline-start:0;inset-block-start:calc(100% + 4px);z-index:1}
@@ -28,7 +29,8 @@ const styles=view=>css.in(view)`
 .panel:popover-open{display:block}
 .header{padding:.5em .75em;color:var(--_muted);overflow-wrap:anywhere}
 .switcher{display:block;inline-size:100%;block-size:320px}
-.switcher:empty,.switcher[hidden]{display:none}
+.switcher.compact{block-size:248px}
+.switcher[hidden]{display:none}
 [role=list]{display:block}
 .item,::slotted(a),::slotted(button){display:flex;align-items:center;box-sizing:border-box;inline-size:100%;min-block-size:44px;padding:.5em .75em;border:0;border-radius:calc(var(--_radius) - 2px);background:transparent;color:var(--_text);text-align:start;text-decoration:none;font:inherit;cursor:pointer}
 .item:hover,.item:focus-visible{background:var(--_surface)}
@@ -46,7 +48,7 @@ const failureCodes={canceled:'canceled',dismissed:'canceled','network-error':'ne
 export class AccountView {
   constructor(host){this.host=host;}
   #session=null;#open=false;#listeners=[];#connected=false;#unwatch=null;#reason=null;#keyboard=false;#handleMode=null;#handleError='';#pictureFailed=null;
-  #reported;#reportedSubject=null;#deadline=Infinity;#switching=false;#islands={avatar:null,switcher:null};#islandStates={avatar:'off',switcher:'off'};#islandKeys={avatar:'',switcher:''};#switcherWanted=false;#dismissedAt=-Infinity;
+  #reported;#reportedSubject=null;#deadline=Infinity;#switching=false;#islands={avatar:null,switcher:null};#islandStates={avatar:'off',switcher:'off'};#islandKeys={avatar:'',switcher:''};#switcherWanted=false;#dismissedAt=-Infinity;#selected=null;
   connected(){this.#connected=true;this.#unwatch=watchScheme(this.host,()=>this.render());this.render();requestSession(this.host,session=>{if(this.#connected)this.#attach(session);});}
   disconnected(){this.#connected=false;this.#unwatch?.();this.#setOpen(false,'disconnect',{restoreFocus:false});this.#detach();for(const name of ['avatar','switcher'])this.#unmount(name);}
   get session(){return this.#session;}
@@ -172,27 +174,47 @@ export class AccountView {
     if(!spec)return;
     queueMicrotask(async()=>{
       const container=this.host.shadowRoot?.querySelector(selector);if(!container||this.#islandKeys[name]!==key)return;
-      this.#islands[name]=await mountIsland(this.host,{part,container,session:this.#session,onState:state=>{this.#islandStates[name]=state;this.render();}});
+      const island=await mountIsland(this.host,{part,container,session:this.#session,onState:state=>{if(this.#islandKeys[name]===key){this.#islandStates[name]=state;this.render();}}});
+      // A mount that finished after its key changed or the element disconnected is discarded.
+      if(this.#islandKeys[name]!==key||!this.#connected)island?.destroy();else this.#islands[name]=island;
     });
   }
-  #unmount(name){try{this.#islands[name]?.destroy?.();}catch{}this.#islands[name]=null;this.#islandStates[name]='off';}
+  #unmount(name){try{this.#islands[name]?.destroy?.();}catch{}this.#islands[name]=null;if(this.#islandStates[name]!=='fallback')this.#islandStates[name]='off';}
   // Called by the island mounter for the switcher's `select` (profile §5.4): only a
   // held app session for exactly that subject is ever made current.
   islandSelect(subject){
+    // Repeats for the same subject within 500 ms are one selection (embed-islands §10.2).
+    const now=globalThis.performance?.now?.()??Date.now();if(subject===this.#selected?.subject&&now-this.#selected.at<500)return;this.#selected={subject,at:now};
     const result=this.#session?.controller?.selectAccount?.(subject)??{outcome:'canceled',code:'no-session'};
     this.#setOpen(false,'select');
     if(result.outcome==='completed')emitLater(this.host,'bindle-account-select',{subject});
     else emitLater(this.host,'bindle-account-change-failed',{code:'no-session'});
   }
   islandClose(reason='escape'){this.#setOpen(false,reason==='dismiss'?'action':'escape');}
-  islandFlow(phase,outcome){if(phase==='started')this.#switching=true;else if(phase==='ended'&&outcome!=='completed'){this.#switching=false;emitLater(this.host,'bindle-account-change-failed',{code:outcome==='canceled'?'canceled':'network-error'});}}
+  // The switcher's "Use another account" (profile §5.4). `completed` arrives after the app's exchange settled, so the
+  // controller's session change (bindle-account-change) has already been dispatched; failures keep the session.
+  islandFlow(phase,outcome,code){
+    if(phase==='started'){this.#switching=true;this.render();return;}
+    if(phase!=='ended'||!this.#switching)return;
+    this.#switching=false;
+    if(outcome!=='completed')emitLater(this.host,'bindle-account-change-failed',{code:outcome==='network-error'?(code==='network-error'?'network-error':'exchange-failed'):'canceled'});
+    this.render();
+  }
   render(){
     if(!this.#connected)return;
     const {t,direction}=localize(this.host),session=this.#session,view=session?.session,flow=session?.flow,mine=session?.flowInitiator===this.host;
     const {theme,colorScheme}=schemeFor(this.host,session),win=this.host.ownerDocument.defaultView;
+    // Island containers are keyed and stay in place across sign-in and sign-out, so mounted islands live as long as
+    // the element is connected (embed-islands §8.2): on app sign-out they still receive session{null} and `forget`.
+    // The iframe goes into a constant inner host: dodo replaces the children of any node whose vnode changed, so only
+    // the outer box may toggle `hidden`.
+    const avatarBox=h('span',h('span').classes('island-host')).classes('avatar-island').attrs({part:'avatar-frame','aria-hidden':'true'}).props({hidden:!view}).key('avatar-frame');
+    // Fixed island height by density (profile §6: 320 or 248 CSS px), an embedder-side input only.
+    const switcherBox=h('div',h('div').classes('island-host')).classes('switcher',this.host.getAttribute('density')==='compact'&&'compact').attrs({part:'switcher-frame'}).props({hidden:!view||this.#islandStates.switcher!=='live'}).key('switcher-frame');
     let body;
     if(!view){
-      body=[h('slot',h('button',t('Sign in')).props({type:'button'}).classes('primary').attrs({part:'sign-in'}).on({click:()=>this.#run('sign-in')})).attrs({name:'signed-out'})];
+      body=[h('slot',h('button',t('Sign in')).props({type:'button'}).classes('primary').attrs({part:'sign-in'}).on({click:()=>this.#run('sign-in')})).attrs({name:'signed-out'}),
+        (this.#islandKeys.avatar||this.#islandKeys.switcher)&&h('div',avatarBox,h('dialog',switcherBox).props({id:'panel'}).classes('panel')).classes('wrap').props({hidden:true}).key('wrap')];
     } else {
       const capabilities=session.capabilities,host=new URL(view.issuer).host,name=view.profile?.displayName??view.profile?.handle,label=name??t('Signed in · {host}',{host});
       const model=avatarModel(view,{pictureFailed:this.#pictureFailed===view.profile?.picture});
@@ -216,10 +238,10 @@ export class AccountView {
           h('span',h('slot',avatarView(model,{onPictureError:()=>{this.#pictureFailed=view.profile?.picture;this.render();}})).attrs({name:'badge'})).classes('avatar-box'),
           h('bdi',label).classes('label',avatarOnly&&'visually-hidden').attrs({part:'label',dir:'auto'}),
         ).props({type:'button'}).classes('trigger',avatarOnly&&'avatar-only').attrs({part:'trigger badge','aria-haspopup':'dialog','aria-expanded':String(this.#open),'aria-controls':'panel','aria-label':t('Account: {name}',{name:label})}).on({click:this.#onTriggerClick,keydown:this.#onTriggerKey,pointerenter:this.#wantSwitcher,focus:this.#wantSwitcher}),
-        h('span').classes('avatar-island').attrs({part:'avatar-frame','aria-hidden':'true'}),
+        avatarBox,
         h('dialog',
           h('div',h('slot',h('bdi',label).attrs({dir:'auto'})).attrs({name:'menu-header'})).classes('header').attrs({part:'menu-header'}),
-          h('div').classes('switcher').attrs({part:'switcher-frame'}).props({hidden:this.#islandStates.switcher!=='live'}),
+          switcherBox,
           h('div',
             h('div',h('slot').attrs({name:'menu-start'})).attrs({role:'listitem'}),
             ...items,
@@ -229,10 +251,11 @@ export class AccountView {
           handle,note,
           h('slot').attrs({name:'panel-footer'}),
         ).props({id:'panel',tabIndex:-1,...popover?{}:{open:this.#open}}).classes('panel',!popover&&'inline').attrs(attrs({part:'panel','aria-label':t('Account'),popover:popover?'auto':undefined})).on({toggle:this.#onToggle,keydown:this.#onPanelKey,focusout:this.#onFocusOut}),
-      ).classes('wrap').attrs({part:'wrap'})];
+      ).classes('wrap').attrs({part:'wrap'}).key('wrap')];
     }
     reconcileShadow(this.host,[h('div',...body,h('p',(mine&&flowStatus(flow,t))||'').attrs({role:'status',part:'status'}).classes('status'),mine&&flowNotice(flow,t,session)).classes('root',theme).attrs({dir:direction}).style(colorScheme?{'color-scheme':colorScheme}:{})],[baseStyles(win),avatarStyles(win),styles(win)]);
-    this.#syncIsland('avatar','avatar','.avatar-island',!!view&&!this.host.querySelector(':scope > [slot=badge]'));
-    this.#syncIsland('switcher','account-switcher','.switcher',!!view&&this.#switcherWanted);
+    this.#syncIsland('avatar','avatar','.avatar-island > .island-host',(!!view||!!this.#islandKeys.avatar)&&!this.host.querySelector(':scope > [slot=badge]'));
+    this.#syncIsland('switcher','account-switcher','.switcher > .island-host',(!!view||!!this.#islandKeys.switcher)&&this.#switcherWanted);
+    for(const island of Object.values(this.#islands))island?.refresh?.();
   }
 }

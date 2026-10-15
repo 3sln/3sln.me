@@ -16,7 +16,7 @@ test('authorization entry: cookieless creation, strict entry document, owner sel
  // F8: the entry feature is advertised because the routes are mounted; the components profile because the islands shell
  // is built, the embed routes are mounted and DPoP is configured (a loopback embed origin only under LOCAL_DEVELOPMENT).
  const manifest=await(await context.request.get(baseURL+'/.well-known/bindle/manifest.json')).json();
- assert.deepEqual(manifest.features['authorization-entry.v1'],{endpoint:baseURL+'/api/oauth/entries',intents:['login','select-account','reauthenticate']});assert.deepEqual(manifest.profiles,{'https://3sln.me/artefacts/profiles/components/v1':{embed_origin:embedOrigin,protocol:[1],parts:{avatar:{versions:[1]},'account-switcher':{versions:[1]},'sign-in':{versions:[1]}},credential_binding:['key-binding.v1']}});
+ assert.deepEqual(manifest.features['authorization-entry.v1'],{endpoint:baseURL+'/api/oauth/entries',intents:['login','select-account','reauthenticate','end-session']});assert.deepEqual(manifest.profiles,{'https://3sln.me/artefacts/profiles/components/v1':{embed_origin:embedOrigin,protocol:[1],parts:{avatar:{versions:[1]},'account-switcher':{versions:[1]},'sign-in':{versions:[1]}},credential_binding:['key-binding.v1']}});
  await context.route(appOrigin+'/**',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Independent fixture app</title><h1>Fixture app</h1>'}));
  const app=await context.newPage();const errors=[];app.on('pageerror',error=>errors.push(error.message));await app.goto(appOrigin+'/');
  const created=await app.evaluate(async({baseURL,clientId,redirectUri})=>{
@@ -37,6 +37,9 @@ test('authorization entry: cookieless creation, strict entry document, owner sel
  const outcome=await provider.evaluate(async entryId=>{
   const session=await(await fetch('/api/session')).json(),member={'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext,'X-CSRF-Token':session.csrfToken,'Content-Type':'application/json'};
   const viewed=await fetch('/api/oauth/entries/'+entryId),view=await viewed.json();if(!viewed.ok)return {step:'view',status:viewed.status,view};
+  // Without the page token from the view, the browser's own same-origin request is refused.
+  const tokenless=await fetch(`/api/oauth/entries/${entryId}/select`,{method:'POST',headers:member,body:JSON.stringify({nonce:view.entry.nonce})});if(tokenless.status!==403)return {step:'tokenless',status:tokenless.status};
+  member['X-Bindle-Entry-Token']=view.pageToken;
   const selected=await fetch(`/api/oauth/entries/${entryId}/select`,{method:'POST',headers:member,body:JSON.stringify({nonce:view.entry.nonce})}),selection=await selected.json();if(!selected.ok)return {step:'select',status:selected.status,selection};
   const inspected=await fetch('/api/oauth/requests/'+selection.requestId);if(!inspected.ok)return {step:'inspect',status:inspected.status,body:await inspected.json()};
   const decided=await fetch(`/api/oauth/entries/${entryId}/decision`,{method:'POST',headers:member,body:JSON.stringify({nonce:view.entry.nonce,approved:[]})});return {step:'decision',status:decided.status,result:await decided.json(),client:view.entry.client,intent:view.entry.intent};

@@ -111,7 +111,7 @@ export class BindleSession extends EventTarget {
   // logins, optionally revoking each app session with its own token (RFC 7009).
   // Never ends provider sessions.
   async signOut({revoke=false}={}){
-    this.cancelFlow();const held=this.#client.signOut();this.#sync();
+    this.cancelFlow();const held=this.#signedOut(this.#client.signOut());this.#sync();
     if(revoke)await Promise.all(held.map(session=>this.#client.revokeSession(session).catch(()=>false)));
     return {outcome:'completed'};
   }
@@ -129,6 +129,9 @@ export class BindleSession extends EventTarget {
     try{await this.#client.completeCode(message,{presentation:'island'});this.#sync();return {outcome:'completed'};}
     catch(error){this.#sync();return error?.code==='canceled'?{outcome:'canceled'}:{outcome:'network-error',code:flowCodes.includes(error?.code)?error.code:'network-error'};}
   }
+  // `sign-out` precedes the session change, so island glue can tell provider islands to `forget` (components
+  // profile §5.3) while they are still mounted. Detail: the app sessions that ended, as {issuer, subject}.
+  #signedOut(held){this.#dispatch('sign-out',{sessions:Object.freeze(held.map(({issuer,subject})=>Object.freeze({issuer,subject})))});return held;}
   cancelFlow(){
     const flow=this.#flow;if(!flow)return;
     if(flow.done){this.#flow=null;this.#emitState();return;}
@@ -268,7 +271,8 @@ export class BindleSession extends EventTarget {
   async #complete(flow,url){
     const client=this.#client,previous=client.session;
     try{
-      if(flow.intent==='end-session'){const {result}=await client.completeEndSession(url);this.#sync();return this.#end(flow,{outcome:result==='completed'?'completed':'canceled'});}
+      // completeEndSession clears app tokens itself (whatever the result), so the ended sessions are captured first.
+      if(flow.intent==='end-session'){const held=[...client.sessions?.values?.()??[]];let result;try{({result}=await client.completeEndSession(url));}finally{if(held.length&&!client.session)this.#signedOut(held);}this.#sync();return this.#end(flow,{outcome:result==='completed'?'completed':'canceled'});}
       await client.completeLogin(url);
       // Revoking a same-account grant could also revoke the new tokens (RFC 7009 may revoke the whole grant).
       const current=client.session;
@@ -286,7 +290,7 @@ export class BindleSession extends EventTarget {
     // Terminal outcomes never leave a redeemable verifier behind.
     if(!['redirecting','popup-blocked'].includes(result.outcome)&&flow.state)this.#client.cancelLogin(flow.state);
     // Provider end-session always clears app tokens once the flow finishes, whatever the result.
-    if(flow.intent==='end-session'&&!['redirecting','popup-blocked'].includes(result.outcome)&&this.#client.session){this.#client.signOut();this.#sync();}
+    if(flow.intent==='end-session'&&!['redirecting','popup-blocked'].includes(result.outcome)&&this.#client.session){this.#signedOut(this.#client.signOut());this.#sync();}
     for(const timer of flow.timers)this.#timers.clearTimeout(timer);
     flow.channel?.close();flow.channel=null;flow.controller.abort();
     if(this.#flow===flow&&!['popup-blocked','redirecting'].includes(result.outcome))this.#flow=null;

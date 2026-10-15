@@ -55,6 +55,10 @@
       {
         "name": "ADMIN_AUTHORITY",
         "class_name": "AdminAuthority"
+      },
+      {
+        "name": "LIFECYCLE_SCHEDULER",
+        "class_name": "LifecycleScheduler"
       }
     ]
   },
@@ -96,6 +100,12 @@
       "new_sqlite_classes": [
         "AdminAuthority"
       ]
+    },
+    {
+      "tag": "v7",
+      "new_sqlite_classes": [
+        "LifecycleScheduler"
+      ]
     }
   ],
   "r2_buckets": [
@@ -126,6 +136,13 @@
     }
   ],
   "vars": {
+    "LIFECYCLE_ENABLED": "false",
+    "LIFECYCLE_DRY_RUN": "true",
+    "LIFECYCLE_PURGE_ENABLED": "false",
+    "LIFECYCLE_COLD_STORAGE": "true",
+    "LIFECYCLE_COLD_MIN_BYTES": "4194304",
+    "LIFECYCLE_FINANCE_REVIEW": "polar",
+    "LIFECYCLE_SWEEP_BATCH": "200",
     "GOOGLE_CLIENT_ID": "88558903900-8r8m0igv5bceo4k6r5j7nvfd3jlgckmj.apps.googleusercontent.com",
     "APP_ORIGIN": "https://3sln.me",
     "LOCAL_DEVELOPMENT": "false",
@@ -189,6 +206,7 @@
     "MCP_CLIENTS": "[]",
     "FEDERATION_ENABLED": "false",
     "FEDERATION_CLIENTS": "[]",
+    "CLIENT_METADATA_ENABLED": "false",
     "FEDERATION_SCHEMAS": "{}",
     "FORM_POSTBACK_ORIGINS": "[]",
     "APP_NOTIFICATION_PUBLIC_JWKS": "{\"keys\":[{\"key_ops\":[\"verify\"],\"ext\":true,\"kty\":\"EC\",\"x\":\"cUmSplKJG66MHucYQCrhQjvv3Y_YPz2xIp6XDk2XvgY\",\"y\":\"6HOH5pa8je6a6Yg6NJLi_2qVzM-WgJ9kr_mjoOQ_rWo\",\"crv\":\"P-256\",\"kid\":\"app-message-14e5a76a-8557-41dc-a705-7462d6c165d8\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"

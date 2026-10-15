@@ -45,6 +45,10 @@
       {
         "name": "ADMIN_AUTHORITY",
         "class_name": "AdminAuthority"
+      },
+      {
+        "name": "LIFECYCLE_SCHEDULER",
+        "class_name": "LifecycleScheduler"
       }
     ]
   },
@@ -86,6 +90,12 @@
       "new_sqlite_classes": [
         "AdminAuthority"
       ]
+    },
+    {
+      "tag": "v7",
+      "new_sqlite_classes": [
+        "LifecycleScheduler"
+      ]
     }
   ],
   "r2_buckets": [
@@ -99,6 +109,13 @@
     }
   ],
   "vars": {
+    "LIFECYCLE_ENABLED": "false",
+    "LIFECYCLE_DRY_RUN": "true",
+    "LIFECYCLE_PURGE_ENABLED": "false",
+    "LIFECYCLE_COLD_STORAGE": "true",
+    "LIFECYCLE_COLD_MIN_BYTES": "4194304",
+    "LIFECYCLE_FINANCE_REVIEW": "polar",
+    "LIFECYCLE_SWEEP_BATCH": "200",
     "GOOGLE_CLIENT_ID": "",
     "APP_ORIGIN": "http://localhost:8787",
     "RP_ID": "localhost",
@@ -159,6 +176,7 @@
     "EMBED_ORIGIN": "http://127.0.0.1:8787",
     "EMBED_AVATAR_ORIGINS": "[]",
     "FEDERATION_CLIENTS": "[]",
+    "CLIENT_METADATA_ENABLED": "false",
     "FEDERATION_SCHEMAS": "{}",
     "FORM_POSTBACK_ORIGINS": "[]",
     "APP_NOTIFICATION_PUBLIC_JWKS": "{\"keys\":[]}"

@@ -10,7 +10,7 @@ export const accountActions=Object.freeze(['switch','provider','reauth','sign-ou
 const signedOut=Object.freeze({status:'signed-out',session:null,open:false,mode:null,islands:Object.freeze({avatar:'off',switcher:'off'}),actions:Object.freeze([]),capabilities:null});
 
 export class BindleAccountElement extends ElementBase {
-  static observedAttributes=['actions','lang','theme','trigger'];
+  static observedAttributes=['actions','lang','theme','trigger','density'];
   #view=null;#loading=null;#connected=false;
   connectedCallback(){
     this.#connected=true;
