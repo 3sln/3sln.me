@@ -1,7 +1,8 @@
+import {isUUID} from '../core/primitives.mjs';
 export const BEAM_LIMITS=Object.freeze({maxFiles:16,maxBytes:100_000_000,maxFileBytes:100_000_000,offerTtlMs:300000,sessionTtlMs:900000,maxPending:128,maxSignals:128,maxSignalBytes:262144});
 export class BeamError extends Error {constructor(code,message,status=400){super(message);this.name='BeamError';this.code=code;this.status=status;}}
 const fail=(code,message,status)=>{throw new BeamError(code,message,status);};
-export const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
+export const uuid=isUUID;
 const positive=value=>Number.isSafeInteger(Number(value))&&Number(value)>0?Number(value):0;
 export function beamFunding(config){return {bytes:positive(config.BEAM_MONTHLY_DELIVERY_BYTES),offers:positive(config.BEAM_MONTHLY_OFFERS)};}
 export function beamFiles(input){

@@ -109,7 +109,7 @@ test('malformed optional badge definitions do not prevent the console reading it
  assert.equal(JSON.stringify(validBadges).includes('private-allowed-name'),false);assert.equal(JSON.stringify(validBadges.badgePolicy).includes('<svg'),false);
 });
 
-test('injected badge resolver receives only frozen public identity selectors and never becomes credential authority',async()=>{
+test('injected badge resolver receives only frozen public identity selectors and never becomes credential authority',async t=>{
  const f=fixture();try{
   f.claims.names[0].badgeIds=['system'];
   const {token,proof}=await invitation(f);await f.port.issue(token,proof);
@@ -125,8 +125,10 @@ test('injected badge resolver receives only frozen public identity selectors and
   const failed=await f.service.loginPassword({handle:'alice',password:f.input.password,turnstileToken:'fixture'},f.context);
   assert.equal(failed.resumed,true);assert.deepEqual(failed.account.badges,[]);assert.equal(JSON.stringify(failed).includes('Private backend detail'),false);
   f.service.resolveIdentityBadges=()=>new Promise(()=>{});
-  const started=performance.now(),timed=await f.service.loginPassword({handle:'alice',password:f.input.password,turnstileToken:'fixture'},f.context);
-  assert.equal(timed.resumed,true);assert.deepEqual(timed.account.badges,[]);assert(performance.now()-started<2000,'optional asynchronous resolver must not hang credential resumption');
+  // Mocked timers: the bounded resolver deadline elapses without a wall-clock wait.
+  t.mock.timers.enable({apis:['setTimeout']});let settled=false;const login=f.service.loginPassword({handle:'alice',password:f.input.password,turnstileToken:'fixture'},f.context).finally(()=>{settled=true;});
+  for(let turns=0;!settled&&turns<1000;turns++){await new Promise(resolve=>setImmediate(resolve));t.mock.timers.tick(500);}
+  const timed=await login;assert.equal(timed.resumed,true,'optional asynchronous resolver must not hang credential resumption');assert.deepEqual(timed.account.badges,[]);t.mock.timers.reset();
   assert.equal((await f.repository.get(pending.account.id)).status,'pending');
  }finally{f.close();}
 });

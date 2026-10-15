@@ -2,7 +2,6 @@
 // Proof signatures are verified outside storage transactions; consumeProof() records nonce and jti inside one.
 import {base64url,digest} from '../messaging/store.mjs';
 import {fail} from './schema.mjs';
-export const DPOP_ALGS=['ES256'];
 export const DPOP_TYP='dpop+jwt',EMBED_PROOF_TYP='bindle-embed+jwt';
 const text=new TextEncoder();
 const bytes=value=>{if(typeof value!=='string'||!/^[A-Za-z0-9_-]*$/.test(value))fail('invalid_dpop_proof');const raw=atob(value.replaceAll('-','+').replaceAll('_','/')+'='.repeat((4-value.length%4)%4));const out=Uint8Array.from(raw,c=>c.charCodeAt(0));if(base64url(out)!==value)fail('invalid_dpop_proof');return out;};

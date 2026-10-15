@@ -83,15 +83,15 @@ test('one decision per entry: a second account deciding during another decision 
  const p=await provider(),{entryId}=await createEntry(p),alex=p.signIn(p.accounts[0]),sam=p.signIn(p.accounts[1]),view=await viewOf(p,entryId);
  const as=session=>pageHeaders(view,{Cookie:session.cookie,'X-CSRF-Token':session.csrf});
  for(const session of [alex,sam])assert.equal((await post(p,`${issuer}/api/oauth/entries/${entryId}/select`,{nonce:view.entry.nonce},as(session))).status,200);
- let release;const held=new Promise(r=>release=r),approve=p.authority.approve;p.authority.approve=async(...args)=>{await held;return approve(...args);};
- const first=post(p,`${issuer}/api/oauth/entries/${entryId}/decision`,{nonce:view.entry.nonce,approved:[]},as(alex));await new Promise(r=>setTimeout(r,20));
+ let release,reached;const held=new Promise(r=>release=r),arrived=new Promise(r=>reached=r),approve=p.authority.approve;p.authority.approve=async(...args)=>{reached();await held;return approve(...args);};
+ const first=post(p,`${issuer}/api/oauth/entries/${entryId}/decision`,{nonce:view.entry.nonce,approved:[]},as(alex));await arrived;
  const second=await post(p,`${issuer}/api/oauth/entries/${entryId}/decision`,{nonce:view.entry.nonce,approved:[]},as(sam));assert.equal(second.status,400);assert.equal((await second.json()).message,'This sign-in expired. Start again from the application.');
  release();const done=await first;assert.equal(done.status,200);assert.ok(codeOf((await done.json()).redirectUri));
  // A double submit by the deciding account never releases the hold, even when its retry is refused (review finding 2).
  const twice=await createEntry(p),v3=await viewOf(p,twice.entryId),h3=session=>pageHeaders(v3,{Cookie:session.cookie,'X-CSRF-Token':session.csrf});
  for(const session of [alex,sam])await post(p,`${issuer}/api/oauth/entries/${twice.entryId}/select`,{nonce:v3.entry.nonce},h3(session));
- let late;const slow=new Promise(r=>late=r);p.authority.approve=async(...args)=>{const result=await approve(...args);await slow;return result;};
- const one=post(p,`${issuer}/api/oauth/entries/${twice.entryId}/decision`,{nonce:v3.entry.nonce,approved:[]},h3(alex));await new Promise(r=>setTimeout(r,20));
+ let late,approved;const slow=new Promise(r=>late=r),issued=new Promise(r=>approved=r);p.authority.approve=async(...args)=>{const result=await approve(...args);approved();await slow;return result;};
+ const one=post(p,`${issuer}/api/oauth/entries/${twice.entryId}/decision`,{nonce:v3.entry.nonce,approved:[]},h3(alex));await issued;
  p.authority.approve=approve;assert.equal((await post(p,`${issuer}/api/oauth/entries/${twice.entryId}/decision`,{nonce:v3.entry.nonce,approved:[]},h3(alex))).status,400,'the retry finds the request no longer pending');
  assert.equal((await post(p,`${issuer}/api/oauth/entries/${twice.entryId}/decision`,{nonce:v3.entry.nonce,approved:[]},h3(sam))).status,400,'no second code for the entry');
  late();assert.equal((await one).status,200);

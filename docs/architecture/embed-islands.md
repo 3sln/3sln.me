@@ -389,7 +389,7 @@ Without the Popover API, the panel is `position:fixed` with a high `z-index`, ap
 | | `bindle-account-change-failed` (new) | `{code: 'no-session'\|'exchange-failed'\|'network-error'\|'canceled'}` | A selection or switch started from this element ended without a new ready credential. The current session is unchanged. |
 | `<bindle-sign-in>` | `bindle-sign-in-start` (new) | `{source: 'island'\|'form'}` | Island `flow{started}` or form submission from this element. |
 | | `bindle-sign-in-end` (new) | `{outcome, code?, session?}` | `completed` only after the app credential is ready (`session` included); otherwise `canceled\|unavailable\|popup-blocked\|discovery-error\|network-error`. One per start. |
-| | `bindle-login-request`, `bindle-email-fallback` (unchanged) | as phase 1 | |
+| | `bindle-sign-in-request` (formerly `bindle-login-request`), `bindle-email-fallback` (unchanged) | as phase 1 | |
 | `<bindle-avatar>` (new) | none | — | Purely presentational. |
 
 ### 10.3 `state` snapshots

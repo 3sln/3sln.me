@@ -99,6 +99,7 @@ async function runtime(t,policy=limits(2,1),extraConfig={}){
 }
 
 test('runtime replay and refreshed child tokens share parent cap; conflict/revocation never reveal or debit replay',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:START+30000});/* Frozen account clock: receipt windows cannot roll over mid-test. */
  const f=await runtime(t),a=await f.contact(),b=await f.contact(),id=crypto.randomUUID(),accepted=await f.send(a,id);assert.equal(f.puts,1);
  a.token=(await f.controller.mintContact(OWNER,a.url)).token;assert.deepEqual(await f.send(a,id),accepted);assert.equal(f.puts,1);
  await assert.rejects(f.send(a,id,'changed'),{code:'idempotency_conflict'});assert.equal((await f.controller.messageReceiptBudget.status(OWNER)).windows.day.messages,1);
@@ -109,11 +110,13 @@ test('runtime replay and refreshed child tokens share parent cap; conflict/revoc
 });
 
 test('runtime downstream write failure conservatively consumes attempt without enabling refunds or retries past cap',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:START+30000});/* Frozen account clock: receipt windows cannot roll over mid-test. */
  const f=await runtime(t,limits(1,1),{WORK_LIMITS_ENABLED:true,STORAGE_WRITE_ENABLED:true,WORK_AUTHORITY:{consume:async()=>true}}),a=await f.contact(),before=(await f.controller.workBudget.status(OWNER)).used;
  f.fail();await assert.rejects(f.send(a));assert.equal(f.puts,1);assert.equal((await f.controller.workBudget.status(OWNER)).used,before+2);await assert.rejects(f.send(a),{code:'message_receipt_limited'});assert.equal(f.puts,1);assert.equal((await f.controller.workBudget.status(OWNER)).used,before+2);assert.equal((await f.controller.messageReceiptBudget.status(OWNER)).windows.day.messages,1);
 });
 
 test('stored conversation events share aggregate receipt cap and established event replay avoids R2 churn',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:START+30000});/* Frozen account clock: receipt windows cannot roll over mid-test. */
  const f=await runtime(t),a=await f.contact();await f.send(a);
  const room={id:crypto.randomUUID(),source:{origin:'https://peer.example',owner:OTHER},collection:f.collection,title:'Thread'},event={eventId:crypto.randomUUID(),threadId:crypto.randomUUID(),replyTo:null,tags:[],text:'Event'};
  const receive=e=>f.controller.gate.run(()=>conversationInbox(f.controller,OWNER,room,e));const accepted=await receive(event);assert.equal(f.puts,2);assert.deepEqual(await receive(event),accepted);assert.equal(f.puts,2);
@@ -121,6 +124,7 @@ test('stored conversation events share aggregate receipt cap and established eve
 });
 
 test('cross-origin signed contact HTTP refusal exposes Retry-After without weakening private-route CORS',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:START+30000});/* Frozen account clock: receipt windows cannot roll over mid-test. */
  const f=await runtime(t,limits(1,1)),link=await f.contact();await f.send(link);
  const env={APP_ORIGIN:'https://provider.example',ABUSE_HASH_KEY:'test-abuse-key',ABUSE:{consume:async()=>true},IDENTITY_REPOSITORY:{get:async()=>({id:OWNER,status:'active',handle:'person'})},ACCOUNTS:{get:()=>f.controller}};
  f.controller.config.IDENTITY_ACCOUNT=async()=>({status:'active',handle:'person'});const message=await authored(input=>f.controller.authorLinkEnvelope(OWNER,input),link.url,{text:'limited'});

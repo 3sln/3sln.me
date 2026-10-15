@@ -1,6 +1,6 @@
 # Components profile and provider-agnostic elements: decision note
 
-Status: **provisional design, 2026-10-14, revision 2.** Revision 1 was reviewed independently (21 findings); revision 2 answers each finding (§14). No human sign-off is implied. Nothing here is implemented, routed or production-verified. It is a 3sln.me profile and `@3sln/bindle` SDK design plus targeted core-spec edits. The coordinator records decisions in DEVLOG.md. Independent review: [components-profile-review](../release/components-profile-review.md).
+Status: **provisional design, 2026-10-14, revision 2.** Revision 1 was reviewed independently (21 findings); revision 2 answers each finding (§14). No human sign-off is implied. The profile and elements are implemented locally (see DEVLOG 2026-10-14 and the [implementation review](../release/components-profile-review.md)); nothing here is production-verified. Tables describing flat members as current are the pre-change baseline. It is a 3sln.me profile and `@3sln/bindle` SDK design plus targeted core-spec edits. The coordinator records decisions in DEVLOG.md. Independent review: [components-profile-review](../release/components-profile-review.md).
 
 Architecture/security/product sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -123,7 +123,7 @@ Transport choice for any app-started flow (sign-in, switch, reauth, provider sig
 | Typed host below the floor or malformed | Form with error "This provider isn't supported." | Nothing; no fallback. |
 | Typed host returns 404/410 | Form with the named fallback offer (default 3sln.me, configurable or disabled). | `bindle-email-fallback` event. |
 
-Events (all compositions): `bindle-sign-in-start {source:'island'|'form', presentation:'island'|'fedcm'|'popup'|'redirect'}`; `bindle-sign-in-end {outcome:'completed'|'canceled'|'unavailable'|'popup-blocked'|'discovery-error'|'network-error', code?, session?}` (one per start; `completed` only after the app credential is ready); `bindle-login-request`, `bindle-email-fallback` (unchanged). `state = {status, islands, last}`.
+Events (all compositions): `bindle-sign-in-start {source:'island'|'form', presentation:'island'|'fedcm'|'popup'|'redirect'}`; `bindle-sign-in-end {outcome:'completed'|'canceled'|'unavailable'|'popup-blocked'|'discovery-error'|'network-error', code?, session?}` (one per start; `completed` only after the app credential is ready); `bindle-sign-in-request` (named `bindle-login-request` before release), `bindle-email-fallback` (unchanged). `state = {status, islands, last}`.
 
 ### 6.2 `<bindle-account>` (signed in): composed profile button
 
@@ -291,7 +291,7 @@ Evidence before completion: `npm test`; capability unit tests over declaration f
 
 ## 11. Needed `docs/spec/links.md` changes (links agent)
 
-1. §6.4: replace "declares the intent in `intents_supported` together with an `intent_login_endpoint` on the issuer origin" with "declares the `intents.v1` feature ([protocol §2](protocol.md#2-discovery-and-login)) listing the intent, with its `login_endpoint` on the issuer origin".
+1. §6.4: replace "declares the intent in `intents_supported` together with an `intent_login_endpoint` on the issuer origin" with "declares the `intents.v1` feature ([protocol §2](../spec/protocol.md#2-discovery-and-login)) listing the intent, with its `login_endpoint` on the issuer origin".
 2. §9 step 3 and the implementation-status table: `link_response_endpoint` becomes a feature, for example `link-responses.v1 = {endpoint}`; any conditional-link or directory capability (`directory_url`, §7.3) likewise gets a versioned feature identifier added to protocol §2's registry.
 3. State the absent defaults there (plain intent links; no opener response; principal verification unavailable).
 

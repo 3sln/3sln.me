@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
+import { canonical } from './primitives.mjs';
 
 export const STORAGE = 'https://bindle.example/contracts/object-storage/v1';
 export const SYNC = 'https://bindle.example/fragments/app-sync/v1';
@@ -7,11 +8,6 @@ export class Fault extends Error {
 }
 const fail = (code, message) => { throw new Fault(code, message); };
 const clone = value => structuredClone(value);
-const canonical = value => {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}`;
-  return JSON.stringify(value);
-};
 
 // In-memory reference model: no durable storage, authentication, or provider credentials.
 export class BindleEngine {

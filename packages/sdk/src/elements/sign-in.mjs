@@ -71,7 +71,7 @@ export class BindleSignInElement extends ElementBase {
     const t=this.#t(),input=this.shadowRoot.querySelector('input'),value=input.value;this.#value=value;
     if(this.#session)return this.#submit(value.trim(),t,input);
     // Without a <bindle-session> the element only reports the parsed handle.
-    try{const identity=parseIdentity(value,this.defaultHost);this.#status='';this.#error='';emit(this,'bindle-login-request',identity);}
+    try{const identity=parseIdentity(value,this.defaultHost);this.#status='';this.#error='';emit(this,'bindle-sign-in-request',identity);}
     catch(error){this.#status=t(error.message);this.render();input.focus();}
   };
   // Capabilities of the provider this element names (its own default host), never another issuer's.

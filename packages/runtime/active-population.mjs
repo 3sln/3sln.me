@@ -1,6 +1,7 @@
 // Activity authority is private injected infrastructure, never a public counter API.
+import {UUID} from '../core/primitives.mjs';
 export const ACTIVE_POPULATION_LAYOUT='active-user-v1',ACTIVE_POPULATION_SHARDS=32;
-const DAY=86400000,KEY='population/v1',CENSUS='population/census-v1',UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const DAY=86400000,KEY='population/v1',CENSUS='population/census-v1';
 export const ACTIVE_POPULATION_DEFINITION='Authenticated owner use in the last 30 days; UTC-day expiry conservatively includes at most 24 extra hours (legacy census activity adds at most 15 minutes).';
 const bad=()=>{throw Object.assign(new Error('Active population could not be verified.'),{code:'population_unavailable',status:503});};
 const integer=value=>Number.isSafeInteger(value)&&value>=0;

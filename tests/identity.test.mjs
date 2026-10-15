@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createHash, sign } from 'node:crypto';
 import { isoCBOR } from '@simplewebauthn/server/helpers';
-import { IdentityService, createArgon2Hasher, createWebAuthnAdapter, createIdentityEngine, IdentityAction, OwnerQuery, planAccountLifecycle } from '../packages/identity/index.mjs';
+import { IdentityService, createArgon2Hasher, createWebAuthnAdapter, planAccountLifecycle } from '../packages/identity/index.mjs';
 import { encode, decode } from '../packages/identity/crypto.mjs';
 
 class Repository {
@@ -165,16 +165,6 @@ test('email linking binds owner session, tokens stay in mail only, confirmation 
   await assert.rejects(service.emailLoginConfirm({ token: loginToken, confirmed: false }, context), { code: 'confirmation_required' });
   const login = await service.emailLoginConfirm({ token: loginToken, confirmed: true }, context); assert.equal(login.account.handle, 'alice');
   await assert.rejects(service.emailLoginConfirm({ token: loginToken, confirmed: true }, context), { code: 'unauthorized' });
-});
-
-test('ngin action dispatch and owner query use injected service resources', async () => {
-  const { resources } = await fixture(); const engine = createIdentityEngine(resources);
-  const event = await engine.dispatch(new IdentityAction('signup', signup, context)).next('result');
-  const file = (await engine.dispatch(new IdentityAction('downloadRecovery', event.detail, context)).next('result')).detail;
-  const owner = (await engine.dispatch(new IdentityAction('confirmRecovery', { ...event.detail, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context)).next('result')).detail;
-  assert.equal((await engine.query(new OwnerQuery({ ...context, ...owner })).peek()).account.handle, 'alice');
-  assert.throws(() => new IdentityAction('constructor', {}, context), /Unknown identity action/);
-  await engine.dispose();
 });
 
 test('parallel signup reserves one handle and concurrent email claims never merge owners', async () => {

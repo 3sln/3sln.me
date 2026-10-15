@@ -5,7 +5,8 @@ import {verifyProof,thumbprint,dpopNonces,consumeProof,DPOP_TYP,EMBED_PROOF_TYP}
 import {MemoryFederationStore} from '../packages/federation/index.mjs';
 import {dpopKey,b64} from './authorization-entry-helpers.mjs';
 const htu='https://provider.example/oauth/token';
-const options=(extra={})=>({htm:'POST',htu,now:Date.now(),...extra});
+// One fixed verifier time: issue-time edges are computed from it, never from a second clock read.
+const NOW=Date.now(),options=(extra={})=>({htm:'POST',htu,now:NOW,...extra});
 
 test('RFC 7638 thumbprint covers only the required public members and rejects private or foreign keys',async()=>{
  const key=await dpopKey();assert.equal(await thumbprint(webcrypto,key.jwk),key.jkt);
@@ -25,8 +26,9 @@ test('a proof binds method, target URI, a ±60 s issue time, the key and the cre
  await reject(key.sign({htu,htm:'GET'}));
  await reject(key.sign({htu:'https://provider.example/oauth/revoke'}));
  await reject(key.sign({htu:'https://evil.example/oauth/token'}));
- await reject(key.sign({htu,iat:Math.floor(Date.now()/1000)-61}));
- await reject(key.sign({htu,iat:Math.floor(Date.now()/1000)+61}));
+ await reject(key.sign({htu,iat:Math.floor(NOW/1000)-61}));
+ await reject(key.sign({htu,iat:Math.floor(NOW/1000)+61}));
+ for(const edge of [-60,60])assert.equal((await verifyProof(webcrypto,await key.sign({htu,iat:Math.floor(NOW/1000)+edge}),options())).jkt,key.jkt,'the ±60 s window is inclusive');
  await reject(key.sign({htu,typ:'JWT'}));
  await reject(key.sign({htu,typ:EMBED_PROOF_TYP}));
  await reject(key.sign({htu,claims:{extra:1}}));
@@ -41,7 +43,7 @@ test('a proof binds method, target URI, a ±60 s issue time, the key and the cre
 });
 
 test('server nonces are purpose-bound, expire within two minutes and cannot be forged',async()=>{
- let now=Date.now();const nonces=dpopNonces({secret:'s'.repeat(32),crypto:webcrypto,clock:()=>now}),other=dpopNonces({secret:'t'.repeat(32),crypto:webcrypto,clock:()=>now});
+ let now=NOW;const nonces=dpopNonces({secret:'s'.repeat(32),crypto:webcrypto,clock:()=>now}),other=dpopNonces({secret:'t'.repeat(32),crypto:webcrypto,clock:()=>now});
  const nonce=await nonces.issue('token'),key=await dpopKey();
  assert.ok((await verifyProof(webcrypto,await key.sign({htu,nonce}),options({now,nonce:v=>nonces.check('token',v)}))).nonceHash);
  await assert.rejects(verifyProof(webcrypto,await key.sign({htu}),options({now,nonce:v=>nonces.check('token',v)})),{code:'use_dpop_nonce'});
@@ -54,7 +56,7 @@ test('server nonces are purpose-bound, expire within two minutes and cannot be f
 });
 
 test('consumed proofs cannot be replayed by jti or nonce',async()=>{
- const store=new MemoryFederationStore(),nonces=dpopNonces({secret:'s'.repeat(32),crypto:webcrypto}),key=await dpopKey(),clock=()=>Date.now();
+ const store=new MemoryFederationStore(),nonces=dpopNonces({secret:'s'.repeat(32),crypto:webcrypto,clock:()=>NOW}),key=await dpopKey(),clock=()=>NOW;
  const nonce=await nonces.issue('token'),jti=b64(18),check=v=>nonces.check('token',v);
  const first=await verifyProof(webcrypto,await key.sign({htu,nonce,jti}),options({nonce:check}));
  await store.transaction(tx=>consumeProof(tx,'dpop/',first,webcrypto,clock));

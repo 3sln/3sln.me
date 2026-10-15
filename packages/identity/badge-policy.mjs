@@ -1,6 +1,6 @@
 import {parseFragment} from 'parse5';
 import {RESERVED_HANDLES,BOOT_HANDLE,normalizeHandle,isFreeHandle} from './handles.mjs';
-const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
+import {isUUID as uuid} from '../core/primitives.mjs';
 const object=value=>value&&Object.getPrototypeOf(value)===Object.prototype;
 const exact=(value,keys)=>object(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
 const fail=(code='host_name_policy_unavailable')=>{throw Object.assign(new Error(code==='badge_policy_unavailable'?'Local badge definitions are not configured correctly.':'Host name policy is not configured correctly.'),{code,status:503});};

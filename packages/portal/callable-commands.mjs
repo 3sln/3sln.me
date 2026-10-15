@@ -1,5 +1,6 @@
 // Opt-in host adapter, not an app registry or authorization service. All ports
 // below are trusted host code. Descriptor data never contributes executable code.
+import {canonical} from '../core/primitives.mjs';
 const own=(value,key)=>Object.hasOwn(value,key);
 const fail=(code,message)=>{throw Object.assign(new Error(message),{code});};
 const forbiddenKeys=new Set(['__proto__','prototype','constructor']);
@@ -50,7 +51,6 @@ function descriptor(value){
  return freeze(result);
 }
 const semantic=({resource,contract,method,revision,inputSchema,effects})=>({resource,contract,method,revision,inputSchema,effects});
-const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?`[${value.map(canonical).join(',')}]`:`{${Object.keys(value).sort().map(key=>`${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
 function argumentsFor(value,inputSchema){const args=data(value);if(!object(args)||Object.keys(args).some(name=>!own(inputSchema.properties,name))||inputSchema.required.some(name=>!own(args,name)))fail('invalid_args','Arguments must match the approved fields.');for(const[name,item]of Object.entries(args)){const field=inputSchema.properties[name];if(!scalar(item,field)||field.enum&&!field.enum.includes(item))fail('invalid_args','An argument violates the approved type or bounds.');}return freeze(args);}
 const active=signal=>{if(signal?.aborted)fail('canceled','The invocation was canceled; already accepted effects may finish.');};
 function immutableCaller(caller){

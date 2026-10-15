@@ -43,7 +43,9 @@ test('explicit operator preflight verifies all three products while app billing 
   const result=await verifyBillingCatalog(settings,{client:f.client});assert.equal(settings.BILLING_ENABLED,'false');assert.equal(result.organizationId,'org');assert.deepEqual(result.plans.map(p=>p.annualAmount),[500,3500,25000]);assert.deepEqual(f.calls,[['product','paid-product'],['product','plus-product'],['product','ultra-product']]);assert.equal(f.metadata.rows.size,0);
   await assert.rejects(verifyBillingCatalog({...settings,POLAR_ACCESS_TOKEN:''},{client:f.client}),{code:'billing_unconfigured'});
 });
-test('actual SDK verifies offline Standard Webhooks signatures, timestamp, exact body and API version',async()=>{
+test('actual SDK verifies offline Standard Webhooks signatures, timestamp, exact body and API version',async t=>{
+  // Frozen wall time: the 300 s tolerance is probed one second outside on both sides, independent of test speed.
+  t.mock.timers.enable({apis:['Date'],now:Date.UTC(2026,9,14,12)});
   const verified=await verifyPolarWebhook(eventRequest(),config);assert.equal(verified.owner,owner);assert.equal(verified.id,'evt_test');assert.match(verified.bodyHash,/^[a-f0-9]{64}$/);
   await assert.rejects(verifyPolarWebhook(eventRequest({tamper:'{}'}),config),{code:'invalid_webhook_signature'});
   await assert.rejects(verifyPolarWebhook(eventRequest({date:new Date(Date.now()-301000)}),config),{code:'invalid_webhook_signature'});

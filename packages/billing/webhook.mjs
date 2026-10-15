@@ -1,5 +1,6 @@
 import {Webhook} from 'standardwebhooks';
 import {BillingError,metadataPrefix} from './catalog.mjs';
+import {UUID} from '../core/primitives.mjs';
 
 export const MAX_WEBHOOK_BYTES = 262144;
 export const BILLING_WEBHOOK_EVENTS=Object.freeze(['product.created','product.updated','customer.created','customer.updated','customer.deleted','customer.state_changed','subscription.created','subscription.updated','subscription.active','subscription.canceled','subscription.cycled','subscription.migrated','subscription.past_due','subscription.paused','subscription.resumed','subscription.revoked','subscription.uncanceled','order.paid','order.updated','order.refunded','refund.created','refund.updated']);
@@ -27,7 +28,7 @@ export async function verifyPolarWebhook(request,config){
   const data=raw.data;if(!data||typeof data!=='object'||Array.isArray(data))throw new BillingError('invalid_webhook','Webhook envelope is invalid.');
   const productEvent=raw.type.startsWith('product.'),refundEvent=raw.type.startsWith('refund.'),customerEvent=raw.type.startsWith('customer.'),owner=customerEvent?data.external_id:data.customer?.external_id,organizationId=data.organization_id??data.customer?.organization_id;
   if(config.POLAR_ORGANIZATION_ID&&organizationId&&organizationId!==config.POLAR_ORGANIZATION_ID)return {id,ignored:true};
-  if(!productEvent&&!refundEvent&&(typeof owner!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(owner)))return {id,ignored:true};
+  if(!productEvent&&!refundEvent&&(typeof owner!=='string'||!UUID.test(owner)))return {id,ignored:true};
   let event;try{const {webhooks}=await import('@polar-sh/sdk/2026-10');event=await webhooks.validateEvent(body,headers,config.POLAR_WEBHOOK_SECRET);}catch{throw new BillingError('invalid_webhook','Relevant webhook payload is malformed.',400);}
   const bounded=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(value);if(!bounded(data.id)||!bounded(organizationId)||customerEvent&&data.active_subscriptions!==undefined&&(!Array.isArray(data.active_subscriptions)||data.active_subscriptions.length>100||data.active_subscriptions.some(subscription=>!subscription||typeof subscription!=='object'||!bounded(subscription.product_id)))||productEvent&&data.metadata!==undefined&&(!data.metadata||typeof data.metadata!=='object'||Array.isArray(data.metadata))||refundEvent&&(!bounded(data.order_id)||!bounded(data.customer_id))||!productEvent&&!refundEvent&&!customerEvent&&(raw.type.startsWith('subscription.')&&!bounded(data.product_id)||data.product_id!=null&&!bounded(data.product_id)||!bounded(data.customer_id)))throw new BillingError('invalid_webhook','Relevant webhook routing fields are malformed.',400);
   if(event.api_version!=='2026-10'||typeof event.timestamp!=='string'||!Number.isFinite(Date.parse(event.timestamp)))throw new BillingError('invalid_webhook','Webhook envelope is invalid.');

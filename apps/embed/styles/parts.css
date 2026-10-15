@@ -31,7 +31,7 @@ html[data-part=avatar] #avatar\.v1{display:grid;place-items:center}
 .card{block-size:56px;border-block-end:1px solid var(--c-border)}
 .card:hover,.row:hover,.action:hover{background:var(--c-surface-raised)}
 .text{display:grid;min-inline-size:0}
-.name,.handle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.name,.handle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;unicode-bidi:plaintext}
 .name{font-weight:600}
 .handle{color:var(--c-text-muted);font-size:12px}
 .list{list-style:none;margin:0;padding:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}

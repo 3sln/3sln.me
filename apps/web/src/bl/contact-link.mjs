@@ -40,6 +40,9 @@ class PublicFlow extends Action {
 // Signed in (found client-side): hand off into the console through the fragment.
 export class ContactHandoff extends PublicFlow {async perform(r,ctx,d,endpoint){if(!['send-message','add-contact'].includes(d.intent)||!snapshot(r).session?.account)return;r.browser.navigate('/console#contact='+encodeURIComponent(endpoint)+'&intent='+d.intent);}}
 // Signed out: carry {link} in session storage through sign-in or sign-up, then return straight into the console prompt.
+// The capability left the address bar when the page opened, so a reload cannot recover a failed
+// description; this retries it from memory. Read-only: no messaging API, no credentials.
+export class ReloadContactPage extends PublicFlow {static deps={...PublicFlow.deps,api:{}};async perform(r,ctx,d,endpoint){const s=snapshot(r);if(s.contactPage?.intake||s.contactPage?.retrying)return;const live=()=>r.browser.secret('contactEndpoint')===endpoint&&snapshot(r).route.kind==='contact'&&snapshot(r).route.recipient===s.route.recipient;publish(r,ctx,{error:'',contactPage:{...snapshot(r).contactPage,retrying:true}});try{await loadContactPage(r,ctx,endpoint,live);}catch(error){if(live())publish(r,ctx,{error:contactFailure(error,snapshot(r).locale)});}finally{if(live())publish(r,ctx,{contactPage:{...snapshot(r).contactPage,retrying:false}});}}}
 export class ContactAuth extends PublicFlow {async perform(r,ctx,d,endpoint){r.browser.saveContactHandoff({link:endpoint,intent:null});r.browser.navigate(d.mode==='signup'?'/console?signup=1':d.mode==='paid'?'/console?signup=1&plan=paid':'/console?signin=1');}}
 // Handle on another provider: discovery reuses the SDK limits (HTTPS, size, timeout, no redirects, no credentials).
 // Only a definite `features["intents.v1"]` declaration listing the intent with a same-origin login_endpoint

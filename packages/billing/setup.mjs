@@ -1,6 +1,7 @@
 import {signupPriceDigest} from './signup.mjs';
 import {BillingError,BILLING_STATE_KEY} from './catalog.mjs';
-const key='billing/signup-checkout/v1',uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
+import {isUUID as uuid} from '../core/primitives.mjs';
+const key='billing/signup-checkout/v1';
 const fail=(code,message,status=409)=>{throw new BillingError(code,message,status);};
 export class PaidSignupBilling {
  constructor(billing){this.billing=billing;this.metadata=billing.metadata;}

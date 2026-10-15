@@ -1,5 +1,6 @@
 import {StorageError} from '../storage/policy.mjs';
 import {validTagIds as validTagList,escapeLegacyTag,CLASSIFICATIONS} from '../messaging/tags.mjs';
+import {canonical,isUUIDv4} from '../core/primitives.mjs';
 const invalid=()=>{throw new StorageError('invalid_view','Choose a valid bounded View filter.');};
 const plain=v=>v!==null&&typeof v==='object'&&Object.getPrototypeOf(v)===Object.prototype;
 const fields=(v,allowed)=>plain(v)&&Object.keys(v).every(k=>allowed.includes(k));
@@ -26,8 +27,12 @@ export function defaultMessageViews(){return [
  {version:1,id:'unread',name:'Unread',revision:1,builtin:true,filter:{version:1,read:false},sort:'activity-desc'},
  {version:1,id:'conversations',name:'Conversations',revision:1,builtin:true,filter:{version:1,types:['conversation']},sort:'activity-desc'}
  ];}
-function definition(input,update=false){if(!fields(input,['name','filter','sort',...update?['expectedRevision']:[]])||typeof input.name!=='string'||!input.name.trim()||input.name.length>100||/[\x00-\x1f\x7f]/.test(input.name)||update&&(!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<1))invalid();return {name:input.name,filter:normalizeIncomingFilter(input.filter),sort:incomingSort(input.sort)};}
+function definition(input,update=false){if(!fields(input,['name','filter','sort',...update?['expectedRevision']:['operationId']])||!update&&input.operationId!==undefined&&!isUUIDv4(input.operationId)||typeof input.name!=='string'||!input.name.trim()||input.name.length>100||/[\x00-\x1f\x7f]/.test(input.name)||update&&(!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<1))invalid();return {name:input.name,filter:normalizeIncomingFilter(input.filter),sort:incomingSort(input.sort)};}
 const path=owner=>'message-views/v1/'+owner;
+// Create receipts: a retry that reuses a client operation ID after a lost reply
+// returns the original View instead of adding a duplicate. Only the most recent
+// receipts are kept, one per possible View, so the record stays bounded.
+const receiptsPath=owner=>'message-view-operations/v1/'+owner,RECEIPTS=64;
 // Views saved before the tag registry may hold unregistered `sys:` strings; they match escaped legacy tags.
 function storedFilter(filter){try{return normalizeIncomingFilter(filter);}catch(e){if(!Array.isArray(filter?.tagsAll))throw e;return normalizeIncomingFilter({...filter,tagsAll:[...new Set(filter.tagsAll.map(t=>validTagList([t])?t:escapeLegacyTag(t)))]});}}
 export class MessageViews{
@@ -39,7 +44,13 @@ export class MessageViews{
   if(!['create','update','delete'].includes(operation)||operation!=='create'&&(typeof id!=='string'||id.length>64))invalid();
   const expectedRevision=input?.expectedRevision;
   return this.metadata.transaction(async tx=>{const rows=await tx.get(path(owner))??defaultMessageViews();
-   if(operation==='create'){if(rows.length>=64)throw new StorageError('view_limit','You can keep up to 64 Views.',409);const view={version:1,id:crypto.randomUUID(),revision:1,...data};rows.push(view);await tx.put(path(owner),rows);return view;}
+   if(operation==='create'){
+    const operationId=input.operationId,fingerprint=canonical(data),receipts=operationId?await tx.get(receiptsPath(owner))??[]:null,prior=receipts?.find(r=>r.operationId===operationId);
+    if(prior){if(prior.fingerprint!==fingerprint)throw new StorageError('view_operation_conflict','This request ID was already used for a different View.',409);return structuredClone(prior.view);}
+    if(rows.length>=64)throw new StorageError('view_limit','You can keep up to 64 Views.',409);const view={version:1,id:crypto.randomUUID(),revision:1,...data};rows.push(view);await tx.put(path(owner),rows);
+    if(receipts)await tx.put(receiptsPath(owner),[...receipts,{operationId,fingerprint,view}].slice(-RECEIPTS));
+    return view;
+   }
    const index=rows.findIndex(v=>v.id===id);if(index<0)throw new StorageError('view_not_found','This View no longer exists.',404);
    if(rows[index].revision!==expectedRevision)throw new StorageError('view_conflict','This View changed. Reload it before saving.',409);
    if(operation==='delete'){rows.splice(index,1);await tx.put(path(owner),rows);return {deleted:true};}

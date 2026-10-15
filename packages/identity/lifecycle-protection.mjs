@@ -1,7 +1,7 @@
 import {validPlanParameters} from '../billing/catalog.mjs';
+import {isUUID as id} from '../core/primitives.mjs';
 export const EVER_PAID_LIFECYCLE='lifecycle/ever-paid-v1',PAID_LIFECYCLE_PROTECTION='lifecycle/paid-protection-v1',UNPAID_LIFECYCLE_ORIGIN='lifecycle/unpaid-origin-v1',LIFECYCLE_HISTORY_REVIEW='lifecycle/history-review-v1';
 const validContext=(state,config)=>state.catalogVersion!==3||state.origin===config.APP_ORIGIN&&state.server===config.POLAR_SERVER&&state.metadataPrefix===(config.POLAR_METADATA_PREFIX??'3sln_me_')&&state.catalogMode===(config.POLAR_CATALOG_MODE??'static');
-const id=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 export function paidHistory(state,owner,config){if(!state||typeof state!=='object'||state.owner!==owner||state.source!=='polar')return false;const plan=state.catalogVersion===undefined?({plus:'paid',pro:'plus'})[state.plan]:[2,3].includes(state.catalogVersion)?state.plan:undefined;if(!['paid','plus','ultra'].includes(plan)||!Number.isFinite(state.validUntil)||state.validUntil<=0)return false;if(state.catalogVersion===3&&(!validPlanParameters(state.verifiedPlan)||state.verifiedPlan.id!==plan||state.origin!==config.APP_ORIGIN||state.server!==config.POLAR_SERVER||state.metadataPrefix!==(config.POLAR_METADATA_PREFIX??'3sln_me_')||state.catalogMode!==(config.POLAR_CATALOG_MODE??'static')))return false;return true;}
 /** Called within the same transaction that replaces billing state. This is
  * conservative deletion protection; it grants neither capacity nor handles. */

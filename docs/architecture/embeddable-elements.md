@@ -1,6 +1,6 @@
 # Embeddable Bindle custom elements
 
-Status: **provisional design, 2026-10-14.** Nothing here is implemented, published, or production-verified. This is a 3sln SDK deliverable. It is not part of the Bindle specification: Bindle defines rules, and these elements are one framework-neutral client of those rules. Where the design needs new wire behaviour, it lists that behaviour as a dependency and does not define it. The coordinator records decisions in DEVLOG.md. Independent review: [embeddable-elements-review](../release/embeddable-elements-review.md).
+Status: **provisional design, 2026-10-14; the elements are now implemented in `packages/sdk/src/elements/` and nothing here is production-verified.** The `<bindle-login>` alias and `login-element.mjs` described below were removed (use `<bindle-sign-in>`); see docs/integration.md for the current API. This is a 3sln SDK deliverable. It is not part of the Bindle specification: Bindle defines rules, and these elements are one framework-neutral client of those rules. Where the design needs new wire behaviour, it lists that behaviour as a dependency and does not define it. The coordinator records decisions in DEVLOG.md. Independent review: [embeddable-elements-review](../release/embeddable-elements-review.md).
 
 Architecture/security/product sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -70,7 +70,7 @@ Flow methods in `popup` mode must be called during transient user activation (`n
 
 ### 3.2 `<bindle-sign-in>`: handle entry (successor to `<bindle-login>`)
 
-`<bindle-login>` stays as a compatible alias for one minor version. Its existing `client`/`requests` properties and `bindle-login-request`/`bindle-email-fallback` events are preserved.
+`<bindle-login>` was a compatible alias; it has since been removed. Its existing `client`/`requests` properties and `bindle-email-fallback` event is preserved; its request event is now `bindle-sign-in-request` (renamed from `bindle-login-request` before release).
 
 | Kind | Name | Notes |
 | --- | --- | --- |
@@ -79,7 +79,7 @@ Flow methods in `popup` mode must be called during transient user activation (`n
 | attr | `default-host` | **Open question (§14).** Proposed fixed `3sln.me`, overridable only for self-hosted builds. |
 | slot | `heading`, `help`, `footer` | Embedder copy. Security-relevant copy (the provider host announcement, discovery errors, the email-fallback disclosure) is not slottable or overridable. |
 | part | `form`, `label`, `field`, `input`, `suffix`, `submit`, `status`, `provider-note` | |
-| event | as `<bindle-session>`, plus legacy events | Without a session or client, emits `bindle-login-request` as today. |
+| event | as `<bindle-session>`, plus legacy events | Without a session or client, emits `bindle-sign-in-request` as today. |
 
 Behaviour: `@3sln.me` renders as a visual suffix (and an `aria-describedby` hint) until the value contains `@`. Parsing reuses `parseIdentity` unchanged. Host-level discovery may start on blur or after a 400 ms pause in typing; it is cookieless and public. Parsing and validation happen before any window opens, so a typo never flashes a popup (EE-15). Before navigating, show "You'll continue at **example.org**", using the host name only, with no provider logo.
 

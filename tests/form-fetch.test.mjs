@@ -7,6 +7,9 @@ import {createWorkerFormFetch} from '../apps/worker/form-fetch.mjs';
 import {publicAddress} from '../packages/apps/form-fetch-policy.mjs';
 const origin='https://app.example';
 const input=(extra={})=>({url:origin+'/submit?mode=one',method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':'audit_operation_123456'},body:new TextEncoder().encode('answer=hello'),...extra});
+// Transport deadlines run on mocked timers: the deadline is ticked explicitly (bounded rounds), never waited for.
+// `ready` holds the clock until the work under test has started (e.g. the POST is in flight).
+async function withDeadline(t,promise,ms,ready=()=>true){let done=false;const settled=promise.then(value=>({value}),error=>({error})).finally(()=>{done=true;});for(let i=0;i<50&&!done;i++){if(ready())t.mock.timers.tick(ms);await new Promise(setImmediate);}assert.equal(done,true,'settled by its deadline');const result=await settled;if('error' in result)throw result.error;return result.value;}
 function nodeHarness({records=[{address:'93.184.216.34',family:4}],status=200,headers={'content-type':'text/html'},body='<p>Done</p>',lookup,stall=false}={}){
  const calls=[];let resolverCalls=0;const port=createNodeFormFetch({allowedOrigins:[origin],timeoutMs:100,lookup:lookup??(async()=>{resolverCalls++;return records;}),request:(options,callback)=>{const req=new EventEmitter();req.destroy=()=>{};req.end=bytes=>{calls.push({options,bytes:new Uint8Array(bytes)});if(stall)return;queueMicrotask(()=>{const res=new PassThrough();Object.assign(res,{statusCode:status,headers});callback(res);res.end(body);});};return req;}});return {port,calls,get resolverCalls(){return resolverCalls;}};
 }
@@ -26,9 +29,10 @@ test('Node pins validated public A result to TLS connection and constructs heade
  const h=nodeHarness(),r=await h.port.send(input());assert.equal(r.status,200);assert.equal(new TextDecoder().decode(r.bytes),'<p>Done</p>');assert.equal(h.resolverCalls,1);const [{options,bytes}]=h.calls;assert.equal(options.agent,false);assert.equal(options.rejectUnauthorized,true);assert.equal(options.servername,'app.example');assert.equal(options.path,'/submit?mode=one');assert.equal(options.method,'POST');assert.deepEqual(bytes,input().body);assert.equal(options.headers.Cookie,undefined);assert.equal(options.headers.Authorization,undefined);
  const selected=await new Promise((resolve,reject)=>options.lookup('ignored',{all:true},(e,r)=>e?reject(e):resolve(r)));assert.deepEqual(selected,[{address:'93.184.216.34',family:4}]);
 });
-test('Node rejects mixed/private DNS, unknown outcome timeout, oversized/encoded response and never follows redirect',async()=>{
+test('Node rejects mixed/private DNS, unknown outcome timeout, oversized/encoded response and never follows redirect',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
  for(const records of [[],[{address:'10.0.0.1',family:4}],[{address:'93.184.216.34',family:4},{address:'127.0.0.1',family:4}],[{address:'2606:4700::1',family:6}]]){const h=nodeHarness({records});await assert.rejects(h.port.send(input()));assert.equal(h.calls.length,0);}
- for(const opts of [{body:'x'.repeat(131073)},{headers:{'content-encoding':'gzip'}},{stall:true},{lookup:()=>new Promise(()=>{})}])await assert.rejects(nodeHarness(opts).port.send(input()),{code:'form_transport_unavailable'});
+ for(const opts of [{body:'x'.repeat(131073)},{headers:{'content-encoding':'gzip'}},{stall:true},{lookup:()=>new Promise(()=>{})}]){const h=nodeHarness(opts);await assert.rejects(withDeadline(t,h.port.send(input()),100,()=>!opts.stall||h.calls.length>0),{code:'form_transport_unavailable'});if(opts.stall)assert.equal(h.calls.length,1,'the stalled POST was sent once and never retried');}
  const h=nodeHarness({status:307,headers:{location:'https://other.example/done','set-cookie':'secret=1'},body:'ignored'}),r=await h.port.send(input());assert.equal(h.calls.length,1);assert.equal(r.status,307);assert.deepEqual(r.headers,{location:'https://other.example/done'});assert.equal(r.bytes.length,0);
 });
 test('Worker screens A and AAAA before exact reviewed native fetch with no ambient credentials or redirect follow',async()=>{
@@ -38,18 +42,20 @@ test('Worker DNS screening rejects mixed/private/empty/malformed records before 
  for(const opts of [{addresses:['10.0.0.1']},{ipv6:['fd00::1']},{addresses:['1.1.1.1','127.0.0.1']},{addresses:[],ipv6:[]},{dnsOverride:{Status:0,Question:[{name:'wrong.example.',type:1}],Answer:[]}},{dnsOverride:{Status:3}}]){const h=workerHarness(opts);await assert.rejects(h.port.send(input()));assert(h.calls.every(c=>c.options.method==='GET'));}
  const h=workerHarness({status:303,headers:{Location:'https://other.example/next','Set-Cookie':'secret=1'},body:'ignored'}),r=await h.port.send(input());assert.equal(h.calls.length,3);assert.equal(r.status,303);assert.deepEqual(r.headers,{location:'https://other.example/next',contentType:'text/plain;charset=UTF-8'});assert.equal(r.bytes.length,0);
 });
-test('Worker response bytes/deadline and caller abort remain bounded without replay',async()=>{
- for(const opts of [{body:'x'.repeat(131073)},{headers:{'Content-Encoding':'gzip'}},{stall:true,timeoutMs:5}]){const h=workerHarness(opts);await assert.rejects(h.port.send(input()),{code:'form_transport_unavailable'});assert.equal(h.calls.filter(c=>c.options.method==='POST').length,1);}
+test('Worker response bytes/deadline and caller abort remain bounded without replay',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ for(const opts of [{body:'x'.repeat(131073)},{headers:{'Content-Encoding':'gzip'}},{stall:true,timeoutMs:5}]){const h=workerHarness(opts);await assert.rejects(withDeadline(t,h.port.send(input()),5,()=>h.calls.some(c=>c.options.method==='POST')),{code:'form_transport_unavailable'});assert.equal(h.calls.filter(c=>c.options.method==='POST').length,1);}
  const controller=new AbortController();controller.abort();const h=workerHarness();await assert.rejects(h.port.send(input({signal:controller.signal})));assert.equal(h.calls.length,0);
 });
 
 test('Worker cancels an oversized streaming body and rejects concurrency before DNS work',async()=>{
- let canceled=0,posts=0;const responses=[];const fetcher=async(url,options)=>{if(options.method==='GET'){const type=Number(new URL(url).searchParams.get('type'));return Response.json({Status:0,Question:[{name:'app.example',type}],Answer:type===1?[{type,data:'1.1.1.1'}]:[]},{headers:{'Content-Type':'application/dns-json'}});}posts++;if(posts===1)return new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array(131073));},cancel(){canceled++;}}));return new Promise(resolve=>responses.push(resolve));};
+ let canceled=0,posts=0,secondPost;const responses=[],posted=new Promise(resolve=>{secondPost=resolve;});const fetcher=async(url,options)=>{if(options.method==='GET'){const type=Number(new URL(url).searchParams.get('type'));return Response.json({Status:0,Question:[{name:'app.example',type}],Answer:type===1?[{type,data:'1.1.1.1'}]:[]},{headers:{'Content-Type':'application/dns-json'}});}posts++;if(posts===2)secondPost();if(posts===1)return new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array(131073));},cancel(){canceled++;}}));return new Promise(resolve=>responses.push(resolve));};
  const port=createWorkerFormFetch({allowedOrigins:[origin],publicRouting:true,fetcher,maxConcurrent:1,timeoutMs:100});await assert.rejects(port.send(input()));assert.equal(canceled,1);
- const pending=port.send(input());await new Promise(resolve=>setTimeout(resolve,0));await assert.rejects(port.send(input()));assert.equal(posts,2);responses[0](new Response('Done'));assert.equal((await pending).status,200);
+ const pending=port.send(input());await posted;/* the first request holds the only slot */await assert.rejects(port.send(input()));assert.equal(posts,2);responses[0](new Response('Done'));assert.equal((await pending).status,200);
  await assert.rejects(port.send(input({signal:{}})));assert.equal(posts,2);
 });
 
-test('Node late DNS after total deadline cannot initiate a POST',async()=>{
- let resolveDNS;const h=nodeHarness({lookup:()=>new Promise(resolve=>resolveDNS=resolve)});await assert.rejects(h.port.send(input()));resolveDNS([{address:'1.1.1.1',family:4}]);await new Promise(resolve=>setTimeout(resolve,0));assert.equal(h.calls.length,0);
+test('Node late DNS after total deadline cannot initiate a POST',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ let resolveDNS;const h=nodeHarness({lookup:()=>new Promise(resolve=>resolveDNS=resolve)});await assert.rejects(withDeadline(t,h.port.send(input()),100));resolveDNS([{address:'1.1.1.1',family:4}]);for(let i=0;i<10;i++)await new Promise(setImmediate);assert.equal(h.calls.length,0);
 });

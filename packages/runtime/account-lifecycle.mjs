@@ -1,11 +1,11 @@
 import {accountRemovalProtection} from '../identity/lifecycle-protection.mjs';
+import {isUUID as uuid} from '../core/primitives.mjs';
 
 const DAY=86400000, KEY='lifecycle/state-v1';
 const PHASES=new Set(['active','warning','suspended','purge-review','purging']);
 const BLOCKED=new Set(['suspended','purge-review','purging']);
 export const DEFAULT_ACCOUNT_LIFECYCLE_POLICY=Object.freeze({unusedDays:2,inactiveDays:365,warningDays:7,suspendedDays:30,noticeLeaseMs:60000,proofMaxAgeMs:300000,activityCoalesceMs:900000,establishAfterMs:3600000});
 const fail=(code,message,status=409)=>{throw Object.assign(new Error(message),{code,status});};
-const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 const int=value=>Number.isSafeInteger(value)&&value>=0;
 const contextOf=config=>JSON.stringify([config.APP_ORIGIN,config.POLAR_SERVER,config.POLAR_CATALOG_MODE??'static',config.POLAR_ORGANIZATION_ID??null,config.POLAR_METADATA_PREFIX??'3sln_me_',config.POLAR_PRODUCT_ID_PAID??null,config.POLAR_PRODUCT_ID_PLUS??null,config.POLAR_PRODUCT_ID_ULTRA??null]);
 const clone=value=>structuredClone(value);

@@ -27,7 +27,7 @@ async function until(predicate,{timeout=3000,message='condition'}={}){
   const end=Date.now()+timeout;
   while(!predicate()){if(Date.now()>end)throw new Error(`Timed out waiting for ${message}.`);await tick(5);}
 }
-const eventTypes=['bindle-session-change','bindle-flow-start','bindle-flow-end','bindle-flow-state','bindle-menu-toggle','bindle-error','bindle-login-request','bindle-email-fallback','bindle-sign-in-start','bindle-sign-in-end','bindle-account-change','bindle-account-change-failed','bindle-capabilities-change'];
+const eventTypes=['bindle-session-change','bindle-flow-start','bindle-flow-end','bindle-flow-state','bindle-menu-toggle','bindle-error','bindle-sign-in-request','bindle-email-fallback','bindle-sign-in-start','bindle-sign-in-end','bindle-account-change','bindle-account-change-failed','bindle-capabilities-change'];
 async function mount(html,{provider=createMockProvider({issuer:'https://3sln.example'}),providers=[provider],decide,blocked,client=true,clientOptions={},load=true}={}){
   document.body.innerHTML='';
   const fetcher=async(input,init)=>{const url=new URL(input instanceof Request?input.url:input);return providers.find(item=>item.issuer===url.origin)?.fetch(input,init)??new Response('',{status:404});};
@@ -254,7 +254,7 @@ test('<bindle-login> is gone; without a session <bindle-sign-in> reports the par
   assert.equal(customElements.get('bindle-login'),undefined);
   const {events,uninstall}=await mount('<bindle-sign-in></bindle-sign-in>',{client:false});
   submit(document.querySelector('bindle-sign-in'),'n.7k3m');
-  assert.equal(events.find(event=>event.type==='bindle-login-request').detail.handle,'n.7k3m@3sln.me');
+  assert.equal(events.find(event=>event.type==='bindle-sign-in-request').detail.handle,'n.7k3m@3sln.me');
   uninstall();
 });
 

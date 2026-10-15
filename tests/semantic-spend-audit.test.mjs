@@ -33,7 +33,7 @@ test('independent audit: concurrent global reservations stop before daily ceilin
 test('independent audit: monthly spend and lifetime owner/vector admission are independent', async () => {
   const metadata = new SqliteMetadata(':memory:'); let now = start;
   try {
-    const budget = new GlobalSemanticBudget({ metadata, config: { SEMANTIC_GLOBAL_MAX_OWNERS: 1, SEMANTIC_GLOBAL_MAX_UPSERTS: 1 }, clock: () => now });
+    const budget = new GlobalSemanticBudget({ metadata, config: { SEMANTIC_GLOBAL_MAX_OWNERS: '1', SEMANTIC_GLOBAL_MAX_UPSERTS: '1' }, clock: () => now }); // environment-shaped string limits
     await budget.reserve({ owner, operation: 'upsert', units: 384 });
     now = Date.UTC(2026, 10, 12);
     await assert.rejects(budget.reserve({ owner, operation: 'upsert', units: 384 }), { code: 'semantic_global_budget' });

@@ -1,6 +1,6 @@
 import {AdminService} from './admin.mjs';
+import {isUUID as uuid} from '../core/primitives.mjs';
 
-const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 // Kept on the tombstone so permanent namespace claims stay bound and are never recycled.
 const RETAINED=['id','handle','assignmentId','systemIdentity','onboardingIdentity','createdAt'];
 

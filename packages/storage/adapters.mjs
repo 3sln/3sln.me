@@ -2,7 +2,6 @@ import { AwsClient } from 'aws4fetch';
 import { approvedEndpoint, endpointKey, objectKey, checkedFetch, boundedBody, StorageError } from './policy.mjs';
 import { rangeHeaders, readResult, listLimit, scopePrefix, localKey, sorted, cursorEncode, cursorDecode } from './policy.mjs';
 import { parseXML, children, child, value } from './xml.mjs';
-export const OBJECT_STORAGE = 'https://3sln.me/artefacts/contracts/object-storage/v1';
 export const capabilities = (extra={}) => ({read:true,write:false,range:false,presigned:{read:false,write:false},conditionalWrites:false,maxObjectBytes:1048576,...extra});
 export class S3Adapter {
   constructor(config,{fetcher=fetch,allowedHosts=[]}={}) {

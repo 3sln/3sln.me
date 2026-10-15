@@ -1,6 +1,5 @@
 import {BILLING_STATE_KEY,entitlementFromState,assertOwner} from '../billing/catalog.mjs';
 import {StorageError} from '../storage/policy.mjs';
-export const STORAGE_WRITE_LAYOUT=Object.freeze({version:1,shards:16,leaseUnits:16,activeClients:64});
 const STATE='storage-write/v1';
 function fail(code='storage_write_unavailable',message='Storage write admission is unavailable.',status=503,retryAfter){const error=new StorageError(code,message,status);if(retryAfter!==undefined)error.retryAfter=retryAfter;throw error;}
 function integer(value,fallback,max=Number.MAX_SAFE_INTEGER){const n=value===undefined?fallback:typeof value==='string'&&/^\d+$/.test(value)?Number(value):value;if(!Number.isSafeInteger(n)||n<0||n>max)fail();return n;}

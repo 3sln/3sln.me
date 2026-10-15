@@ -26,7 +26,7 @@ jobs:
       - run: npm run test:dom
       - run: npm run test:ui-state
       - run: npm run check:worker
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium firefox
       - name: Exercise actual Worker in headless browser
         run: node scripts/run-browser-checks.mjs
       - name: Publish verified app

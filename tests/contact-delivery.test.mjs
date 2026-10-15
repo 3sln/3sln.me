@@ -11,6 +11,8 @@ const read=p=>readFileSync(new URL(p,import.meta.url),'utf8');
 const vector=JSON.parse(read('../docs/architecture/artefacts/contact-delivery-v1.vectors.json'));
 const issuer='https://3sln.example',owner='22222222-2222-4222-8222-222222222222',sender='44444444-4444-4444-8444-444444444444',grantId='33333333-3333-4333-8333-333333333333',resource=`${issuer}/entities/${owner}/contacts/${grantId}`;
 const recipient={issuer,owner,contactId:grantId,resource},enc=new TextEncoder(),ES={name:'ECDSA',hash:'SHA-256'};
+// Fixed service clock: admission windows are asserted to the millisecond, independent of test speed.
+const NOW=Date.UTC(2026,9,14,12);
 const pair=()=>crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
 const jwk=async k=>{const {kty,crv,x,y}=await crypto.subtle.exportKey('jwk',k.publicKey);return {kty,crv,x,y};};
 const sign=async(domain,signed,privateKey)=>({...signed,proof:{...signed.proof,signature:base64url(new Uint8Array(await crypto.subtle.sign(ES,privateKey,signingInput(domain,signed))))}});
@@ -21,8 +23,8 @@ async function fixture({kinds=['one-off'],intakeTags={autoTags:['contact:develop
  const author=localIdentityDescriptor(issuer,sender,kid),state={revision:1,...intakeTags},collection='cccccccc-cccc-4ccc-8ccc-cccccccccccc';
  await store.transaction(async tx=>{await tx.set(key('collection',owner,collection),{id:collection,owner,active:true});await tx.set(key('contact-grant',grantId),{id:grantId,owner,active:true,messagesUsed:0,bytesUsed:0,claims:{collections:[collection],mimeTypes:['text/plain','text/html'],maxMessages,maxBytes:65536,maxMessageBytes:16384},delivery:{resource,kinds,collection,...conditional?{conditional:true}:{}}});});
  const calls=[],hooks={},parents={verify:async credential=>{calls.push('verify');if(credential!==grantId)fail('unauthorized');return {parent:credential};},live:async(tx,verified)=>{calls.push('live');await hooks.live?.();const grant=await tx.get(key('contact-grant',verified.parent));if(!grant?.active)fail('unauthorized');return grant;}};
- const service=new ContactDeliveryService({store,issuer,parents,intake:async id=>{if(hooks.intake)return hooks.intake();return id===grantId?structuredClone(state):null;},resolve:localAuthorResolver({issuer,lookup:async(subject,id)=>{calls.push('resolve');return structuredClone(keys.get(subject+id));}}),admissionKey:async()=>({kid:'provider-1',privateKey:admission.privateKey})});
- const envelope=(over={})=>createAuthoredEnvelope({author,privateKey:senderKey.privateKey,recipient,mimeType:'text/plain',body:enc.encode('Hello'),subject:'Hello',optionalTags:['feature','bug'],...over});
+ const service=new ContactDeliveryService({store,issuer,parents,intake:async id=>{if(hooks.intake)return hooks.intake();return id===grantId?structuredClone(state):null;},resolve:localAuthorResolver({issuer,lookup:async(subject,id)=>{calls.push('resolve');return structuredClone(keys.get(subject+id));}}),admissionKey:async()=>({kid:'provider-1',privateKey:admission.privateKey}),clock:()=>NOW});
+ const envelope=(over={})=>createAuthoredEnvelope({author,privateKey:senderKey.privateKey,recipient,mimeType:'text/plain',body:enc.encode('Hello'),subject:'Hello',optionalTags:['feature','bug'],createdAt:NOW,...over});
  return {store,service,senderKey,admission,author,keys,kid,state,envelope,calls,hooks};
 }
 
@@ -112,8 +114,8 @@ test('scope: recipient binding, kind, MIME, tags, size, time window, quotas and 
  await assert.rejects(f.service.deliver(grantId,await f.envelope({optionalTags:['priority:paid']})),{code:'forbidden_tags'});
  await assert.rejects(f.service.deliver(grantId,await f.envelope({mimeType:'application/pdf'})),{code:'unsupported_media'});
  await assert.rejects(f.service.deliver(grantId,await f.envelope({body:new Uint8Array(16385)})),{code:'too_large'});
- await assert.rejects(f.service.deliver(grantId,await f.envelope({createdAt:Date.now()-86400001})),{code:'operation_expired'});
- await assert.rejects(f.service.deliver(grantId,await f.envelope({createdAt:Date.now()+61000})),{code:'operation_expired'});
+ await assert.rejects(f.service.deliver(grantId,await f.envelope({createdAt:NOW-86400001})),{code:'operation_expired'});
+ await assert.rejects(f.service.deliver(grantId,await f.envelope({createdAt:NOW+60001})),{code:'operation_expired'});
  await assert.rejects(f.service.deliver(grantId,await f.envelope({body:new Uint8Array([0xff])})),{code:'invalid_utf8'});
  await assert.rejects(f.service.deliver(grantId,{envelope,body:enc.encode('Hellx')}),{code:'body_mismatch'});
  await assert.rejects(f.service.deliver('unknown',{envelope,body}),{code:'unauthorized'});
@@ -153,7 +155,7 @@ test('RPC framing: exact members, tx/resource binding, canonical base64url body'
 });
 
 test('conversation-init: bootstrap bindings validated and signed, then refused until conversation v2 runtime exists',async()=>{
- const f=await fixture({kinds:['one-off','conversation-init']}),body=enc.encode('Hi'),secret=crypto.getRandomValues(new Uint8Array(32)),createdAt=Date.now();
+ const f=await fixture({kinds:['one-off','conversation-init']}),body=enc.encode('Hi'),secret=crypto.getRandomValues(new Uint8Array(32)),createdAt=NOW;
  const content={mimeType:'text/plain',byteLength:2,sha256:await digest(crypto,body)},peer=localIdentityDescriptor(issuer,owner,'dddddddd-dddd-4ddd-8ddd-dddddddddddd'),creatorResource=`${issuer}/entities/${sender}/conversations/x`;
  const genesis=await sign(GENESIS_DOMAIN,{payload:{version:2,contract:CONVERSATION_V2_CONTRACT,conversationId:'66666666-6666-4666-8666-666666666666',createdAt,creator:f.author,creatorResource,participants:[{identity:f.author,resource:creatorResource},{identity:peer,resource:`${issuer}/entities/${owner}/conversations/x`}],secretEpoch:'77777777-7777-4777-8777-777777777777',secretDigest:await digest(crypto,secret),initialContent:content,initialSubject:'Hi'},proof:{alg:'ES256',kid:f.author.keyId}},f.senderKey.privateKey);
  const conversation={genesis,sharedSecret:base64url(secret),returnControl:{resource:creatorResource+'/respond',recipient:peer.principal,genesisDigest:await digest(crypto,canonical(semanticEnvelope(genesis))),nonce:'88888888-8888-4888-8888-888888888888',expiresAt:createdAt+86400000,method:'respondInvitation',maxBytes:8192,capability:'cap'}};
@@ -194,7 +196,7 @@ test('review fixes: credential first, revocation fence, account status, conditio
 test('replay namespace includes the author principal: another author cannot squat or probe an operation ID',async()=>{
  const f=await fixture(),other=await pair(),otherSubject='99999999-9999-4999-8999-999999999999',otherKid='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
  f.keys.set(otherSubject+otherKid,{alg:'ES256',publicJwk:await jwk(other),active:true,purpose:'signing',accountActive:true});
- const victim=await f.envelope(),squat=await createAuthoredEnvelope({author:localIdentityDescriptor(issuer,otherSubject,otherKid),privateKey:other.privateKey,recipient,mimeType:'text/plain',body:enc.encode('Squat'),operationId:victim.envelope.payload.operationId});
+ const victim=await f.envelope(),squat=await createAuthoredEnvelope({author:localIdentityDescriptor(issuer,otherSubject,otherKid),privateKey:other.privateKey,recipient,mimeType:'text/plain',body:enc.encode('Squat'),operationId:victim.envelope.payload.operationId,createdAt:NOW});
  const first=await f.service.deliver(grantId,squat),second=await f.service.deliver(grantId,victim);
  assert.equal(first.replayed,false);assert.equal(second.replayed,false);assert.notEqual(first.receipt.payload.messageId,second.receipt.payload.messageId);
  assert.deepEqual(await f.service.deliver(grantId,victim),{receipt:second.receipt,replayed:true});

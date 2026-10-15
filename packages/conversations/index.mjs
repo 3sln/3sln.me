@@ -1,8 +1,9 @@
 import {canonical,base64url,fromBase64url,digest,boundedString} from '../messaging/store.mjs';
+import {isUUID} from '../core/primitives.mjs';
 export const INVITE_MIME='application/vnd.3sln.conversation-invite+json';
 export const EVENT_MIME='application/vnd.3sln.conversation-event+json';
 export const CONTRACT='https://3sln.me/artefacts/conversation-v1.json';
-export const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v);
+export const uuid=isUUID;
 export class ConversationError extends Error{constructor(code,message=code,status=400){super(message);Object.assign(this,{name:'ConversationError',code,status});}}
 const fail=(c,s=400)=>{throw new ConversationError(c,c,s);};
 const exact=(v,fields)=>{if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).some(k=>!fields.includes(k)))fail('conversation_fields_invalid');};

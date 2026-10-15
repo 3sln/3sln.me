@@ -76,6 +76,8 @@ test('expired operation is rejected before cached journal or new token can repla
  const f=await fixture(t),{ref}=await f.connect();const e=f.envelope(ref,{createdAt:Date.now()-86400001});await assert.rejects(f.send(ref,e),{code:'operation_expired'});assert.equal(f.puts,0);assert.equal((await f.fedDB.list({prefix:'federation/journal/'})).size,0);
 });
 test('per-connection minute quota stops new blobs and parent owner receipt budget remains cumulative',async t=>{
+ // Wall time is frozen mid-minute: the fixed minute bucket cannot roll over between the 10th and 11th send.
+ t.mock.timers.enable({apis:['Date'],now:Date.UTC(2026,9,14,12,0,30)});
  const f=await fixture(t),{ref}=await f.connect();for(let i=0;i<10;i++)assert.equal((await f.send(ref)).result.accepted,true);assert.equal((await f.send(ref)).error.code,'rate_limited');assert.equal(f.puts,10);assert.equal((await f.account.messageReceiptBudget.status(OWNER)).windows.day.messages,10);
 });
 test('SQLite actor restart preserves receipts, grant authority, origin provenance and exactly one retained message',async t=>{

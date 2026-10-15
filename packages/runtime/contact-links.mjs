@@ -6,9 +6,10 @@ import {parseLinkQuery,parseLinkMeta,strictJSON,CONTACT_LINK_TYPE} from '../mess
 import {createAuthoredEnvelope,localIdentityDescriptor} from '../messaging/contact-delivery.mjs';
 import {prepareLinkResponse,signLinkResponse,verifyLinkResponse} from '../identity/link-response.mjs';
 import {evaluateLinkPolicy} from './developer-contact.mjs';
+import {UUID} from '../core/primitives.mjs';
 // Owner-host wiring for Bindle links (docs/spec/links.md §6–§9). Methods taking `c` run on the
 // AccountController; the ungated ones never hold the account gate across cross-account lookups.
-const DAY=86400000,UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,CONTACT_PATH=/^\/users\/(?:[a-z0-9][a-z0-9_-]{2,31}|n\.[0-9abcdefghjkmnpqrstvwxyz]{1,9})\/contact\/[a-f0-9-]{36}$/;
+const DAY=86400000,CONTACT_PATH=/^\/users\/(?:[a-z0-9][a-z0-9_-]{2,31}|n\.[0-9abcdefghjkmnpqrstvwxyz]{1,9})\/contact\/[a-f0-9-]{36}$/;
 const local=c=>c.config.LOCAL_DEVELOPMENT==='true';
 const decisionPath=async(parent,principal)=>`link-audience/${parent}/${await digest(crypto,`${principal.issuer}\u0000${principal.subject}`)}`;
 const invalid=()=>{throw new StorageError('link_invalid','This contact link is invalid or no longer active.',401);};

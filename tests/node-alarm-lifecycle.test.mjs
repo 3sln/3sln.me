@@ -13,6 +13,6 @@ test('closing metadata fences a running alarm rejection without reading or resta
 test('an alarm failure while open retains the normal retry schedule',async()=>{
  const metadata=new SqliteMetadata(':memory:'),retried=deferred();
  try{metadata.onAlarm=async()=>{throw new Error('retryable failure');};const original=metadata.setAlarm.bind(metadata);metadata.setAlarm=async time=>{await original(time);retried.resolve(time);};
-  await original(Date.now());const time=await retried.promise;assert.ok(time>=Date.now()+59000);assert.equal(await metadata.getAlarm(),time);assert.ok(metadata.timer);
+  const before=Date.now();await original(before);const time=await retried.promise;/* Relative to the failure, not to whenever the assertion runs. */assert.ok(time>=before+60000);assert.equal(await metadata.getAlarm(),time);assert.ok(metadata.timer);
  }finally{metadata.close();}
 });

@@ -97,6 +97,8 @@ export const createEntrySecrets=()=>({entryToken:null,pageSecret:null,embedOrigi
 const changed=ctx=>ctx.engineFeed.dispatchEvent(new Event('entry-changed'));
 export class EntryView extends Query {static deps=['model'];boot({model},{notify,engineFeed}){this.feed=engineFeed;this.publish=()=>notify({...model});engineFeed.addEventListener('entry-changed',this.publish);this.publish();}kill(){this.feed.removeEventListener('entry-changed',this.publish);}}
 const phase=(model,next)=>{if(model.phase!==next){model.phase=next;model.surface++;}};
+// A dropped connection, 5xx or rate limit says nothing about the entry itself: "not available right now", never "expired".
+const transient=error=>['rate_limited','temporarily_unavailable'].includes(error?.code)||error instanceof TypeError||error?.status>=500||error?.status===429;
 
 export class EntryAction extends Action {
  static deps={model:{write:true},secrets:{write:true},api:{},browser:{},i18n:{},consent:{}};
@@ -123,7 +125,7 @@ export class EntryAction extends Action {
   if(!parsed){phase(model,'invalid');return;}
   if(browser.sandboxed()){phase(model,'sandboxed');return;}
   model.entryId=parsed.entryId;
-  let entry;try{const value=await api.get(`/api/oauth/entries/${parsed.entryId}`);entry=validEntryView(value,browser.origin);secrets.entryToken=entryToken(value);}catch(error){phase(model,['rate_limited','temporarily_unavailable'].includes(error.code)?'unavailable':'expired');return;}
+  let entry;try{const value=await api.get(`/api/oauth/entries/${parsed.entryId}`);entry=validEntryView(value,browser.origin);secrets.entryToken=entryToken(value);}catch(error){phase(model,transient(error)?'unavailable':'expired');return;}
   if(entry.expiresAt<=browser.now()){phase(model,'expired');return;}
   if(entry.delivery==='embed-popup'&&!parsed.plain){
    // §7.3: nothing account-related renders in this COOP-less document until the opener proves the entry's key.
@@ -136,7 +138,7 @@ export class EntryAction extends Action {
    Object.assign(secrets,{pageSecret,embedOrigin});model.mode='embed';
   }else if(entry.delivery==='embed-popup'){
    // The plain page declares plain mode as it loads, before any account UI, so the embed state never tracks a choice.
-   if(!entry.embed.plain)try{await api.post(`/api/oauth/entries/${parsed.entryId}/plain`,{},{entryToken:secrets.entryToken,anonymous:true});}catch(error){phase(model,['rate_limited','temporarily_unavailable'].includes(error.code)?'unavailable':'expired');return;}
+   if(!entry.embed.plain)try{await api.post(`/api/oauth/entries/${parsed.entryId}/plain`,{},{entryToken:secrets.entryToken,anonymous:true});}catch(error){phase(model,transient(error)?'unavailable':'expired');return;}
    model.mode='plain';
   }else model.mode='standard';
   model.entry=entry;phase(model,entry.intent==='end-session'?'end-session':'choose');changed(ctx);

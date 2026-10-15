@@ -25,11 +25,7 @@ export class MessagingFault extends Error {
 }
 export const fail = (code, message) => { throw new MessagingFault(code, message); };
 export const key = (...parts) => parts.map(part => encodeURIComponent(String(part))).join('/') + '/';
-export const canonical = value => {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(name => `${JSON.stringify(name)}:${canonical(value[name])}`).join(',')}}`;
-  return JSON.stringify(value);
-};
+export { canonical } from '../core/primitives.mjs';
 export const textEncoder = new TextEncoder();
 export const strictText = bytes => { try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { fail('invalid_utf8'); } };
 export const base64url = bytes => btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join('')).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');

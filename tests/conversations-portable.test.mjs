@@ -6,7 +6,6 @@ import {join} from 'node:path';
 import {createNodeServer} from '../apps/node/server.mjs';
 import {httpConversationTransport} from '../packages/conversations/http.mjs';
 import {INVITE_MIME} from '../packages/conversations/index.mjs';
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 test('configured portable HTTP fixture uses two independent durable localhost hosts, queued receipts and consent',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'conversation-portable-')),origins=['http://localhost:18891','http://localhost:18892'];const apps=[];const socket=process.env.CONVERSATION_SOCKET_TEST==='true';const fixtureFetch=async(url,init)=>{const u=new URL(url),i=origins.indexOf(u.origin);assert.notEqual(i,-1);return apps[i].fetch(new Request(url,init));};const fetchPeer=socket?fetch:fixtureFetch;
@@ -19,8 +18,10 @@ test('configured portable HTTP fixture uses two independent durable localhost ho
  const act=(host,user,operation,input={})=>j(host,actionPath,{user,value:{source:{origin:origins[0],owner:a.owner},operation,input}});
  const contact=await j(1,'/api/contacts',{user:b,value:{name:'Portable contact',collections:[b.collection],mimeTypes:[INVITE_MIME],expiresAt:Date.now()+3600000,maxMessages:10}});
  const invited=await act(0,a,'invite',{confirmed:true,target:{origin:origins[1],owner:b.owner},collection:b.collection,contactURL:contact.url});assert.equal(invited.complete,true);assert.equal((await j(1,'/api/conversations',{user:b})).items[0].state,'invited');
- await act(1,b,'accept',{confirmed:true});let state;for(let i=0;i<50;i++){state=(await j(1,'/api/conversations',{user:b})).items[0].state;if(state==='active')break;await sleep(20);}assert.equal(state,'active');
- const post=await act(1,b,'post',{text:'A real HTTP contribution from another host'});assert.equal(post.accepted,true);let receipt;for(let i=0;i<50;i++){receipt=await act(1,b,'receipt',{eventId:post.eventId});if(receipt.complete)break;await sleep(20);}assert.equal(receipt.complete,true);assert.equal(receipt.peers.length,2);for(const [host,user]of [[0,a],[1,b]]){const history=await act(host,user,'history');assert.equal(history.items.length,1);assert.equal(history.items[0].text,'A real HTTP contribution from another host');}
+ // Queued deliveries are drained explicitly on both hosts (bounded rounds), never by waiting on wall-clock alarms.
+ const drain=async()=>{for(let round=0;round<4;round++)for(const [host,user]of [[0,a],[1,b]]){const result=await apps[host].resources.accounts.get(user.owner).invoke({method:'conversationDrain',args:[user.owner,{limit:32}]});assert.ok(!result?.$fault,JSON.stringify(result?.$fault));}};
+ await act(1,b,'accept',{confirmed:true});await drain();assert.equal((await j(1,'/api/conversations',{user:b})).items[0].state,'active');
+ const post=await act(1,b,'post',{text:'A real HTTP contribution from another host'});assert.equal(post.accepted,true);await drain();const receipt=await act(1,b,'receipt',{eventId:post.eventId});assert.equal(receipt.complete,true);assert.equal(receipt.peers.length,2);for(const [host,user]of [[0,a],[1,b]]){const history=await act(host,user,'history');assert.equal(history.items.length,1);assert.equal(history.items[0].text,'A real HTTP contribution from another host');}
  const capability=await act(1,b,'capability');assert.equal(new URL(capability.endpoint).origin,origins[0]);const info=await j(0,'/api/conversations/'+a.owner+'/'+room.id,{bearer:capability.secret});assert.equal(info.members.length,2);assert.ok(!JSON.stringify(info).includes(capability.secret));
  // This fixture configures two localhost servers. It is not evidence of an
  // independently hosted provider or production federation conformance.

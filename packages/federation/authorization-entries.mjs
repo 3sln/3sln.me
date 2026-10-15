@@ -13,12 +13,13 @@ import {fail,object,exact,https} from './schema.mjs';
 import {verifyProof,EMBED_PROOF_TYP,jktPattern} from './dpop.mjs';
 import {componentsDeclaration,COMPONENTS_PROFILE} from './components-profile.mjs';
 import {metadataClientHost,validClientSnapshot,clientSite} from './client-metadata.mjs';
+import {UUID_V4 as UUID} from '../core/primitives.mjs';
 export const ENTRY_INTENTS=['login','select-account','reauthenticate','end-session'];
 export const ENTRY_LIMITS={ttl:600000,challenge:60000,window:600000,perClient:30,perRemote:60,perClientHost:300,global:20000,challenges:3};
 export const ENTRY_SHARDS=64;
 const ALPHABET='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 const entryKeys=['clientId','redirectUri','challenge','challengeMethod','state','intent','loginHint','subjectConstraint','maxAge','requests','uiLocales','colorScheme','presentation','dpopJkt','embedJkt','delivery'];
-const ID=/^[A-Za-z0-9_-]{43}$/,UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const ID=/^[A-Za-z0-9_-]{43}$/;
 const generic=()=>fail('invalid_request','The authorization entry could not be created.');
 const expired=()=>fail('invalid_request','This sign-in expired. Start again from the application.');
 const unauthorized=()=>fail('unauthorized','Sign in to continue.');
@@ -194,7 +195,10 @@ export class AuthorizationEntries {
    if(attempt&&RELEASING.includes(error?.code))await store.transaction(async tx=>{const current=await tx.get(`entry/${hash}`);if(current?.deciding?.attempt===attempt&&!current.completed){delete current.deciding;await tx.set(`entry/${hash}`,current);}});
    throw error;
   }
-  await store.transaction(async tx=>{const current=await tx.get(`entry/${hash}`);if(current){current.completed=true;await tx.set(`entry/${hash}`,current);}});
+  // A cancel that committed while this decision was in flight already answered access_denied; the entry has one
+  // outcome, so the issued code is never delivered (it stays unredeemed and expires).
+  const cancelled=await store.transaction(async tx=>{const current=await tx.get(`entry/${hash}`);if(current?.completed)return true;if(current){current.completed=true;await tx.set(`entry/${hash}`,current);}return false;});
+  if(cancelled)expired();
   if(!attested){const {claim,...plainResult}=result;return plainResult;}
   // Attested popup: values go to the popup document only, never to a client redirect.
   const url=new URL(result.redirectUri),state=url.searchParams.get('state'),iss=url.searchParams.get('iss');

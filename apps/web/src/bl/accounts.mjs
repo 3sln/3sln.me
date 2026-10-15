@@ -8,7 +8,13 @@ const invalid=()=>Error('The account list could not be loaded.');
 // Inventory is a first-party projection: handles and non-secret selectors only.
 // The picker proof stays in browser memory, never in rendered state.
 export async function accountInventory(r,ctx,ticket=generation(r)){
- const inventoryTicket=crypto.randomUUID();publish(r,ctx,{accountsTicket:inventoryTicket,accountsLoading:true});const result=await r.api.get('/api/auth/accounts',{context:null});if(ticket!==generation(r)||state(r).offline||state(r).accountsTicket!==inventoryTicket)return;
+ const inventoryTicket=crypto.randomUUID();publish(r,ctx,{accountsTicket:inventoryTicket,accountsLoading:true});
+ // However this request ends (superseded by a transition, offline, or failed after one), the loading
+ // indicator it raised is lowered unless a newer inventory request owns it.
+ try{await loadInventory(r,ctx,ticket,inventoryTicket);}finally{if(state(r).accountsTicket===inventoryTicket&&state(r).accountsLoading)publish(r,ctx,{accountsLoading:false});}
+}
+async function loadInventory(r,ctx,ticket,inventoryTicket){
+ const result=await r.api.get('/api/auth/accounts',{context:null});if(ticket!==generation(r)||state(r).offline||state(r).accountsTicket!==inventoryTicket)return;
  if(!Array.isArray(result.accounts)||result.accounts.length>20||typeof result.revision!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(result.revision))throw invalid();
  const seen=new Set(),accounts=result.accounts.map(entry=>{const a=entry?.account;if(!a||!uuid.test(a.id)||seen.has(a.id)||typeof a.handle!=='string'||!a.handle||a.handle.length>128||typeof entry.sessionContext!=='string'||entry.sessionContext.length>128||!Number.isSafeInteger(entry.expiresAt))throw invalid();seen.add(a.id);return {account:{id:a.id,handle:a.handle},sessionContext:entry.sessionContext,expiresAt:entry.expiresAt};});
  r.browser.storeSecret('accountPickerToken',typeof result.pickerToken==='string'&&result.pickerToken.length<=8192?result.pickerToken:null);r.browser.storeSecret('accountPickerIssuedAt',Date.now());

@@ -1,9 +1,9 @@
 import { assertFields, validateText } from './normalization.mjs';
 import { normalizeHandle } from '../identity/handles.mjs';
+import { UUID_V4 as uuid } from '../core/primitives.mjs';
 
 export const MAX_IDENTITY_BACKUP_BYTES = 16 * 1024;
 const te = new TextEncoder();
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 function invalid(message = 'Invalid portable identity backup.') { throw new TypeError(message); }
 function enc(bytes) { return btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, ''); }
 function dec(value, length, max = length) {

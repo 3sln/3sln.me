@@ -1,6 +1,7 @@
 import { emailLogoBase64 } from '../../packages/branding/email-logo.mjs';
 import { createLocalization } from '../../packages/i18n/index.mjs';
 import { waitlistMailLocalization } from '../../packages/i18n/waitlist-mail.mjs';
+import { UUID } from '../../packages/core/primitives.mjs';
 
 const SENDER_ROLES = Object.freeze({
   link: 'verify', login: 'login', reminder: 'notify',
@@ -96,7 +97,7 @@ export function mailTransport(env = {}) {
   };
   const notice = (templates, from, { email, type, days, owner }) => {
     if (!Object.hasOwn(templates, type)) throw new Error('Invalid mail notice type.');
-    if (owner !== undefined && (typeof owner !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(owner))) throw new Error('Invalid mail notice account.');
+    if (owner !== undefined && (typeof owner !== 'string' || !UUID.test(owner))) throw new Error('Invalid mail notice account.');
     const [subject, text] = templates[type];
     if ((subject.includes('{days}') || text.includes('{days}')) && (!Number.isInteger(days) || days < 1 || days > 3650)) throw new Error('Invalid account notice deadline.');
     const format = value => value.replaceAll('{brand}', () => brand).replaceAll('{days}', () => String(days));

@@ -191,11 +191,11 @@ test('sweep is bounded, leased, resumable after a crash and arms accounts withou
  const repository={async lifecycleCandidates({cursor,limit}){const start=cursor?Number(cursor):0,slice=ids.slice(start,start+Math.min(limit,3));if(fail&&start>=3)throw new Error('shard unavailable');return {accounts:slice.map((id,i)=>({id,status:i===1?'pending':'active'})),cursor:start+slice.length<ids.length?String(start+slice.length):null};}};
  const accounts={get:id=>({invoke:async({method,args})=>{assert.equal(method,'lifecycleTick');assert.equal(args[0],id);ticks.push(id);return {mode:'live',action:'wait'};}})};
  assert.deepEqual(await new LifecycleSweep({metadata:db,repository,accounts,config:{}}).run(),{mode:'off'});
- const sweep=new LifecycleSweep({metadata:db,repository,accounts,config:{LIFECYCLE_ENABLED:'true',LIFECYCLE_SWEEP_BATCH:'4'}});
+ /* Fixed sweep clock: its time budget and lease expiry never depend on test speed. */const sweepNow=Date.UTC(2026,9,14,12),sweep=new LifecycleSweep({metadata:db,repository,accounts,config:{LIFECYCLE_ENABLED:'true',LIFECYCLE_SWEEP_BATCH:'4'},clock:()=>sweepNow});
  fail=true;await assert.rejects(sweep.run());assert.equal((await sweep.status()).running,false);assert.equal((await db.get('lifecycle/sweep-v1')).cursor,'3');
  fail=false;const second=await sweep.run();assert.equal(second.complete,true);assert.equal((await db.get('lifecycle/sweep-v1')).passes,1);
  assert.equal(ticks.length,5);assert.equal(new Set(ticks).size,5);assert(await db.getAlarm());
- await db.put('lifecycle/sweep-v1',{...await db.get('lifecycle/sweep-v1'),lease:{id:'other',until:Date.now()+1000}});assert.equal((await sweep.run()).skipped,'running');
+ await db.put('lifecycle/sweep-v1',{...await db.get('lifecycle/sweep-v1'),lease:{id:'other',until:sweepNow+1000}});assert.equal((await sweep.run()).skipped,'running');
 });
 
 test('review follow-ups: an unenforced period restarts notices; tombstones hold in every mode; payment lifts suspension at once',async t=>{

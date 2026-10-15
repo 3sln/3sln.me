@@ -21,7 +21,7 @@ export function fakeEgress(documents={}){
  return {fetch,calls};
 }
 export async function cimdProvider({documents={[clientId]:metadata()},enabled=true,blocked=new Set(),handles=['alex'],withReviewed=true}={}){
- let offset=0;const clock=()=>Date.now()+offset;
+ const start=Date.now();let offset=0;const clock=()=>start+offset;
  const owners=new Map(handles.map(handle=>[randomUUID(),{handle,status:'active',sessions:new Map()}]));
  const config={APP_ORIGIN:issuer,FEDERATION_ENABLED:'true',FEDERATION_ENTRY_ENABLED:'true',CLIENT_METADATA_ENABLED:enabled?'true':'false',FEDERATION_REFRESH_ENABLED:'true',FEDERATION_CLIENTS:JSON.stringify(withReviewed?[{id:reviewedId,name:'Reviewed app',origin:reviewedOrigin,redirectUris:['https://reviewed.example/callback']}]:[]),FEDERATION_SCHEMAS:'{}',KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64')};
  const egress=fakeEgress(documents),clients=federationClients(config);

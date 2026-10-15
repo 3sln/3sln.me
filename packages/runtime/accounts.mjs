@@ -46,6 +46,7 @@ import {BillingService} from '../billing/index.mjs';
 import {validateContent} from '../messaging/content.mjs';
 import {vectorBinding} from './semantic-routing.mjs';
 import {SearchService,SqliteSearchIndex,MetadataSearchOutbox,enqueueSearchEvent,searchRevisionKey,messageSearchDocument,extractSearchText,planBudget,DurableSemanticBudget,SearchMutationGate,WorkersAIEmbeddingAdapter,VectorizeSearchIndex,SEMANTIC_MODEL,SEMANTIC_DIMENSIONS} from '../search/index.mjs';
+import { UUID_V4 } from '../core/primitives.mjs';
 
 export class IdentityRepository {
   async shardRead(...args){return new IdentityShardStorage(this.metadata,this.config).read(...args);}
@@ -151,7 +152,7 @@ export class IdentityRepository {
 }
 
 export class FixedWindowGuard {
-  constructor({metadata,config={}}){this.metadata=metadata;this.config=config;this.population=new ActivePopulationStorage({metadata});this.waitlist=new WaitlistService({metadata,config});}
+  constructor({metadata,config={},clock=()=>Date.now()}){this.metadata=metadata;this.config=config;this.clock=clock;this.population=new ActivePopulationStorage({metadata});this.waitlist=new WaitlistService({metadata,config});}
   async populationAction(method,input){if(!['initialize','touch','summary','claimCensus','finishCensus','baseline','invalidate'].includes(method))throw new Error('Invalid population operation');const result=await this.population[method](input);if(method==='baseline'&&!result.complete&&!await this.metadata.getAlarm()){await this.metadata.put('population/census-wake',true);await this.metadata.setAlarm(Date.now()+1000);}return result;}
   async waitlistAction(method,input){if(!['prepare','confirm','leave'].includes(method))throw new Error('Invalid waitlist operation');return this.waitlist[method](input);}
   async consumeSignup(options){return consumeSignupCapacity(this.metadata,options);}
@@ -171,11 +172,14 @@ export class FixedWindowGuard {
     }
     if(lifetime)return this.metadata.transaction(async tx=>{const stored=await tx.get('lifetime'),count=stored===undefined?0:stored;if(!Number.isSafeInteger(count)||count<0||count+units>limit)return false;await tx.put('lifetime',count+units);return true;});
     return this.metadata.transaction(async tx=>{
-      const now=Date.now();let value=await tx.get('window');if(!value||value.end<=now)value={count:0,end:now+windowMs};
+      const now=this.clock();let value=await tx.get('window');
+      // Rollback shorter than one window keeps counting; a window starting more than a window ahead came
+      // from a clock glitch that was later corrected and must not lock the key for the glitch's duration.
+      if(!value||value.end<=now||value.end>now+2*windowMs)value={count:0,end:now+windowMs};
       if(!Number.isSafeInteger(value.count)||value.count<0||value.count+units>limit)return false;value.count+=units;await tx.put('window',value);await tx.setAlarm(value.end);return true;
     });
   }
-  async alarm(){if(await this.metadata.get('population/census-v1')||await this.metadata.get('population/census-wake')){if(this.config.ACTIVE_POPULATION_CENSUS)try{await this.config.ACTIVE_POPULATION_CENSUS();}catch{await this.metadata.setAlarm(Date.now()+60000);}}if(await this.metadata.get('waitlist/counts'))await this.waitlist.cleanupExpired();await this.metadata.transaction(async tx=>{const window=await tx.get('window');if(window&&window.end<=Date.now())await tx.delete('window');else if(window)await tx.setAlarm(window.end);});}
+  async alarm(){if(await this.metadata.get('population/census-v1')||await this.metadata.get('population/census-wake')){if(this.config.ACTIVE_POPULATION_CENSUS)try{await this.config.ACTIVE_POPULATION_CENSUS();}catch{await this.metadata.setAlarm(Date.now()+60000);}}if(await this.metadata.get('waitlist/counts'))await this.waitlist.cleanupExpired();await this.metadata.transaction(async tx=>{const window=await tx.get('window');if(window&&window.end<=this.clock())await tx.delete('window');else if(window)await tx.setAlarm(window.end);});}
 }
 
 function serializable(value){if(value instanceof Uint8Array)return {$bytes:Array.from(value)};if(Array.isArray(value))return value.map(serializable);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,serializable(v)]));return value;}
@@ -267,7 +271,7 @@ export class AccountController {
     try{await this.config.BEAM_RELAY_BUDGET.commit(reservation);await this.metadata.transaction(async tx=>{const current=await tx.get('beam/offer/'+id);if(!current)throw new BeamError('beam_expired','This transfer has expired.',410);this.beams.authorize(current,actor);if(current.state!=='accepted')throw new BeamError('beam_not_accepted','This transfer is no longer accepted.',409);current.iceIssued[role]=true;await tx.put('beam/offer/'+id,current);});}catch(error){for(const username of new Set(issued.iceServers.map(s=>s.username).filter(Boolean)))try{await adapter.revoke(username);}catch{}throw error;}return {...issued,relayEnabled:true};
   }
   async ensureBuiltinStorage(owner){
-    const pointerKey='builtin/hosted-resource-v1',contract='https://3sln.me/artefacts/contracts/object-storage/v1',uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+    const pointerKey='builtin/hosted-resource-v1',contract='https://3sln.me/artefacts/contracts/object-storage/v1',uuid=UUID_V4;
     const unavailable=()=>{throw new StorageError('storage_unavailable','The built-in storage binding needs repair.',503);};
     const valid=resource=>resource&&uuid.test(resource.id)&&resource.owner===owner&&resource.provider==='hosted'&&resource.builtin===true&&resource.status==='connected'&&resource.kind===undefined&&!Object.hasOwn(resource,'secret')&&resource.contracts?.includes(contract)&&resource.capabilities?.read===true&&resource.capabilities?.write===true;
     return this.metadata.transaction(async tx=>{

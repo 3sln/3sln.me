@@ -4,6 +4,7 @@
 // author:null branch. Pure: no storage, network or HTTP framing.
 import { fail, canonical, digest, fromBase64url, base64url, textEncoder, mimeValid } from './store.mjs';
 import { validTagIds } from './tags.mjs';
+import { isUUID as uuid } from '../core/primitives.mjs';
 
 export const CONTACT_DELIVERY_CONTRACT = 'https://3sln.me/artefacts/contracts/contact-delivery/v1';
 export const CONVERSATION_V2_CONTRACT = 'https://3sln.me/artefacts/contracts/conversation/v2';
@@ -13,7 +14,6 @@ export const ADMISSION_DOMAIN = 'bindle-contact-admission-v1\n';
 export const DELIVERY_LIMITS = Object.freeze({ maxRequestBytes: 1500000, maxEnvelopeBytes: 65536, maxBodyBytes: 1048576, maxOperationAgeMs: 86400000, maxFutureSkewMs: 60000, minReceiptRetentionMs: 172800000, maxBootstrapMs: 604800000 });
 const ES256 = { name: 'ECDSA', hash: 'SHA-256' };
 const bad = () => fail('invalid_envelope');
-const uuid = v => typeof v === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v);
 // Stricter than the schema's C0/DEL pattern: all Cc, line/paragraph separators
 // and bidi overrides/isolates are refused in signed display strings.
 const controls = /[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;

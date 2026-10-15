@@ -52,8 +52,9 @@ test('resolution: one bounded GET, cached under the exact ID; static registratio
  // max-age is clamped to 24 hours.
  advance(86_400_000+1);await d.resolve(clientId);assert.equal(egress.calls.length,2);
  // Concurrent resolutions share one request.
- const {directory:shared,egress:once}=directory({[clientId]:async()=>{await new Promise(resolve=>setTimeout(resolve,20));return new Response(body(metadata()),{status:200,headers:{'Content-Type':'application/json'}});}});
- await Promise.all([shared.resolve(clientId),shared.resolve(clientId),shared.resolve(clientId)]);assert.equal(once.calls.length,1);
+ let open;const gate=new Promise(resolve=>open=resolve);
+ const {directory:shared,egress:once}=directory({[clientId]:async()=>{await gate;return new Response(body(metadata()),{status:200,headers:{'Content-Type':'application/json'}});}});
+ const resolving=Promise.all([shared.resolve(clientId),shared.resolve(clientId),shared.resolve(clientId)]);open();await resolving;assert.equal(once.calls.length,1);
 });
 
 test('hostile responses: redirects, wrong types, oversize, slow, malformed and mismatched documents are refused and briefly negatively cached',async()=>{

@@ -6,6 +6,7 @@ import {hex} from './boot.mjs';
 const fail=(code,message,status=409)=>{throw Object.assign(new Error(message),{code,status});};
 const KEY=/^(?:boot\/(?:principal|sessions)|boot-token\/[a-f0-9]{64}|catalog|reservation\/[a-z0-9][a-z0-9_-]{2,31}|claim\/[a-f0-9-]{36}|claim-name\/[a-z0-9][a-z0-9_-]{2,31}|principal\/[a-f0-9-]{36}|client-block\/[a-z0-9.-]{1,253})$/;
 const LIST=/^(?:audit\/|principal\/|reservation\/|claim\/|client-block\/)$/;
+// Not core/primitives canonical: undefined encodes as null here, and the audit hash chain depends on it.
 const canonical=value=>Array.isArray(value)?'['+value.map(canonical).join(',')+']':value&&typeof value==='object'?'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}':JSON.stringify(value??null);
 const auditHash=async(prev,entry)=>hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(prev+'\n'+canonical(entry))));
 const pad=seq=>String(seq).padStart(12,'0');
@@ -20,7 +21,9 @@ export class AdminStorage {
   if(rate&&(typeof rate.key!=='string'||!/^[a-z0-9:-]{1,80}$/.test(rate.key)||!Number.isInteger(rate.limit)||!Number.isSafeInteger(rate.windowMs)||!Number.isSafeInteger(rate.now)))throw new TypeError('Invalid admin rate');
   return this.metadata.transaction(async tx=>{
    for(const [key,revision] of Object.entries(expect)){const old=await tx.get('admin/'+key);if((old?.revision??null)!==revision)return {committed:false,conflict:key};}
-   if(rate){const key='admin/rate/'+rate.key,window=await tx.get(key),fresh=!window||window.start+rate.windowMs<=rate.now||window.start>rate.now,next=fresh?{start:rate.now,count:1}:{start:window.start,count:window.count+1};if(next.count>rate.limit)return {committed:false,rateLimited:true};await tx.put(key,next);}
+   // A caller clock slightly behind the window start (skewed isolates) stays in the
+   // window; only a step back of a whole window starts afresh, so it cannot lock out forever.
+   if(rate){const key='admin/rate/'+rate.key,window=await tx.get(key),fresh=!window||window.start+rate.windowMs<=rate.now||window.start-rate.now>=rate.windowMs,next=fresh?{start:rate.now,count:1}:{start:window.start,count:window.count+1};if(next.count>rate.limit)return {committed:false,rateLimited:true};await tx.put(key,next);}
    const stored={};
    for(const [key,value] of Object.entries(writes)){const old=await tx.get('admin/'+key);
     if(key.startsWith('boot-token/')){if(value===null||old?.phase==='consumed'||!['reserved','consumed'].includes(value?.phase)||old&&value.phase!=='consumed'||!old&&value.phase!=='reserved')fail('boot_token_consumed','This boot token was already used.');}

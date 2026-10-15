@@ -1,10 +1,4 @@
-import {Query} from '../shared/stack.mjs';
 import {OwnerFlow,snapshot,publish} from './owner-flow.mjs';
-export class MCPState extends Query {
- static deps=['state'];
- boot({state},{notify,engineFeed}){this.feed=engineFeed;this.update=()=>{const s=state.snapshot();notify(s.mcpRequest);if(s.route.kind==='mcp-consent'&&s.session?.account&&!s.offline&&!s.busy&&!s.mcpRequest)engineFeed.dispatchEvent(new Event('mcp-request-opened'));};engineFeed.addEventListener('browser-state-updated',this.update);this.update();}
- kill(){this.feed.removeEventListener('browser-state-updated',this.update);}
-}
 export class LoadMCPRequest extends OwnerFlow {
  mutation=false;
  async perform(r,ctx){const requestId=r.browser.secret('requestId');publish(r,ctx,{mcpRequest:{phase:'loading'},error:''});if(!requestId){publish(r,ctx,{mcpRequest:{phase:'error'},error:'This connection request is missing. Return to the requesting app and try again.'});return;}try{const request=await r.api.get('/api/mcp/requests/'+encodeURIComponent(requestId));publish(r,ctx,{mcpRequest:{phase:'ready',request}});}catch{publish(r,ctx,{mcpRequest:{phase:'error'},error:'This connection request expired or could not be loaded. Return to the requesting app to start again.'});}}

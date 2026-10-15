@@ -13,7 +13,7 @@ function fixture(worker=false){
  const storage=new AdminStorage(db()),store=worker?remoteAdminStore(async(method,args)=>structuredClone(await storage.invoke(method,structuredClone(args)))):storage,guard=new FixedWindowGuard({metadata:budget});
  const webauthn={registrationOptions:async()=>({challenge:'reg-challenge'}),verifyRegistration:async({response})=>{if(response?.ok!==true)throw Error('bad');return {id:response.id,publicKey:'pk',counter:0};},authenticationOptions:async()=>({challenge:'auth-challenge'}),verifyAuthentication:async({response})=>{if(response?.ok!==true)throw Error('bad');return {counter:1,backedUp:false};}};
  let admin;const passwordHasher={hash:async x=>'hash:'+x,verify:async(x,h)=>h==='hash:'+x},rateLimiter={check:async()=>true};
- const onboarding=onboardingPort({config,repository,authority:{consumeSignup:(_,input)=>guard.consumeSignup(input)},clock:()=>now,runtimeName:(name,digest)=>admin.runtimeName(name,digest)});
+ const onboarding=onboardingPort({config,repository,authority:{consumeSignup:(_,input)=>guard.consumeSignup(input)},clock:()=>now,runtimeName:(name,digest)=>admin.runtimeName(name,digest),redeemName:(name,digest)=>admin.redeemName(name,digest)});
  const identity=new IdentityService({repository,onboarding,clock:()=>now,reservedHandle:name=>admin.isReserved(name),config:{...config,origin,rpID:'admin.example',termsVersion:'v1',requireReachability:false},turnstile:{verify:async()=>true},rateLimiter,webauthn,passwordHasher,paidHandleEligibility:async()=>true});
  admin=new AdminService({store,identity,onboarding,webauthn,passwordHasher,rateLimiter,clock:()=>now,config});
  const ctx=(extra={})=>({origin,remoteIP:'192.0.2.9',...extra});
@@ -28,19 +28,14 @@ function fixture(worker=false){
 }
 const both=(title,body)=>{for(const worker of [false,true])test(`${worker?'Worker-style':'Node SQLite'}: ${title}`,async()=>{const f=fixture(worker);try{await body(f);}finally{f.close();}});};
 
-test('boot tokens match the configured digest in constant time and validate issuer, purpose and mint window',async()=>{
+// Window, skew and typed-claim edges live in admin-engine-edges.test.mjs.
+test('boot tokens match the configured digest (case-insensitively) in constant time before any claim parsing',async()=>{
  const token=mintBootToken(origin,{now:start}),digest=await bootTokenDigest(token),config={APP_ORIGIN:origin,BOOTSTRAP_TOKEN_SHA256:digest.toUpperCase()};
  assert.equal((await verifyBootToken(token,config,{now:start+60000})).digest,digest);
  const calls=[];const spy=(a,b)=>{calls.push([a.length,b.length]);return false;};
  for(const other of [mintBootToken(origin,{now:start}),token.slice(0,-1)+(token.at(-1)==='A'?'B':'A')])await assert.rejects(verifyBootToken(other,config,{now:start,compare:spy}),{code:'invalid_boot_token'});
  assert.deepEqual(calls,[[64,64],[64,64]]);
- await assert.rejects(verifyBootToken(token,{...config,APP_ORIGIN:'https://other.example'},{now:start}),{code:'invalid_boot_token'});
- await assert.rejects(verifyBootToken(token,config,{now:start+1800001}),{code:'invalid_boot_token'});
- await assert.rejects(verifyBootToken(token,config,{now:start-120001}),{code:'invalid_boot_token'});
- assert.equal((await verifyBootToken(token,config,{now:start-119000})).claims.ts,start);
  await assert.rejects(verifyBootToken(token,{APP_ORIGIN:origin},{now:start}),{code:'boot_unavailable'});
- const forged='boot1.'+encode(new TextEncoder().encode(JSON.stringify({v:1,iss:origin,purpose:'login',ts:start,nonce:encode(new Uint8Array(16)),secret:encode(new Uint8Array(32))})));
- await assert.rejects(verifyBootToken(forged,{APP_ORIGIN:origin,BOOTSTRAP_TOKEN_SHA256:await bootTokenDigest(forged)},{now:start}),{code:'invalid_boot_token'});
 });
 
 both('a boot token is used exactly once across claim and restore, including concurrent races',async f=>{

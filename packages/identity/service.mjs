@@ -116,18 +116,22 @@ export class IdentityService {
   }
   async signup(input, context) {
     await this.guard('signup', input, context);
-    if(!this.repository.allocateFreeHandle)handle(input.handle);
+    // Portable repositories without an allocator keep the canonical handle, so
+    // case/confusable variants cannot register twice or strand a login.
+    const requestedHandle=this.repository.allocateFreeHandle?input.handle:handle(input.handle);
     if (input.termsAccepted !== true || input.termsVersion !== this.config.termsVersion) fail('terms_required', 'Agree to the current account terms.');
     if (!['passkey', 'password'].includes(input.method)) fail('invalid_method');
     const selectedPassword = input.method === 'password' ? password(input.password) : null;
     const signupPlan=input.signupPlan??'free';if(!['free','paid','plus','ultra'].includes(signupPlan))fail('invalid_plan','Choose a supported signup plan.');
     if(signupPlan!=='free'&&(this.config.paidSignupEnabled!==true||!this.setupBilling))throw Object.assign(new IdentityFault('paid_signup_unavailable','Paid signup is not available.'),{status:503});
-    if (!this.repository.allocateFreeHandle&&await this.repository.findByHandle(input.handle)) fail('handle_unavailable', 'Choose another account handle.');
+    if (!this.repository.allocateFreeHandle&&await this.repository.findByHandle(requestedHandle)) fail('handle_unavailable', 'Choose another account handle.');
     // Global/daily creation capacity is reserved only for a valid proof and
     // complete valid signup, never for anonymous CAPTCHA or malformed attempts.
-    if (!await this.rateLimiter.check({ phase: 'admitted', operation: 'signup', signupKind:signupPlan==='free'?'free':'paid',remoteIP: context.remoteIP, region:context.region, handle: input.handle })) fail('rate_limited', 'Account creation is limited for this network or region. Please try again in a few hours.');
     const id=this.crypto.id(),assignmentId=this.crypto.id();
-    const allocatedHandle=this.repository.allocateFreeHandle?await this.repository.allocateFreeHandle(input.handle,id,assignmentId):input.handle;
+    // The new account ID is the admission receipt: a retried capacity claim for
+    // this signup spends at most one unit.
+    if (!await this.rateLimiter.check({ phase: 'admitted', operation: 'signup', signupKind:signupPlan==='free'?'free':'paid',remoteIP: context.remoteIP, region:context.region, handle: input.handle, admissionId:id })) fail('rate_limited', 'Account creation is limited for this network or region. Please try again in a few hours.');
+    const allocatedHandle=this.repository.allocateFreeHandle?await this.repository.allocateFreeHandle(input.handle,id,assignmentId):requestedHandle;
     const account = { id, assignmentId, nameAssignmentId:assignmentId, revision: 0, handle: allocatedHandle, status: 'pending',
       admission:{version:1,kind:signupPlan==='free'?'free':'paid',plan:signupPlan,...signupPlan==='free'?{}:{incarnation:this.crypto.id(),checkoutStartUntil:this.clock()+86400000,initialPaymentRequired:true}},
       createdAt: this.clock(), lastActiveAt: this.clock(), termsVersion: this.config.termsVersion,
@@ -388,7 +392,7 @@ export class IdentityService {
   }
   async revokeOtherSessions(input, context) {
     const { account, session } = await this.recent(context); const revision = account.revision;
-    const count = account.sessions.length - 1; account.sessions = [session]; this.audit(account, 'other-device-sessions-revoked');
+    const count = account.sessions.filter(s => s !== session && s.expiresAt > this.clock()).length; account.sessions = [session]; this.audit(account, 'other-device-sessions-revoked');
     await this.save(account, revision); return { revoked: count };
   }
   deviceFlow() { return this.deviceLogin ||= new DeviceLogin(this, IdentityFault); }

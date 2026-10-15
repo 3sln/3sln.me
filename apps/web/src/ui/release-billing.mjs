@@ -55,7 +55,7 @@ export default function billingView(state){
  const plans=billing?.plans??[];
  const subscription=billing?.subscription;
  const subscriptionStatus={active:'Active',canceled:'Canceled',past_due:'Payment overdue',unpaid:'Payment overdue',trialing:'Trial',incomplete:'Awaiting payment'}[subscription?.status]??'Pending confirmation';
- return h('div',pageHeader('Storage & billing','A little room now. More room when you need it.',btn([icon('rules'),'Refresh status'],{kind:'load-billing'},'button secondary',state.billingLoading||state.offline)),
+ return h('div',pageHeader('Storage & billing','A little room now. More room when you need it.',btn([icon('refresh'),'Refresh status'],{kind:'load-billing'},'button secondary',state.billingLoading||state.offline)),
   billingChangeStatus(state),planChangeReview(state),
   storage?h('section',storageMeter(state),storage.overLimit?h('p','Your space is full. You can still read, export, and delete your content. Remove some content or choose more storage to add new items.').classes('alert','warning').attrs({role:'status'}):null,h('div',...[
    ['Messages',storage.messagesBytes,storage.messageCount],['Hosted files',storage.objectsBytes,storage.objectCount]

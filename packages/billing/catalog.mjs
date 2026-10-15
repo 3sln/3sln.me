@@ -1,4 +1,5 @@
 // Decimal GB. Economics and production launch remain provisional in DEVLOG.md.
+import {UUID} from '../core/primitives.mjs';
 export const BILLING_PLANS = Object.freeze({
   free: Object.freeze({id:'free',name:'Free',storageBytes:500_000_000,annualAmount:0,currency:'usd'}),
   paid: Object.freeze({id:'paid',name:'Paid',storageBytes:5_000_000_000,annualAmount:500,currency:'usd'}),
@@ -9,7 +10,7 @@ export const BILLING_STATE_KEY = 'billing/state';
 export class BillingError extends Error {
   constructor(code,message,status=400){super(message);this.name='BillingError';this.code=code;this.status=status;}
 }
-export function assertOwner(owner){if(typeof owner!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(owner))throw new BillingError('invalid_owner','An account UUID is required.');return owner;}
+export function assertOwner(owner){if(typeof owner!=='string'||!UUID.test(owner))throw new BillingError('invalid_owner','An account UUID is required.');return owner;}
 export function billingEnabled(config){return config.BILLING_ENABLED==='true';}
 export function productIds(config){return {paid:config.POLAR_PRODUCT_ID_PAID,plus:config.POLAR_PRODUCT_ID_PLUS,ultra:config.POLAR_PRODUCT_ID_ULTRA};}
 export function metadataPrefix(config){const prefix=config.POLAR_METADATA_PREFIX??'3sln_me_';if(typeof prefix!=='string'||! /^[A-Za-z0-9][A-Za-z0-9_]{0,25}_$/.test(prefix))throw new BillingError('billing_unconfigured','Billing metadata prefix is invalid.',503);return prefix;}

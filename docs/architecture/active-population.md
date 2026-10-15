@@ -1,6 +1,6 @@
 # Active population for developer contact issuance
 
-Provisional implementation, 2026-10-13. Reviewer: __________ Date: __________ Outcome: __________.
+Provisional implementation, 2026-10-13. The policy now feeds the conditional developer-contact link's send-time check rather than daily grant issuance. Reviewer: __________ Date: __________ Outcome: __________.
 
 The working definition is authenticated owner use within the last 30 days. This interprets the user's “active users” threshold as monthly activity, not lifetime signup stock. `DEVELOPER_CONTACT_ACTIVE_THRESHOLD` defaults to 1500: below it the policy permits all active owners to request the daily developer contact; at or above it issuance requires the independently checked paid tier. This source does not revoke existing links or run on message receipt. Product confirmation of the definition remains unsigned.
 

@@ -1,7 +1,7 @@
 import {BillingError,BILLING_STATE_KEY,assertOwner,validPlanParameters,entitlementFromState,metadataPrefix} from './catalog.mjs';
 import {canonical,digest} from '../messaging/store.mjs';
+import {isUUIDv4 as uuid} from '../core/primitives.mjs';
 const LOCK='billing/change-lock',LAST='billing/change-last',PREFIX='billing/change/',GRACE=900000;
-const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
 const fail=(code,message,status=409)=>{throw new BillingError(code,message,status);};
 const bounded=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(value);
 const rank={paid:1,plus:2,ultra:3};

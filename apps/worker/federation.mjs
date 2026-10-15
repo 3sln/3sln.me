@@ -4,6 +4,7 @@ import {ShardedIdentityRepository} from '../../packages/runtime/identity-shards.
 import {federationControllerOptions,federationEntries,federationAuthority,federationEntriesCleanup,ENTRY_METHODS,FEDERATION_LAYOUT} from '../../packages/runtime/federation.mjs';
 import {ENTRY_SHARDS} from '../../packages/federation/authorization-entries.mjs';
 import {federationRemote} from '../../packages/federation/runtime.mjs';
+import {UUID_V4} from '../../packages/core/primitives.mjs';
 export {federationMetadata,federationRemote} from '../../packages/federation/runtime.mjs';
 const METHODS=['ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','dpopNonce'];
 /** Each UUID addresses independent permanent preferences, grants and journals.
@@ -18,7 +19,7 @@ export class FederationObject extends DurableObject {
  async invoke(method,args=[],owner){
   if(!METHODS.includes(method))return {ok:false,error:{code:'unsupported_method',message:'Unsupported federation operation.'}};
   try{
-   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(owner)||this.owner&&this.owner!==owner||this.entriesPromise)throw Object.assign(new Error('Invalid federation account locator.'),{code:'forbidden'});
+   if(!UUID_V4.test(owner)||this.owner&&this.owner!==owner||this.entriesPromise)throw Object.assign(new Error('Invalid federation account locator.'),{code:'forbidden'});
    if(!this.controllerPromise){const persisted=await this.storage.get('@federation-owner');if(persisted&&persisted!==owner||await this.storage.get('@federation-entries'))throw Object.assign(new Error('Invalid federation account locator.'),{code:'forbidden'});this.owner=owner;if(!persisted)await this.storage.put('@federation-owner',owner);this.controllerPromise=this.compose(owner);}
    const result=await(await this.controllerPromise)[method](...args);if(method!=='cleanup'&&!['ready','manifest'].includes(method)&&await this.storage.getAlarm()===null)await this.storage.setAlarm(Date.now()+600000);return {ok:true,result};
   }catch(error){return {ok:false,error:{code:error.code??'temporarily_unavailable',message:error.code?error.message:'Federation operation could not be completed.',status:error.status,retryAfter:error.retryAfter}};}

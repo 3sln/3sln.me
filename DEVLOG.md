@@ -1528,3 +1528,104 @@ Server work remaining:
 - possibly one event stream per instance.
 
 Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Identity/access test audit and engine-level chaos
+
+[Audit](docs/release/test-audit-identity.md) classified about 60 identity-domain test files by level. Changes:
+- Removed 7 real-time waits (sleeps, timeouts, a flaky DPoP edge) in favor of events, mock timers or fixed clocks.
+- Removed 2 redundant tests.
+- Sped up real-Argon2 recovery tests from 3.5 s to 1.1 s.
+- Added about 80 engine-level edge, contention, fault and scaling tests, deterministic per seed and passing at five seed bases.
+
+Shared helper `tests/helpers/chaos.mjs`:
+- `createRandom`;
+- `forEachSeed`, which names the failing seed and replays via `CHAOS_SEED`;
+- `createScheduler`;
+- `injectFaults` (throw, partial commit, duplicate, timeout);
+- `fakeClock`.
+
+Eight defects found and fixed:
+- a redelivered shard prepare misreported as a conflict;
+- a repository without a handle allocator stored raw-case handles, so case-variant duplicates were possible;
+- the revoked-session count included expired sessions;
+- cancel racing a decision produced a double entry outcome;
+- 1 ms skew reset the admin rate window;
+- concurrent claim mints both succeeded;
+- unreserve racing a mint left an orphan live claim;
+- a forward clock jump locked abuse/signup windows.
+
+Core 1275/1275 in 11.3 s, Worker 51/51. Still open: revokeClaim racing a redemption past admission (fix in progress); duplicate capacity claims spend twice (fails closed). Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Messaging/data test audit and engine-level chaos
+
+[Audit](docs/release/test-audit-messaging.md): most messaging-domain tests already call services directly (engine level). HTTP-level coverage is limited to the links, billing signature, conversation HTTP, beaming and MCP routes; `contact-preview` alone checks rendered HTML. Changes:
+- Removed wall-clock dependence from 15 tests (frozen or injected clocks, mock timers, explicit drains), saving about 2.5 s of real waiting.
+- Removed one duplicate test. Documented the remaining overlaps and internal-key assertions.
+
+Added seeded engine suites, reproducible via `CHAOS_SEED`: `engine-links`, `engine-delivery`, `engine-tags`, `engine-billing`, `engine-storage-chaos`, `engine-search`, `engine-lifecycle`, `engine-item-index`. Helpers: `tests/helpers/engine.mjs` runs operations as ngin Actions over injected providers, plus `tests/helpers/messaging-fixture.mjs`.
+
+Defect fixed: after a failed attempt whose blob cleanup also failed, retries of the same conversation event received 409 for up to 20 minutes. `packages/conversations/runtime.mjs` now releases the stale reservation first. The chaos test fails without the fix on seeds 2, 7 and 13.
+
+Core 1275, Worker 51. In progress:
+- a clock port for message-postbacks (UTC-midnight flake);
+- form-fetch timers;
+- a vacuous assertion in the portal callable-commands audit test.
+
+Reviewer ___ Date ___ Outcome ___.
+Messaging test leftovers closed: message-postbacks takes an injected clock (`FORM_POSTBACK_CLOCK`, default `Date.now`) with explicit UTC-midnight rollover tests; form-fetch deadlines use mock timers ticked after the request is in flight; the callable-commands audit test now asserts refusal-without-dispatch and single dispatch with the original token (no portal defect). Core 1276/1276.
+Admin claim revocation and redemption now serialize on the claim record via a `redeemName` hook. Exactly one wins; a redeemed claim refuses revocation (`claim_in_use`) and keeps internal provenance. A marked but unfinished redemption cannot be revoked but still expires and is swept. Free and paid signup capacity claims carry the pre-generated account ID as a receipt, so a redelivered claim spends one unit, and a mismatched receipt fails closed. Seeded tests: `claim-redemption-chaos` (30 seeds, real services) and `signup-capacity-receipts`. Core 1279/1279, Worker 51/51.
+
+## 2026-10-14 — UI polish pass
+
+- **Tokens and accessibility.** About 46 ad-hoc grey text colors (many 2.3–3.9:1) consolidated into a `--muted` token at 4.7–5.4:1 (WCAG AA). The focus-ring token raised from 2.3:1 to 3.9:1 and extended to textareas, `summary` and `[tabindex]`. Minimum text size is 10 px.
+- **Overflow fixes.** Rules cards (all widths), desktop sidebar, mobile security details, and an admin table at 320 px.
+- **Admin overview.** Stat numbers were rendered at label size because of a selector bug; fixed.
+- **Controls.** Device-page buttons grouped, "Sign out of all accounts" demoted from primary, five navigation entries given distinct icons, handles and island labels bidi-isolated.
+- **Redeemed claims.** Shown as "Redeemed {time}" with no revoke or link actions. The coordinator exposed `redeemedAt` in the admin overview (boot-admin 36/36).
+- **Evidence.** Before/after screenshot matrix (4 widths × light/dark × en/es, 452 captures) in `artifacts/browser/polish-*`. [UX/a11y review](docs/release/ui-polish-review.md): 8 findings fixed. Gates: UI-state 190/190, DOM smoke, core 1279/1279, browser gate pass.
+
+Product decisions deferred to the user:
+- dark theme for the signed-in console and docs;
+- crowded mobile top bar;
+- plural-aware Spanish keys;
+- rule status pill placement;
+- two primary buttons on the contact page;
+- signed-out device-review affordance;
+- raw shortcut `when` expressions in Preferences;
+- the `n....` sign-in placeholder;
+- "Set up" shown on unavailable resources.
+
+Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — UI chaos suites
+
+New suites:
+- `tests/browser/ui-chaos.mjs` (UI-state, happy-dom): 100 seeds × 30 actions mixing account switches, offline/online, expiry, and faulted or out-of-order replies, plus hung requests, duplicate events, recovery, admin step-up and authorization entry.
+- e2e: a fault harness `tests/e2e/chaos.mjs` with `ui-chaos`, `ui-chaos-scale` and `ui-chaos-contention`, plus `tests/browser/islands-chaos.mjs`. All are in the browser gate runner.
+
+Defects fixed:
+- raw "Failed to fetch" replaced with honest localized errors;
+- an unreadable 2xx reply was treated as a refusal, clearing billing-change state;
+- a 60 s request deadline added, so spinners no longer hang indefinitely;
+- a failed refresh after a successful save reported failure;
+- beam mutations lacked a busy guard (double submit);
+- the account list could stay "Loading…" indefinitely;
+- a wizard double-click skipped a signup question;
+- transient faults on the entry page showed "expired";
+- the contact page had no retry after a failed load;
+- a bfcache restore blanked the console (it now reloads).
+
+Gates: core 1279, UI-state 199, DOM smoke, full browser gate pass. [Flake review](docs/release/ui-chaos-review.md): 5/5 reruns per suite; four potentially vacuous assertions tightened, not yet re-reviewed. Headless Chromium only; bfcache was replayed with synthetic events.
+
+Reported: View creation lacks an idempotency key, so a retry after a lost reply duplicates the View. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Final cleanup sweep
+
+- **Dead code.** Removed unreferenced `packages/runtime/offload-metadata.mjs`, `apps/worker/transports.mjs` and `apps/web/src/release-model.mjs`, plus unused `NotificationDispatcher`, `lifecycleGated`, `MCPState`, `OBJECT_STORAGE`, `DPOP_ALGS`, `STORAGE_WRITE_LAYOUT` and five redundant generated-manifest exports.
+- **Kept.** Documented public `PART_PATTERN` and `colorTokens`; documented cost-model scripts. `app-message-key` and `prepare-argon2` are now referenced from the app-messages and recovery-file specs.
+- **Shared helpers.** UUID and canonical-JSON helpers consolidated into `packages/core/primitives.mjs` across 29 server files. Variants with different semantics were left alone, including the admin-store `canonical` that the audit hash chain depends on (commented).
+- **Event rename.** `<bindle-sign-in>` now emits `bindle-sign-in-request`.
+- **Idempotent View creation.** `POST /api/views` accepts a client `operationId` (UUID v4). A repeat returns the original View; reuse with a different definition returns `view_operation_conflict`; the 64 most recent receipts per owner are kept. The console keeps one ID per unchanged create attempt. Covered by `tests/engine-views.test.mjs` and a UI chaos case.
+- **Gate.** `embed-elements` and `provider-matrix` added to the browser gate.
+
+Tests: core 1283/1283, Worker 51/51, UI-state 200/200, DOM smoke, build and dry run pass. Browser gate: 175 of 179 passed, 4 WebKit cases skipped (WebKit unavailable here). Reviewer ___ Date ___ Outcome ___.

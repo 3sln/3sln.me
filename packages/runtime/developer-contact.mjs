@@ -2,7 +2,7 @@ import {systemBadge} from '../identity/system-bootstrap.mjs';
 import {StorageError} from '../storage/policy.mjs';
 import {key,canonical} from '../messaging/store.mjs';
 import {BILLING_STATE_KEY,entitlementFromState} from '../billing/catalog.mjs';
-const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+import {UUID} from '../core/primitives.mjs';
 export const DEVELOPER_CONTACT_TAGS=Object.freeze({free:['contact:developer','priority:free'],paid:['contact:developer','priority:paid'],plus:['contact:developer','priority:plus'],ultra:['contact:developer','priority:ultra']});
 export async function developerContactTier(controller,owner){
  await controller.warm(owner);await controller.billingRefresh(owner,{force:true});

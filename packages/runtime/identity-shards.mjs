@@ -49,6 +49,11 @@ export class IdentityShardStorage {
   async prepare(kind, id, revision, value, token) {
     return this.metadata.transaction(async tx => {
       const key = recordKey(kind,id), state = await tx.get(key) || {value:null, links:[]};
+      // A redelivered prepare (RPC retry after a lost response) answers with the
+      // outcome of its own token instead of reporting a conflict for a write
+      // that already happened.
+      if (state.pending?.token === token) return 'prepared';
+      if (state.result?.token === token) return state.result.committed ? 'committed' : false;
       if (state.pending || (revision === null ? state.value !== null : state.value?.revision !== revision)) return false;
       if (value.id !== id || value.revision !== (revision === null ? 0 : revision + 1)) return false;
       if (state.value && (kind === 'account' ? value.handle !== state.value.handle || value.assignmentId !== state.value.assignmentId || !sameSystemIdentity(value.systemIdentity,state.value.systemIdentity)||!sameOnboardingIdentity(value.onboardingIdentity,state.value.onboardingIdentity) : value.userCode !== state.value.userCode || value.expiresAt !== state.value.expiresAt)) return false;

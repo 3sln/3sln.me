@@ -1,13 +1,13 @@
 import { fail } from '../messaging/store.mjs';
 import { signContactToken } from '../messaging/contact-tokens.mjs';
 import { parseLinkQuery, parseLinkMeta, parseLinkData, metaDigest, verifyLinkSignature, replayDigest, exactMembers, exactOrigin, randomToken, base64urlRandom, plainObject, LINK_DATA_TYP, CONTACT_LINK_TYPE } from '../messaging/bindle-links.mjs';
+import { isUUID as uuid } from '../core/primitives.mjs';
 
 // Audience responses for conditional contact links (links §7.2, §7.3, §9).
 // Providers sign only claims constructed here from a parsed meta, never
 // caller-supplied bytes; owner hosts verify same-host principals only.
 const DATA = ['bindle', 'v', 'type', 'md', 'aud', 'iat', 'exp', 'iss', 'sub', 'handle', 'nonce'];
 const SKEW = 60, LIFETIME = 300;
-const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 const handleParts = (handle, iss) => { const at = typeof handle === 'string' ? handle.lastIndexOf('@') : -1, local = at > 0 ? handle.slice(0, at) : ''; return at > 0 && /^[a-z0-9][a-z0-9._-]{2,31}$/.test(local) && handle.slice(at + 1) === new URL(iss).host ? local : null; };
 
 // §9 provider checks on an unverified link: exactly one query component

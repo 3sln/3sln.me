@@ -1,4 +1,5 @@
 import { fail, key, boundedString, base64url, digest, fromBase64url } from './store.mjs';
+import { UUID_V4 } from '../core/primitives.mjs';
 
 export const defaultNotificationPreferences = () => ({
   enabled: true, push: { enabled: false, preview: false },
@@ -138,7 +139,7 @@ export class NotificationService {
 // The destination owner is a routing hint for the provider console, never authority.
 // Its account label is lock-screen visible, so it is attached only with previews on.
 export function messagePushPayload(message,preview=false,{owner,accountLabel}={}){
- const destination=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(owner??'')?owner:null;
+ const destination=UUID_V4.test(owner??'')?owner:null;
  const payload={type:'bindle-message',...destination?{owner:destination}:{},messageId:message.id,title:'New message',body:'You have an unread message.',path:'/console?'+(destination?'account='+destination+'&':'')+'message='+encodeURIComponent(message.id),actions:[]};
  if(!preview)return payload;if(destination&&typeof accountLabel==='string'&&accountLabel.length>0&&accountLabel.length<=100)payload.accountLabel=accountLabel;const summary=message.notificationSummary,p=message.appNotification;if(!summary||summary.version!==1)return payload;
  if(p){payload.sender={name:p.name,origin:p.origin};payload.title=`${p.name} (${p.origin})`;}

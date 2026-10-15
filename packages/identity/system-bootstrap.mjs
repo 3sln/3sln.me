@@ -1,7 +1,8 @@
 import {encode,decode} from './crypto.mjs';
 import {isReservedHandle,BOOT_HANDLE} from './handles.mjs';
 import {signupCapacityLimits} from '../core/abuse-policy.mjs';
-const encoder=new TextEncoder(),uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
+import {isUUID as uuid} from '../core/primitives.mjs';
+const encoder=new TextEncoder();
 const fail=(code,message,status=403)=>{throw Object.assign(new Error(message),{code,status});};
 function validEmail(value){if(typeof value!=='string'||value.length>254||! /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+$/.test(value))return false;const [local,domain]=value.split('@');return local.length<=64&&!local.startsWith('.')&&!local.endsWith('.')&&!local.includes('..')&&domain.includes('.')&&domain.split('.').every(part=>/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(part));}
 export function bootstrapClaims(value,origin,now=Date.now()){

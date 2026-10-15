@@ -19,6 +19,12 @@ function deterministicCrypto() {
     return bytes;
   } };
 }
+// Header/answer binding is a property of the AEAD construction, not of the KDF.
+// Binding tests use a fast keyed substitute; the archived vector and the
+// independent audit suite exercise real Argon2id.
+const fastOptions = { crypto: globalThis.crypto, deriveKey: async ({ password, salt, hashLength }) =>
+  new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array([...password, ...salt]))).slice(0, hashLength) };
+const fastFile = async () => encryptRecoveryFile(vector.payload, vector.questions, vector.answers, { ...fastOptions, crypto: deterministicCrypto() });
 function encode(bytes) { return Buffer.from(bytes).toString('base64url'); }
 function changeByte(encoded) {
   const bytes = Buffer.from(encoded, 'base64url'); bytes[0] ^= 1; return encode(bytes);
@@ -46,12 +52,13 @@ test('portable recovery file matches archived Argon2id/AES-GCM vector and preser
   assert(!content.includes(vector.answers[6]));
 });
 
-test('every selected answer is required and contributes to the one Argon2id key', async () => {
-  const file = vectorFile();
+test('every selected answer is required and contributes to the one derived key', async () => {
+  const file = await fastFile();
+  assert.deepEqual(await decryptRecoveryFile(file, vector.answers, fastOptions), vector.payload);
   const replacements = ['Different name', '2000-03-01', '101020003', 'AB10123', '+4412012345678', '0018', 'different private phrase'];
   for (let i = 0; i < vector.answers.length; i++) {
     const answers = [...vector.answers]; answers[i] = replacements[i];
-    await assert.rejects(decryptRecoveryFile(file, answers, options), { code: 'recovery_file_authentication_failed' });
+    await assert.rejects(decryptRecoveryFile(file, answers, fastOptions), { code: 'recovery_file_authentication_failed' });
   }
   await assert.rejects(decryptRecoveryFile(file, vector.answers.slice(1), options), /Answer every selected/);
   const empty = [...vector.answers]; empty[1] = '';
@@ -59,6 +66,7 @@ test('every selected answer is required and contributes to the one Argon2id key'
 });
 
 test('public question metadata, KDF salt, IV, ciphertext, and question order are authenticated', async () => {
+  const base = await fastFile();
   const modifications = [
     file => { file.questions[0].prompt += '!'; },
     file => { file.questions[0].hint += '!'; },
@@ -70,18 +78,18 @@ test('public question metadata, KDF salt, IV, ciphertext, and question order are
     file => { file.questions.reverse(); },
   ];
   for (const mutate of modifications) {
-    const file = vectorFile(); mutate(file);
+    const file = structuredClone(base); mutate(file);
     const answers = file.questions[0].id === 'phrase' ? [...vector.answers].reverse() : vector.answers;
     // The changed type uses a valid passphrase string so it reaches GCM verification.
     if (file.questions[0].type === 'passphrase' && file.questions[0].id === 'name') {
       const validAnswers = [...answers]; validAnswers[0] = vector.normalizedAnswers[0];
-      await assert.rejects(decryptRecoveryFile(file, validAnswers, options), { code: 'recovery_file_authentication_failed' });
+      await assert.rejects(decryptRecoveryFile(file, validAnswers, fastOptions), { code: 'recovery_file_authentication_failed' });
     } else {
-      await assert.rejects(decryptRecoveryFile(file, answers, options), { code: 'recovery_file_authentication_failed' });
+      await assert.rejects(decryptRecoveryFile(file, answers, fastOptions), { code: 'recovery_file_authentication_failed' });
     }
   }
-  const missingHint = vectorFile(); delete missingHint.questions[1].hint;
-  assert.deepEqual(await decryptRecoveryFile(missingHint, vector.answers, options), vector.payload);
+  const missingHint = structuredClone(base); delete missingHint.questions[1].hint;
+  assert.deepEqual(await decryptRecoveryFile(missingHint, vector.answers, fastOptions), vector.payload);
 });
 
 test('safe inspection copies only bounded unauthenticated public header and never derives a key', () => {

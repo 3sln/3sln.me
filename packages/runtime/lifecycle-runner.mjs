@@ -78,7 +78,6 @@ export async function lifecycleBlocked(c,method){
  if(BLOCKED.has(state.phase)&&!SUSPENDED_ALLOWED.has(method))return fault('account_suspended','This account is suspended. Sign in and confirm you are still using it to reactivate.',423);
  return null;
 }
-export function lifecycleGated(method){return method.startsWith('lifecycle');}
 
 async function armIfNeeded(c,lifecycle,owner,identity){
  const status=await lifecycle.status(owner);if(status.armed)return status;

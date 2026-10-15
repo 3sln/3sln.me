@@ -14,7 +14,7 @@ const OTHER='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 function authority(){const databases=new Map();let calls=0;return {get calls(){return calls;},databases,consume:async(key,limits)=>{calls++;if(!databases.has(key))databases.set(key,new SqliteMetadata(':memory:'));return new FixedWindowGuard({metadata:databases.get(key)}).consume(limits);},close(){for(const db of databases.values())db.close();}};}
 
 test('multi-unit fixed-window and lifetime allocation is atomic and rejects malformed accounting',async()=>{
- const db=new SqliteMetadata(':memory:');try{const guard=new FixedWindowGuard({metadata:db});
+ const db=new SqliteMetadata(':memory:');try{/* Mid-window fixed clock: the 1 s window cannot roll over between consumes. */const guard=new FixedWindowGuard({metadata:db,clock:()=>Date.UTC(2026,9,12,12,0,0,500)});
   for(const units of [0,-1,1.5,17,NaN,'2'])assert.equal(await guard.consume({lifetime:true,limit:100,units}),false);
   const results=await Promise.all(Array.from({length:12},()=>guard.consume({lifetime:true,limit:100,units:16})));assert.equal(results.filter(Boolean).length,6);assert.equal(await db.get('lifetime'),96);
   assert.equal(await guard.consume({lifetime:true,limit:100,units:4}),true);assert.equal(await guard.consume({lifetime:true,limit:100}),false);
@@ -33,7 +33,7 @@ test('owner monthly caps survive concurrency and restart while prepaid leases av
 
 test('all 16 immutable partition capacities sum to the service cap and shared callers cannot exceed a partition',async()=>{
  assert.equal(Array.from({length:16},(_,p)=>workPartitionLimit(250000,p)).reduce((a,b)=>a+b),250000);
- const service=authority(),databases=[];try{let owners=[];const wanted=await workShard(OWNER);while(owners.length<4){const owner=crypto.randomUUID();if(await workShard(owner)===wanted)owners.push(owner);}
+ const service=authority(),databases=[];try{let owners=[];const wanted=await workShard(OWNER);/* Deterministic owner sequence, filtered to the same shard. */for(let i=1;owners.length<4;i++){const owner=`00000000-0000-4000-8000-${i.toString(16).padStart(12,'0')}`;if(await workShard(owner)===wanted)owners.push(owner);}
   const budgets=await Promise.all(owners.map(async owner=>{const db=new SqliteMetadata(':memory:');databases.push(db);await db.put('owner',owner);return new AccountWorkBudget({metadata:db,authority:service,config:{SERVICE_MONTHLY_WORK_LIMIT:320},clock:()=>Date.UTC(2026,9,1)});}));
   const results=await Promise.allSettled(Array.from({length:60},(_,i)=>budgets[i%4].admit(owners[i%4])));const granted=results.filter(r=>r.status==='fulfilled').length;
   assert(granted<=20);const key=`work-v1/2026-10/${wanted}`;assert.equal(await service.databases.get(key).get('lifetime'),20);assert(results.some(r=>r.status==='rejected'&&r.reason.code==='service_work_exceeded'));

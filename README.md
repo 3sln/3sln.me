@@ -21,7 +21,7 @@ npm run dev:node
 
 Open http://localhost:8788. The Node adapter persists SQLite metadata and private blob/archive files under `.data/`. Back up its encryption key with the data. This adapter supports a single process; public proxy trust and distributed deployment need additional work. See [self-hosting](docs/self-hosting.md).
 
-`npm run dev:demo` retains the older unauthenticated in-memory consent demonstration on port3000. It is separate from the current authenticated application.
+`npm run dev:demo` retains the older unauthenticated in-memory consent demonstration on port 3000. It is separate from the current authenticated application.
 
 ## Current implementation
 
@@ -43,6 +43,8 @@ npm run test:e2e
 ```
 
 Browser checks run against a fresh local Wrangler instance and use actual Chrome/Chromium with virtual authenticators, maintained key derivation, isolated persistence and adversarial recovery tests. `npx playwright install chromium` installs a browser when a local Chrome is unavailable. `.mcp.json` also configures Chrome DevTools MCP.
+
+`tests/spikes/coop-opener/run.mjs` is a retained manual browser spike (COOP/opener behavior across Chromium and Firefox, results in [docs/release/coop-opener-spike.md](docs/release/coop-opener-spike.md)); it is not part of any gate. Islands and element suites that also use Firefox (`tests/browser/islands-embed.mjs`, `islands-sw.mjs`) run from `npm run test:e2e`; `tests/browser/embed-elements.mjs` and `provider-matrix.mjs` are run manually with `node --test`.
 
 [Specifications](docs/spec/protocol.md), [module development](docs/modules.md), [independent audits](docs/release/) and the screenshot walkthrough live under `docs/`. The assets build publishes semantic HTML and Markdown documentation, machine-readable artefacts, `llms.txt` and an accessible landing page.
 

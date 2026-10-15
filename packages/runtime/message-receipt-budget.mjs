@@ -1,13 +1,13 @@
 import {BILLING_STATE_KEY,entitlementFromState,assertOwner} from '../billing/catalog.mjs';
 import {StorageError} from '../storage/policy.mjs';
 import {key} from '../messaging/store.mjs';
+import {UUID as uuid} from '../core/primitives.mjs';
 
 export const MESSAGE_RECEIPT_STATE='message-receipt-budget/v1';
 export const MESSAGE_RECEIPT_WINDOWS=Object.freeze({minute:60000,hour:3600000,day:86400000});
 export const MESSAGE_RECEIPT_MAX_PARENTS=256;
 export const MESSAGE_RECEIPT_MAX_STATE_BYTES=120000;
 const plans=['free','paid','plus','ultra'],scopes=['owner','contact'],names=Object.keys(MESSAGE_RECEIPT_WINDOWS);
-const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const maxMessageBytes=1048576;
 const make=(counts,mib)=>Object.freeze(Object.fromEntries(scopes.map(scope=>[scope,Object.freeze(Object.fromEntries(names.map((name,i)=>[name,Object.freeze({messages:counts[i]/(scope==='contact'?2:1),bytes:mib[i]*1048576/(scope==='contact'?2:1)})])))])));
 export const MESSAGE_RECEIPT_DEFAULTS=Object.freeze({

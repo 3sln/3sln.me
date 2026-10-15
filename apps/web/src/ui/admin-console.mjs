@@ -4,7 +4,7 @@ import { frame, form, input, button, data, formatTime, when, duration, errorText
 import { roleOptions, badgeOptions, catalogEditable, auditDiff, ADMIN_ROLE } from '../bl/admin-console.mjs';
 // Operation screens for boot and administrators. Imported only after access is
 // confirmed; the ordinary console never loads this module.
-export const VIEWS=[['overview','shield','Overview'],['reservations','link','Reservations'],['claims','arrow','Claims'],['roles','rules','Roles & capabilities'],['users','search','Users'],['clients','shield','Client hosts'],['audit','inbox','Audit log']];
+export const VIEWS=[['overview','shield','Overview'],['reservations','link','Reservations'],['claims','key','Claims'],['roles','rules','Roles & capabilities'],['users','user','Users'],['clients','apps','Client hosts'],['audit','list','Audit log']];
 export const REASONS={'boot-only':'Boot only','self':'Not on your own account','admin-target':'Only boot changes administrators','internal-only':'Internal accounts only'};
 export const CLASS_LABEL={internal:'Internal',user:'User',delegable:'Delegable'};
 const pill=(text,cls='')=>h('span',text).classes('pill',...cls.split(' ').filter(Boolean));
@@ -27,7 +27,7 @@ function bootNotice(state,boot){
 function overviewView(state){
  const o=state.overview;if(!o)return h('div',head('Overview','Host administration at a glance.'),missingOverview(state));
  const boot=o.boot,status=!boot?'Unclaimed':boot.active?'Active':boot.status==='ended'?'Ended early':'Expired';
- const live=(o.claims??[]).filter(c=>['issuing','issued'].includes(c.state)&&c.expiresAt>state.now);
+ const live=(o.claims??[]).filter(c=>['issuing','issued'].includes(c.state)&&!redeemed(c)&&c.expiresAt>state.now);
  return h('div',head('Overview','Host administration at a glance.',button(state,'Refresh','reload-overview',{},'button secondary')),bootNotice(state,boot),
   h('div',h('section',h('h2','Boot'),definition([['Status',pill(status,boot?.active?'warning':'subtle')],boot?['Access ends',when(boot.expiresAt,state.locale)]:null,boot?['Claimed',when(boot.claimedAt,state.locale)]:null,boot?['Last restored',boot.restoredAt?when(boot.restoredAt,state.locale):h('span','Never')]:null,boot?['Token digest',data(boot.tokenDigest+'…','code')]:null,boot?['Credential',chips(boot.methods)]:null,boot?['Generation',data(boot.generation)]:null]),
     state.mode==='boot'?h('div',h('h3','End boot access early'),h('p','Signs boot out everywhere. Only a new token and redeploy restores it.').classes('muted'),button(state,'End boot access now…','end-boot',{},'button danger-button')).classes('boot-only-zone'):null).classes('panel'),
@@ -55,7 +55,9 @@ function revealPanel(state){
   h('p',tx('Expires {time}.',{time:formatTime(reveal.expiresAt,state.locale)})).classes('muted'),
   h('div',button(state,[icon('copy'),reveal.copied?'Copied':'Copy link'],'copy-reveal',{},'button primary',false),button(state,'I’ve stored it — hide link','dismiss-reveal',{},'button secondary',false),reveal.copied?h('span','Link copied to the clipboard.').attrs({role:'status'}).classes('muted'):null).classes('buttons')).classes('panel','reveal-panel');
 }
-function claimState(c,now){if(c.state==='revoked')return ['Revoked','subtle'];if(c.expiresAt<=now)return ['Expired','subtle'];if(c.state==='issuing')return ['Issuing','warning'];return ['Outstanding','good'];}
+// A redeemed claim created its account; it is neither outstanding nor revocable (the service answers claim_in_use).
+const redeemed=c=>Number.isSafeInteger(c.redeemedAt);
+function claimState(c,now){if(c.state==='revoked')return ['Revoked','subtle'];if(redeemed(c))return ['Redeemed','subtle'];if(c.expiresAt<=now)return ['Expired','subtle'];if(c.state==='issuing')return ['Issuing','warning'];return ['Outstanding','good'];}
 function claimsView(state){
  const o=state.overview;if(!o)return h('div',head('Claims','Single-use links that create reserved internal accounts.'),missingOverview(state));
  const catalog=o.catalog,roles=roleOptions(state.mode,catalog,{internal:true,roles:[]}),badges=badgeOptions(state.mode,catalog,o.badges,{internal:true,badgeIds:[]}),names=[...o.reservations.runtime.map(item=>item.name),...state.mode==='boot'?o.reservations.static:[]];
@@ -65,7 +67,7 @@ function claimsView(state){
     input('hours','Lifetime in hours','number',{required:true,min:1,max:168,value:'24',step:1},'1–168 hours. The link stops working after this.'),
     h('label',h('input').props({type:'checkbox',name:'customize'}).key('customize'),h('span','Override the reservation’s default roles and badges')).classes('checkbox-field'),
     h('div',roleFieldset(state,roles),badgeFieldset(state,badges),h('p','Used only when the override box is ticked.').classes('field-help')).classes('override-options')],'mint-claim','Mint claim token')).classes('panel'),
-  h('section',h('h2','Claims'),o.claims?.length?h('div',h('table',h('caption','Claims').classes('visually-hidden'),h('thead',h('tr',...['Handle','State','Roles','Expires'].map(t=>h('th',t).attrs({scope:'col'})),h('th',h('span','Actions').classes('visually-hidden')).attrs({scope:'col'}))),h('tbody',...o.claims.map(c=>{const [label,cls]=claimState(c,state.now),live=label==='Outstanding'||label==='Issuing';return h('tr',h('th',data(c.name)).attrs({scope:'row'}),h('td',pill(label,cls)),h('td',chips(c.roles)),h('td',when(c.expiresAt,state.locale)),h('td',h('div',live&&c.linkAvailable?button(state,[h('span','Retrieve link'),h('span',tx(' for {name}',{name:c.name})).classes('visually-hidden')],'claim-link',{nonce:c.nonce},'button secondary small'):null,live&&!c.linkAvailable?h('span','Link: minter or boot only').classes('field-help'):null,live?button(state,[h('span','Revoke'),h('span',tx(' claim for {name}',{name:c.name})).classes('visually-hidden')],'revoke-claim',{nonce:c.nonce,name:c.name},'button secondary small danger'):null).classes('row-actions')));})))).classes('table-wrap'):h('p','No claims yet.').classes('muted')).classes('panel'));
+  h('section',h('h2','Claims'),o.claims?.length?h('div',h('table',h('caption','Claims').classes('visually-hidden'),h('thead',h('tr',...['Handle','State','Roles','Expires'].map(t=>h('th',t).attrs({scope:'col'})),h('th',h('span','Actions').classes('visually-hidden')).attrs({scope:'col'}))),h('tbody',...o.claims.map(c=>{const [label,cls]=claimState(c,state.now),live=label==='Outstanding'||label==='Issuing';return h('tr',h('th',data(c.name)).attrs({scope:'row'}),h('td',pill(label,cls),redeemed(c)?h('span',tx('Redeemed {time}',{time:formatTime(c.redeemedAt,state.locale)})).classes('field-help','claim-redeemed-at'):null),h('td',chips(c.roles)),h('td',when(c.expiresAt,state.locale)),h('td',h('div',live&&c.linkAvailable?button(state,[h('span','Retrieve link'),h('span',tx(' for {name}',{name:c.name})).classes('visually-hidden')],'claim-link',{nonce:c.nonce},'button secondary small'):null,live&&!c.linkAvailable?h('span','Link: minter or boot only').classes('field-help'):null,live?button(state,[h('span','Revoke'),h('span',tx(' claim for {name}',{name:c.name})).classes('visually-hidden')],'revoke-claim',{nonce:c.nonce,name:c.name},'button secondary small danger'):null).classes('row-actions')));})))).classes('table-wrap'):h('p','No claims yet.').classes('muted')).classes('panel'));
 }
 // ---- roles & capabilities ----
 function rolesView(state){

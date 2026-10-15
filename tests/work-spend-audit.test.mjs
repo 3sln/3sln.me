@@ -51,7 +51,7 @@ test('independent work audit: Node clears the fired alarm before a handler sched
   try {
     metadata.onAlarm = async () => finish(await metadata.getAlarm());
     await metadata.setAlarm(Date.now() + 1);
-    const alarm = await Promise.race([observed, new Promise((_resolve, reject) => { timeout = setTimeout(() => reject(new Error('alarm did not run')), 1000); })]);
+    const alarm = await Promise.race([observed, new Promise((_resolve, reject) => { timeout = setTimeout(() => reject(new Error('alarm did not run')), 10000); })]); // hang guard only, not a timing assertion
     assert.ok(alarm === undefined || alarm === null, 'A consumed alarm must not suppress the next scheduled cleanup.');
   } finally { clearTimeout(timeout); metadata.close(); }
 });

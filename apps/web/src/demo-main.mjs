@@ -32,7 +32,7 @@ root.addEventListener('account-request',async event=>{
   }catch(error){if(status)status.textContent=error.message??'The request failed. No success has been confirmed.';}
   finally{pending=false;}
 });
-root.addEventListener('bindle-login-request',event=>{
+root.addEventListener('bindle-sign-in-request',event=>{
   document.getElementById('login-status').textContent=`Identity: ${event.detail.handle}. Live sign-in is not enabled in this preview.`;
 });
 window.addEventListener('pagehide',()=>{subscription.unsubscribe();engine.dispose();},{once:true});

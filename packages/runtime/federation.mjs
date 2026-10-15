@@ -10,9 +10,9 @@ import {dpopNonces} from '../federation/dpop.mjs';
 import {ENTRY_INTENTS,ENTRY_SHARDS,AuthorizationEntries,entryShard,remoteShard} from '../federation/authorization-entries.mjs';
 import {componentsProfile} from '../federation/components-profile.mjs';
 import {ClientDirectory,CLIENT_METADATA_FEATURE,clientSite} from '../federation/client-metadata.mjs';
+import {UUID_V4 as UUID} from '../core/primitives.mjs';
 
 export const FEDERATION_LAYOUT='bindle-federation-v1';
-const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const routed=/^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.[A-Za-z0-9_-]{43}$/;
 const fail=(code,message)=>{throw Object.assign(new Error(message),{code});};
 export function federationConfig(value,fallback){if(value===undefined||value==='')return structuredClone(fallback);return typeof value==='string'?JSON.parse(value):structuredClone(value);}

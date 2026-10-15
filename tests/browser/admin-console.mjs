@@ -168,3 +168,14 @@ test('review fixes: unconfirmed boot logout is reported, admin data expires loca
  const h=await fixture({state:{phase:'console',busy:true,view:'claims',reveal:{link:'x'}}});try{await h.act(new ops.Navigate({view:'overview'}));assert.equal(h.read().view,'claims');assert.ok(h.read().reveal);}finally{h.close();}
  const a=await fixture({mode:'admin',state:{phase:'console'},api:{'/api/admin/step-up/end':{ended:true}}});try{await a.act(new access.SignOut());assert.ok(a.calls.some(c=>c.path==='/api/admin/step-up/end'));assert.deepEqual(a.nav,['/console']);}finally{a.close();}
 });
+test('a redeemed claim shows its redemption time, is not outstanding and offers no revoke or link action',()=>{
+ const claims=[{nonce,name:'night-desk',state:'issued',roles:['desk'],badgeIds:[],expiresAt:now+3600000,createdAt:now-7200000,redeemedAt:now-60000,linkAvailable:true}];
+ for(const locale of ['en','es']){
+  const {root,missing}=render(consoleView,fullState('boot','claims',{overview:overview({claims})}),locale),text=root.textContent;
+  assert.match(text,locale==='es'?/Canjeado el /:/Redeemed /);assert.doesNotMatch(text,locale==='es'?/Pendiente/:/Outstanding/);
+  assert.equal([...root.querySelectorAll('button')].some(b=>/Revoke|Revocar|Retrieve link|Recuperar/.test(b.textContent)),false);
+  assert.deepEqual([...missing].filter(k=>/Redeemed/.test(k)),[]);
+  const summary=render(consoleView,fullState('boot','overview',{overview:overview({claims})}),locale).root.textContent;
+  assert.match(summary,locale==='es'?/No hay reclamaciones pendientes|0/:/No outstanding claims\./);
+ }
+});

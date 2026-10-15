@@ -26,12 +26,15 @@ function installPopupDriver(p,win,{decide=()=>({decision:'approve'}),blocked=fal
 // protocol §2 `features` form) into the served manifest. It also declares `popup`, because these tests drive the
 // popup relay with a simulated window (the reference provider has no popup pages yet). Every other byte comes
 // from the real handlers.
-function declared(p){return async(input,init)=>{
+// Fetches are observable by path so fire-and-forget SDK work (revocation) is
+// awaited by event, never by a wall-clock sleep.
+function declared(p){const waiters=[];const fetcher=async(input,init)=>{
  const response=await p.fetch(input,init),url=new URL(input instanceof Request?input.url:input);
+ for(const waiter of waiters.splice(0))if(waiter.path===url.pathname)waiter.resolve(response);else waiters.push(waiter);
  if(url.pathname!=='/.well-known/bindle/manifest.json'||!response.ok)return response;
  const manifest=await response.json(),entry=p.entries.manifest();
  return new Response(JSON.stringify({...manifest,login_presentation:['redirect','popup'],features:{...manifest.features,...entry.features}}),{status:200,headers:{'Content-Type':'application/json'}});
-};}
+};fetcher.completed=path=>new Promise(resolve=>waiters.push({path,resolve}));return fetcher;}
 async function setup({decide,blocked,storage=memoryStorage(),endSession=false,...options}={}){
  const p=await provider({endSession}),win=fakeWindow(),driver=installPopupDriver(p,win,{decide,blocked}),fetcher=declared(p);
  const session=createSession({clientId,redirectUri,fetcher,storage,history:{replaceState(){}},window:win,defaultHost:host,...options});await session.loadCapabilities();return {p,win,driver,session,storage,fetcher};
@@ -59,12 +62,12 @@ test('SDK contract: a blocked popup falls back to a redirect entry that complete
 });
 
 test('SDK contract: switching keeps the old session until approval, then revokes the previous refresh family at the real endpoint',async()=>{
- let choice={decision:'approve'};const {p,session}=await setup({decide:()=>choice});
+ let choice={decision:'approve'};const {p,session,fetcher}=await setup({decide:()=>choice});
  await session.signIn({identity:'alex'});const first=session.session,firstTokens=session.client.session;
  choice={decision:'deny'};assert.deepEqual(await session.switchAccount(),{outcome:'canceled'});assert.equal(session.session,first);
- choice={decision:'approve',account:p.accounts[1]};assert.deepEqual(await session.switchAccount({revokePrevious:true}),{outcome:'completed'});assert.equal(session.session.subject,p.accounts[1].subject);
+ choice={decision:'approve',account:p.accounts[1]};const revoked=fetcher.completed('/oauth/revoke');assert.deepEqual(await session.switchAccount({revokePrevious:true}),{outcome:'completed'});assert.equal(session.session.subject,p.accounts[1].subject);
  assert.equal((await entryRecords(p)).at(-1).intent,'select-account');
- await new Promise(resolve=>setTimeout(resolve,10));
+ await revoked;
  const reuse=await p.fetch(`${issuer}/oauth/token`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'refresh_token',refresh_token:firstTokens.refresh_token,client_id:clientId})});assert.equal(reuse.status,400);
 });
 

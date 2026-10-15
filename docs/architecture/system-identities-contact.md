@@ -1,6 +1,6 @@
 # Protected system identities and conditional developer contact
 
-Provisional implementation proposal, 2026-10-13. This replaces the unshipped developer-feedback form. The current user direction is an explicit console action to request an ordinary developer contact capability valid for the current UTC day, with protected system handles and trusted badges. Human reviewer: __________  Date: __________  Outcome: __________.
+Provisional implementation proposal, 2026-10-13. **Superseded in part (2026-10-14):** developer contact is now one conditional link (`GET /api/developer-contact`, see [bindle-links](bindle-links.md)); the daily-grant issuance and signed `requiredTags`/`optionalTags` sections below are historical. This replaces the unshipped developer-feedback form. The current user direction is an explicit console action to request an ordinary developer contact capability valid for the current UTC day, with protected system handles and trusted badges. Human reviewer: __________  Date: __________  Outcome: __________.
 
 ## Policy and unresolved product input
 
