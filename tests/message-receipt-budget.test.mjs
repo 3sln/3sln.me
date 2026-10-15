@@ -1,3 +1,4 @@
+import {authored} from './link-helpers.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {MessageReceiptBudget,MESSAGE_RECEIPT_DEFAULTS,MESSAGE_RECEIPT_STATE,MESSAGE_RECEIPT_MAX_PARENTS,MESSAGE_RECEIPT_MAX_STATE_BYTES,messageReceiptLimits} from '../packages/runtime/message-receipt-budget.mjs';
@@ -122,8 +123,8 @@ test('stored conversation events share aggregate receipt cap and established eve
 test('cross-origin signed contact HTTP refusal exposes Retry-After without weakening private-route CORS',async t=>{
  const f=await runtime(t,limits(1,1)),link=await f.contact();await f.send(link);
  const env={APP_ORIGIN:'https://provider.example',ABUSE_HASH_KEY:'test-abuse-key',ABUSE:{consume:async()=>true},IDENTITY_REPOSITORY:{get:async()=>({id:OWNER,status:'active',handle:'person'})},ACCOUNTS:{get:()=>f.controller}};
- const form=new FormData();form.append('collection',f.collection);form.append('mimeType','text/plain');form.append('idempotencyKey',crypto.randomUUID());form.append('message',new Blob(['limited'],{type:'text/plain'}),'message.txt');
- const response=await application.fetch(new Request(link.url,{method:'POST',headers:{Origin:'https://external.example'},body:form}),env);
- assert.equal(response.status,429,await response.clone().text());assert.equal((await response.json()).error,'message_receipt_limited');assert(Number(response.headers.get('Retry-After'))>0);assert.equal(response.headers.get('Access-Control-Allow-Origin'),'*');assert.equal(response.headers.get('Access-Control-Expose-Headers'),'Retry-After');assert.equal(response.headers.get('Vary'),'Accept');assert.equal(f.puts,1);
+ f.controller.config.IDENTITY_ACCOUNT=async()=>({status:'active',handle:'person'});const message=await authored(input=>f.controller.authorLinkEnvelope(OWNER,input),link.url,{text:'limited'});
+ const response=await application.fetch(new Request(link.url,{method:'POST',headers:{Origin:'https://external.example','Content-Type':message.contentType},body:message.bytes}),env);
+ assert.equal(response.status,429,await response.clone().text());assert.equal((await response.json()).error,'message_receipt_limited');assert(Number(response.headers.get('Retry-After'))>0);assert.equal(response.headers.get('Access-Control-Allow-Origin'),'*');assert.equal(response.headers.get('Access-Control-Expose-Headers'),'Retry-After');assert.equal(response.headers.get('Vary'),'Accept, Accept-Language');assert.equal(f.puts,1);
  const privateResponse=await application.fetch(new Request('https://provider.example/api/contacts',{method:'POST',headers:{Origin:'https://external.example','Content-Type':'application/json'},body:'{}'}),env);assert.equal(privateResponse.headers.get('Access-Control-Allow-Origin'),null);
 });

@@ -74,7 +74,7 @@ test('public contact representation honors media preferences and exact exclusion
  assert.equal(selectContactRepresentation(`${CONTACT_PROFILE_MIME};q=0.2, text/html;q=1`),'text/html');
  assert.equal(selectContactRepresentation(`${CONTACT_PROFILE_MIME};q=1, text/html;q=0.2`),CONTACT_PROFILE_MIME);
  assert.equal(selectContactRepresentation(`${CONTACT_PROFILE_MIME};q=0, */*;q=1`),'text/html');
- assert.equal(selectContactRepresentation(`text/html;q=0, ${CONTACT_PROFILE_MIME};q=0, application/json;q=0, ${token};q=0, */*;q=1`),null);
+ assert.equal(selectContactRepresentation(`text/html;q=0, ${CONTACT_PROFILE_MIME};q=0, application/json;q=0, application/vnd.bindle.contact-intake+json;q=0, ${token};q=0, */*;q=1`),null);
  assert.equal(selectContactRepresentation(`${CONTACT_PROFILE_MIME};q=1.5`),null);
  assert.equal(selectContactRepresentation('image/png'),null);
  assert.equal(selectContactRepresentation(token),token);

@@ -74,6 +74,12 @@ Generated links use `/token-onboarding#token=…`. The fragment never enters the
 
 A lost response after account creation is not permission to claim again. Resume using the credential already configured; an interrupted passkey setup before credential registration or a lost setup-browser binding may require operator reconciliation. The invitation does not become an account-recovery credential. Reopening a scrubbed page requires the original private link or a deliberate token paste.
 
+## Boot and administrators
+
+A fresh installation has no administrator. To bootstrap one, mint a single-use boot token on your own machine: `node scripts/boot-token.mjs mint --origin https://accounts.example --out /private/operator/boot-token.json`. This writes a private 0600 file and prints only `BOOTSTRAP_TOKEN_SHA256=<hex>`. Deploy that digest, never the token. `BOOT_ACCESS_HOURS` (1–72, default 24) sets how long boot access lasts. Within 30 minutes of minting, open the console's boot setup, paste or import the token, and set a passkey or password. The token works once: if you lose boot access, mint and deploy a new digest to restore it.
+
+Boot exists to create administrators. It mints claim tokens for reserved handles, possibly granting the built-in `admin` role, and decides which roles, capabilities and badges are internal-only or available to ordinary users. Administrators can then reserve handles, mint claim tokens for non-administrator roles, look up users, and assign roles and badges within those classes. Only boot creates or revokes administrators. Every action needs a fresh step-up and is recorded in an append-only, hash-chained audit log. The console wiring and UI are a later slice. See [boot and administration](architecture/boot-and-admin.md).
+
 ## Provider configuration
 
 S3-compatible services need endpoint, region, bucket/prefix and scoped access keys. WebDAV needs a vetted HTTPS host/root and app credentials. ALLOWED_CONNECTOR_HOSTS is an operator allowlist, not a user-supplied permission bypass. Google Drive, Dropbox and OneDrive require your own OAuth applications, exact redirect configuration, consent scopes and live provider conformance before enabling UI capability flags.

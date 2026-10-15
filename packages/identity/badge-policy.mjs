@@ -1,5 +1,5 @@
 import {parseFragment} from 'parse5';
-import {RESERVED_HANDLES,normalizeHandle,isFreeHandle} from './handles.mjs';
+import {RESERVED_HANDLES,BOOT_HANDLE,normalizeHandle,isFreeHandle} from './handles.mjs';
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 const object=value=>value&&Object.getPrototypeOf(value)===Object.prototype;
 const exact=(value,keys)=>object(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
@@ -14,10 +14,10 @@ export function configuredNamePolicy(config={}){
  let raw=config.HOST_NAME_POLICY===''?undefined:parsed(config.HOST_NAME_POLICY);
  if(raw===undefined)raw={version:1,reserved:[...RESERVED_HANDLES],onboarding:names(parsed(config.ONBOARDING_NAMES??[]))};
  if(!exact(raw,['version','reserved','onboarding'])||raw.version!==1)fail();
- const policy={version:1,reserved:names(raw.reserved),onboarding:names(raw.onboarding)};
+ const policy={version:1,reserved:names(raw.reserved),onboarding:names(raw.onboarding)};if(policy.onboarding.includes(BOOT_HANDLE))fail();
  if(new TextEncoder().encode(JSON.stringify(policy)).length>32768)fail();return freeze(policy);
 }
-export function configuredReservedName(config,input){const policy=configuredNamePolicy(config);let name;try{name=validateHostAlias(input);}catch{return false;}return policy.reserved.includes(name)||policy.onboarding.includes(name);}
+export function configuredReservedName(config,input){const policy=configuredNamePolicy(config);let name;try{name=validateHostAlias(input);}catch{return false;}return name===BOOT_HANDLE||policy.reserved.includes(name)||policy.onboarding.includes(name);}
 export const configuredTokenNames=config=>[...configuredNamePolicy(config).onboarding];
 
 const escape=value=>value.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');

@@ -18,6 +18,7 @@ export const publicDocumentation=Object.freeze([
  ['Bindle specification','docs/spec/app-messages.md','Messages from connected apps'],
  ['Bindle specification','docs/spec/conversations.md','Conversations'],
  ['Bindle specification','docs/spec/security.md','Security boundaries'],
+ ['3sln.me profiles','docs/profiles/components-v1.md','Components profile (provisional)'],
  ['Reference service','docs/spec/storage.md','Object storage'],
  ['Reference service','docs/spec/device-login.md','Device sign-in'],
  ['Reference service','docs/spec/identity-names.md','Identity names'],

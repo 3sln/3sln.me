@@ -2,6 +2,8 @@ import {validateContent} from '../messaging/content.mjs';
 import {APP_NOTIFICATIONS,notificationInput} from '../federation/app-notifications.mjs';
 import {StorageError} from '../storage/policy.mjs';
 import {key,canonical,digest,base64url} from '../messaging/store.mjs';
+import {initialTags,applyRules,escapeLegacyTag,isSystemTag} from '../messaging/tags.mjs';
+import {ownerRules} from '../messaging/messages.mjs';
 const fail=(code='app_notifications_unavailable',message='App notifications are unavailable.',status=503,retryAfter)=>{const e=new StorageError(code,message,status);if(retryAfter)e.retryAfter=retryAfter;throw e;};
 const plain=x=>x&&typeof x==='object'&&!Array.isArray(x);
 const jwkFields=['kid','kty','crv','x','y','alg','use','key_ops','ext'];
@@ -37,9 +39,10 @@ async function budget(c,owner,connection,now){
 }
 async function intake(tx,owner,input){
  const collection=(await tx.list(key('collection',owner))).find(r=>r.value.active)?.value.id;if(!collection)fail('forbidden','Message storage is unavailable.',403);
- const message={collection,tags:['app-message',...input.tags],deliveryTags:['app-message',...input.tags],classification:'automation',quarantined:false},original={collection,mimeType:input.mimeType,grantId:null,deliveryTags:message.deliveryTags};
- for(const rule of await tx.get(key('rules',owner))||[])if(rule.enabled&&Object.entries(rule.match).every(([field,value])=>field==='tagsAll'?value.every(tag=>original.deliveryTags.includes(tag)):original[field]===value)){if(rule.actions.collection&&!(await tx.get(key('collection',owner,rule.actions.collection)))?.active)continue;const quarantine=message.quarantined||Boolean(rule.actions.quarantined);Object.assign(message,rule.actions);message.quarantined=quarantine;}
- if(!message.tags.includes('app-message')){if(message.tags.length>=32)fail('invalid_actions','The message rule must leave room for the app-message tag.',400);message.tags=['app-message',...message.tags];}return message;
+ // App-supplied tags never gain system meaning; `app-message` and `sys:automation` are host-structural facts.
+ const now=Date.now(),deliveryTags=[...new Set(['app-message',...input.tags.map(escapeLegacyTag)])],message=initialTags({collection,deliveryCollection:collection,mimeType:input.mimeType,grantId:null,deliveryTags,quarantined:false},[...deliveryTags,'sys:automation'],{source:'app'},now);
+ await applyRules(message,await ownerRules(tx,owner),{now,active:async id=>(await tx.get(key('collection',owner,id)))?.active});
+ if(!message.tags.includes('app-message')){if(message.tags.filter(t=>!isSystemTag(t)).length>=32)fail('invalid_actions','The message rule must leave room for the app-message tag.',400);message.tags=['app-message',...message.tags];message.tagProvenance={...message.tagProvenance,'app-message':{source:'app',at:now}};}const {mimeType,grantId,...stored}=message;return stored;
 }
 export async function createAppNotification(c,owner,context){
  const now=Date.now(),input=notificationInput(context.args,context.tx,now);validateContent(input.mimeType,new TextEncoder().encode(input.body));await c.warm(owner);const client=await configuredContext(c,owner,context);const signer=await appNotificationSigner(c.config);

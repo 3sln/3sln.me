@@ -4,7 +4,9 @@ export const FREE_HANDLE_PREFIX = 'n.';
 export const MAX_FREE_HANDLE_NUMBER = 9999999999999n;
 // These names are for operator-issued platform/system identities. Ordinary
 // account creation and paid alias claims must never allocate them.
-export const RESERVED_HANDLES=Object.freeze(['ray','sys','admin','administrator','root','system','support','security','abuse','postmaster','webmaster','billing','api','mail','notify','verify','login','accounts','3sln']);
+// `boot` is the deploy-token principal: permanently reserved, never an account.
+export const BOOT_HANDLE='boot';
+export const RESERVED_HANDLES=Object.freeze(['boot','ray','sys','admin','administrator','root','system','support','security','abuse','postmaster','webmaster','billing','api','mail','notify','verify','login','accounts','3sln']);
 export function isReservedHandle(input){try{return RESERVED_HANDLES.includes(normalizeHandle(input));}catch{return false;}}
 const alphabet = '0123456789abcdefghjkmnpqrstvwxyz';
 function invalid() { throw new TypeError('Invalid account handle.'); }

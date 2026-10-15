@@ -41,3 +41,17 @@ Expiry is checked again immediately before account creation after credential wor
 The resulting identity stays pending until primary credential, verified contact and downloaded/tested recovery are complete. Optional pinned email is enforced through first activation, including recovery of an unactivated identity. Its first-activation marker clears only with that successful activation CAS. After legitimate activation, ordinary verified-contact changes and recovery remain possible; the original mailbox does not permanently control the identity. Public badges expose role/handle only, never the pinned email, invitation nonce or setup secret.
 
 Key rotation invalidates outstanding signed invitations but does not alter existing identity credentials or role provenance. Secure backup and explicit repair procedures must preserve the namespace and admission receipts. Local tests use ephemeral keys and injected mail resources; they establish no production account, email delivery or deployed-provider conformance.
+
+## Relationship to the boot token and admin console (2026-10-14)
+
+The [boot and administration design](boot-and-admin.md) adds a separate deploy-token principal, `boot`. Boot and administrators mint reserved-name claim tokens through the ordinary onboarding lane, for day-to-day use. This HMAC invitation lane stays as an offline CLI path. Accounts it creates count as internal for role purposes. Existing assignments and markers stay valid with no migration. `boot` itself can never be the handle of a system invitation.
+
+Boot token CLI (writes a private 0600 file; stdout carries only the non-secret digest):
+
+```sh
+node scripts/boot-token.mjs mint --origin https://accounts.example --out /private/operator/boot-token.json
+# prints BOOTSTRAP_TOKEN_SHA256=<hex>; deploy that value, then claim within 30 minutes of minting
+node scripts/boot-token.mjs digest --in /private/operator/boot-token.json
+```
+
+Each token is single-use across claim and restore. To restore lost boot access, mint and deploy a new digest. Never deploy a digest you did not mint yourself.

@@ -2,8 +2,8 @@ const demoStyles=document.createElement('link');demoStyles.rel='stylesheet';demo
 import { Engine, Provider, dodo } from './shared/stack.mjs';
 import { Account, ChangeAccount } from './bl/account.mjs';
 import accountApp from './ui/account-app.mjs';
-import { defineLoginElement } from '/packages/sdk/src/login-element.mjs';
-defineLoginElement();
+import { defineBindleElements } from '/packages/sdk/src/elements/index.mjs';
+defineBindleElements();
 const api = {
   async get() { const response=await fetch('/api/demo'); if(!response.ok)throw new Error('Could not load demo account.');return response.json(); },
   async post(path,body) {const response=await fetch(`/api/demo/${path}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const result=await response.json(); if(!response.ok)throw new Error(result.message??result.error?.message??result.error??'Request failed.');return result;}

@@ -1,3 +1,4 @@
+import { migrateTags } from '../messaging/tags.mjs';
 import { inspectWebArchive, WEB_ARCHIVE_MIME, conversationText } from '../messaging/content.mjs';
 import { fail, DEFAULT_BUDGETS } from './schema.mjs';
 
@@ -18,6 +19,7 @@ export function extractSearchText({ mimeType, bytes }, { maxInputBytes = 1048576
 }
 
 export function messageSearchDocument(message, { revision = message.revision, extraction } = {}) {
+  message = migrateTags(message);
   const content = extractSearchText(message, extraction);
   return {
     id: `message:${message.id}`, owner: message.owner, source: { kind: 'message', id: message.id }, revision,

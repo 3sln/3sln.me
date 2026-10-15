@@ -1,3 +1,4 @@
+import {migrateTags} from '../messaging/tags.mjs';
 import {StorageError} from '../storage/policy.mjs';
 import {key,canonical,digest} from '../messaging/store.mjs';
 const fail=(code,message,status=403)=>{throw new StorageError(code,message,status);};
@@ -35,13 +36,14 @@ export async function mcpOperation(account,owner,clientId,tool,args){
  if(tool==='item_read'){
   if(record.size>65536)fail('result_too_large','Download this item through the account interface.',413);
   const payload=await account.messageBytes(owner,args.key);
-  return {item:{id:record.id,mimeType:record.mimeType,size:record.size,tags:record.tags,classification:record.classification},dataBase64:btoa(String.fromCharCode(...payload.bytes))};
+  const tagged=migrateTags(record);return {item:{id:record.id,mimeType:record.mimeType,size:record.size,tags:tagged.tags,classification:tagged.classification},dataBase64:btoa(String.fromCharCode(...payload.bytes))};
  }
- if(tool==='item_write'&&(!args.actions||Object.keys(args.actions).some(k=>!['tags','classification','quarantined','read'].includes(k))))fail('invalid_args','Only message metadata can be changed.',400);
+ if(tool==='item_write'&&(!args.actions||Object.keys(args.actions).some(k=>!['tags','addTags','removeTags','classification','quarantined','read'].includes(k))))fail('invalid_args','Only message metadata can be changed.',400);
  if(tool==='item_write')await account.admitWork(owner,{clientId:`mcp:${clientId}`});await account.metadata.put(journal,{fingerprint,state:'reserved',createdAt:Date.now()});
  let result;
  if(tool==='item_write'){
-  result=await account.updateMessage(owner,args.key,args.actions);
+  // MCP edits are owner-delegated but keep distinct provenance (docs/architecture/tags.md).
+  result=await account.messages.update(owner,args.key,args.actions,{source:'mcp',clientId});
  }
  else if(tool==='item_delete')result=await account.deleteMessage(owner,args.key);
  else fail('unsupported_method','This function is unavailable.',400);

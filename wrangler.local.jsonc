@@ -41,6 +41,10 @@
       {
         "name": "FEDERATION",
         "class_name": "FederationObject"
+      },
+      {
+        "name": "ADMIN_AUTHORITY",
+        "class_name": "AdminAuthority"
       }
     ]
   },
@@ -75,6 +79,12 @@
       "tag": "v5",
       "new_sqlite_classes": [
         "PlanCatalogObject"
+      ]
+    },
+    {
+      "tag": "v6",
+      "new_sqlite_classes": [
+        "AdminAuthority"
       ]
     }
   ],
@@ -146,6 +156,8 @@
     "MCP_LAYOUT": "mcp-auth-v1-64",
     "MCP_CLIENTS": "[]",
     "FEDERATION_ENABLED": "false",
+    "EMBED_ORIGIN": "http://127.0.0.1:8787",
+    "EMBED_AVATAR_ORIGINS": "[]",
     "FEDERATION_CLIENTS": "[]",
     "FEDERATION_SCHEMAS": "{}",
     "FORM_POSTBACK_ORIGINS": "[]",

@@ -48,9 +48,10 @@ async function finishRecoveryDownload(page){
   await page.getByLabel('I saved my recovery file in a safe place.').check();await page.getByRole('button',{name:'Open my space',exact:true}).click();
   await page.getByRole('heading',{name:'Messages & conversations'}).waitFor();return recovery;
 }
+// Private requests name the tab's account member, as the console does (multi-account sessions).
 async function ownerAPI(page,path,body,method='POST'){
   return page.evaluate(async({path,body,method})=>{
-    const session=await (await fetch('/api/session')).json();const response=await fetch(path,{method,headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrfToken},...(method==='GET'?{}:{body:JSON.stringify(body)})});
+    const session=await (await fetch('/api/session')).json();const response=await fetch(path,{method,headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrfToken,'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext},...(method==='GET'?{}:{body:JSON.stringify(body)})});
     return {status:response.status,body:await response.json(),cache:response.headers.get('Cache-Control')};
   },{path,body,method});
 }
@@ -103,18 +104,19 @@ test('real password setup resumes, recovery rotates, contacts constrain messages
   const account=await ownerAPI(page,'/api/account',null,'GET');assert.equal(account.cache,'no-store');
   const collection=account.body.collections[0].id;
   const contact=await ownerAPI(page,'/api/contacts',{name:'Adversarial test',collections:[collection],mimeTypes:['text/html'],expiresAt:Date.now()+3600000,maxMessages:1,maxMessageBytes:65536,maxBytes:65536});assert.equal(contact.status,200);
-  const share=new URL(contact.body.url);assert.ok(share.pathname.includes('/contact/'));assert.ok(share.searchParams.get('sig'));const minted=await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-token+jwt'}});assert.equal(minted.status(),200);const token=await minted.text();
+  const share=new URL(contact.body.url);assert.ok(share.pathname.includes('/contact/'));assert.ok(share.searchParams.get('sig'));assert.equal((await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-token+jwt'}})).status(),406);
   assert.equal((await ownerAPI(page,'/api/profile',{displayName:'Actual scoped recipient',bio:'Private biography',avatar:'https://images.example/private.png',discloseToContacts:true},'PUT')).status,200);
   assert.equal((await ownerAPI(page,`/api/contacts/${contact.body.id}/beam`,{profileFields:['displayName'],beamEnabled:false},'PUT')).status,200);
   const sharedProfile=await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-profile+json'}});assert.equal(sharedProfile.status(),200);assert.deepEqual((await sharedProfile.json()).profile,{displayName:'Actual scoped recipient'});
-  await page.goto(share.href);await page.getByRole('heading',{name:'Send a message to Actual scoped recipient.',exact:true}).waitFor();assert.equal(await page.locator('.contact-profile-bio').count(),0);assert.equal(await page.getByRole('link',{name:'View shared avatar',exact:true}).count(),0);assert.equal(new URL(page.url()).search,'');await screenshot(page,'live-contact-scoped-profile');
+  await page.goto(share.href);await page.getByRole('heading',{name:/^Send a message to \u2068?Actual scoped recipient\u2069?\.$/}).waitFor();assert.equal(await page.locator('.contact-profile-bio').count(),0);assert.equal(await page.getByRole('link',{name:'View shared avatar',exact:true}).count(),0);assert.equal(new URL(page.url()).search,'');await screenshot(page,'live-contact-scoped-profile');
   assert.equal((await ownerAPI(page,'/api/profile',{displayName:'Actual scoped recipient',bio:'Private biography',avatar:'https://images.example/private.png',discloseToContacts:false},'PUT')).status,200);
-  const disabledProfile=await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-profile+json'}});assert.equal((await disabledProfile.json()).profile,null);await page.goto(share.href);await page.getByRole('button',{name:'Send message',exact:true}).waitFor();assert.equal(await page.locator('.contact-recipient-profile').count(),0);await page.goto(baseURL+'/console');await page.getByRole('button',{name:'Messages',exact:true}).first().waitFor();
-  const send=async(body)=>{const response=await context.request.post(`${baseURL}/api/messages`,{headers:{Authorization:`Bearer ${token}`},data:body});return {status:response.status(),body:await response.json()};};
-  const input={collection,mimeType:'text/html',text:'<h1>Safe heading</h1><img src="https://leak.example/pixel"><script>parent.__messageExecuted=true</script>',idempotencyKey:'browser-real-message'};
-  assert.equal((await send({...input,mimeType:'image/png'})).status,403);
-  const accepted=await send(input);assert.equal(accepted.status,202);assert.equal((await send(input)).body.id,accepted.body.id);
-  assert.equal((await send({...input,idempotencyKey:'over-quota'})).status,429);
+  const disabledProfile=await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-profile+json'}});assert.equal((await disabledProfile.json()).profile,null);await page.goto(share.href);await page.getByRole('heading',{name:/^Send a message to /}).waitFor();assert.equal(await page.locator('.contact-recipient-profile').count(),0);await page.goto(baseURL+'/console');await page.getByRole('button',{name:'Messages',exact:true}).first().waitFor();
+  // Identity-authored delivery: the signed-in sender's provider signs, the page posts credentialless multipart.
+  const send=async input=>page.evaluate(async({url,input})=>{const bytes=new TextEncoder().encode(input.text),sha256=btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)))).replaceAll('+','-').replaceAll('/','_').replaceAll('=',''),session=await (await fetch('/api/session')).json();const signed=await fetch('/api/links/envelope',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrfToken,'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext},body:JSON.stringify({link:url,mimeType:input.mimeType,subject:'',optionalTags:[],byteLength:bytes.byteLength,sha256,operationId:input.operationId,createdAt:input.createdAt})});if(!signed.ok)return {status:signed.status,body:await signed.json()};const {envelope}=await signed.json(),form=new FormData();form.append('envelope',new Blob([JSON.stringify(envelope)],{type:'application/json'}));form.append('message',new Blob([bytes],{type:input.mimeType}));const response=await fetch(url,{method:'POST',body:form,credentials:'omit'});return {status:response.status,body:await response.json()};},{url:share.href,input});
+  const input={mimeType:'text/html',text:'<h1>Safe heading</h1><img src="https://leak.example/pixel"><script>parent.__messageExecuted=true</script>',operationId:crypto.randomUUID(),createdAt:Date.now()};
+  assert.ok([400,415].includes((await send({...input,mimeType:'image/png',operationId:crypto.randomUUID()})).status));
+  const accepted=await send(input);assert.equal(accepted.status,202,JSON.stringify(accepted.body));assert.deepEqual((await send(input)).body.receipt,accepted.body.receipt);
+  assert.equal((await send({...input,operationId:crypto.randomUUID()})).status,429);
   await page.reload();await page.getByRole('button',{name:/New message/}).click();
   const frame=page.locator('iframe[title]');await frame.waitFor();assert.equal(await frame.getAttribute('sandbox'),'allow-scripts');
   const child=await (await frame.elementHandle()).contentFrame();await child.waitForFunction(()=>window.__fixtureMessageShadow?.querySelector('h1')?.textContent==='Safe heading');

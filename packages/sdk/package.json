@@ -1,0 +1,21 @@
+{
+  "//": "The published package name lives only here (user decision 2026-10-14). Provisional, unpublished; private prevents accidental publication until the production gates allow it.",
+  "name": "@3sln/bindle",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": [
+    "./src/define.mjs"
+  ],
+  "exports": {
+    "./define.mjs": "./src/define.mjs",
+    "./elements.mjs": "./src/elements/index.mjs",
+    "./theme.mjs": "./src/elements/theme-probe.mjs",
+    "./flows.mjs": "./src/flows.mjs",
+    "./callback.mjs": "./src/callback.mjs",
+    "./identity.mjs": "./src/identity.mjs",
+    "./capabilities.mjs": "./src/capabilities.mjs",
+    "./testing.mjs": "./src/testing.mjs"
+  }
+}

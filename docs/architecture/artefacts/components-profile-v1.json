@@ -1,0 +1,498 @@
+{
+  "id": "https://3sln.me/artefacts/profiles/components/v1",
+  "kind": "manifest-profile",
+  "title": "3sln.me components profile",
+  "version": "v1",
+  "status": "provisional (revision 2)",
+  "publisher": "https://3sln.me",
+  "documentation": "/docs/profiles/components-v1.html",
+  "description": "Interop between embedder-side Bindle elements and provider-operated islands. Not part of the Bindle specification. Publication implies no provider conformance.",
+  "declaration": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": [
+      "embed_origin",
+      "protocol",
+      "parts"
+    ],
+    "properties": {
+      "embed_origin": {
+        "type": "string",
+        "maxLength": 270,
+        "pattern": "^https://(?=[a-z0-9-]*[a-z])[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+(?::(?!443$)[1-9][0-9]{0,4})?$",
+        "$comment": "Prefilter only. Normative: new URL(v).origin === v, not an IP literal, differs from the issuer and embedder origins (profile §2)."
+      },
+      "protocol": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "parts": {
+        "type": "object",
+        "maxProperties": 16,
+        "propertyNames": {
+          "pattern": "^[a-z][a-z-]{0,31}$"
+        },
+        "additionalProperties": {
+          "type": "object",
+          "required": [
+            "versions"
+          ],
+          "properties": {
+            "versions": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "fedcm": {
+              "type": "boolean"
+            }
+          }
+        },
+        "$comment": "Invalid or unknown part entries are ignored individually; the declaration stays valid (profile §2)."
+      },
+      "theme_tokens": {
+        "type": "array",
+        "maxItems": 16,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "maxLength": 32
+        }
+      },
+      "credential_binding": {
+        "type": "array",
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "manage_url": {
+        "type": "string",
+        "format": "uri",
+        "maxLength": 2048
+      }
+    }
+  },
+  "parts": {
+    "avatar": {
+      "versions": [
+        1
+      ],
+      "interactive": false,
+      "identityBearing": true,
+      "outbound": []
+    },
+    "account-switcher": {
+      "versions": [
+        1
+      ],
+      "interactive": true,
+      "identityBearing": true,
+      "outbound": [
+        "flow",
+        "code",
+        "select",
+        "escape",
+        "dismiss"
+      ],
+      "requiresCoreFeature": "authorization-entry.v1"
+    },
+    "sign-in": {
+      "versions": [
+        1
+      ],
+      "interactive": true,
+      "identityBearing": false,
+      "outbound": [
+        "flow",
+        "code"
+      ],
+      "requiresCoreFeature": "authorization-entry.v1"
+    }
+  },
+  "themeTokens": {
+    "color": [
+      "surface",
+      "surface-raised",
+      "text",
+      "text-muted",
+      "accent",
+      "on-accent",
+      "border",
+      "focus",
+      "danger"
+    ],
+    "integer": {
+      "radius": {
+        "minimum": 0,
+        "maximum": 16
+      }
+    }
+  },
+  "credentialBindings": [
+    "key-binding.v1"
+  ],
+  "channel": {
+    "protocol": 1,
+    "handshakeTimeoutMs": 3000,
+    "maxMessageBytesUtf8": {
+      "prepare": 8192,
+      "bindle-island-init": 8192,
+      "code": 4096,
+      "default": 2048
+    },
+    "fragment": "^(avatar|account-switcher|sign-in)\\.v[1-9][0-9]{0,2}$",
+    "windowName": "^bindle-island;v=1;n=[A-Za-z0-9_-]{22};l=[A-Za-z0-9-]{1,35};cs=(light|dark)$",
+    "common": {
+      "v": {
+        "const": 1
+      },
+      "type": {
+        "type": "string"
+      }
+    },
+    "inbound": {
+      "bindle-island-init": {
+        "required": [
+          "v",
+          "type",
+          "nonce",
+          "part",
+          "version",
+          "theme",
+          "locale",
+          "colorScheme",
+          "props"
+        ],
+        "properties": {
+          "nonce": {
+            "type": "string",
+            "maxLength": 22,
+            "pattern": "^[A-Za-z0-9_-]{22}$"
+          },
+          "part": {
+            "type": "string",
+            "maxLength": 32
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "theme": {
+            "type": "object",
+            "required": [
+              "seq",
+              "tokens"
+            ]
+          },
+          "locale": {
+            "type": "string",
+            "maxLength": 35
+          },
+          "colorScheme": {
+            "enum": [
+              "light",
+              "dark"
+            ]
+          },
+          "props": {
+            "type": "object"
+          }
+        }
+      },
+      "theme": {
+        "required": [
+          "v",
+          "type",
+          "seq",
+          "tokens"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "tokens": {
+            "type": "object",
+            "maxProperties": 16
+          }
+        }
+      },
+      "locale": {
+        "required": [
+          "v",
+          "type",
+          "lang"
+        ],
+        "properties": {
+          "lang": {
+            "type": "string",
+            "maxLength": 35
+          }
+        }
+      },
+      "scheme": {
+        "required": [
+          "v",
+          "type",
+          "colorScheme"
+        ],
+        "properties": {
+          "colorScheme": {
+            "enum": [
+              "light",
+              "dark"
+            ]
+          }
+        }
+      },
+      "props": {
+        "required": [
+          "v",
+          "type",
+          "seq"
+        ],
+        "$comment": "Plus part fields (profile §6): avatar {}; account-switcher {density, actions}; sign-in {label, variant}.",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "density": {
+            "enum": [
+              "regular",
+              "compact"
+            ]
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "use-another",
+                "manage",
+                "remove"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "label": {
+            "enum": [
+              "continue",
+              "sign-in",
+              "sign-up"
+            ]
+          },
+          "variant": {
+            "enum": [
+              "filled",
+              "outline"
+            ]
+          }
+        }
+      },
+      "session": {
+        "required": [
+          "v",
+          "type",
+          "subject"
+        ],
+        "properties": {
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2048
+          }
+        }
+      },
+      "prepare": {
+        "required": [
+          "v",
+          "type",
+          "redirectUri",
+          "challenge",
+          "state",
+          "requests"
+        ],
+        "properties": {
+          "redirectUri": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "challenge": {
+            "type": "string",
+            "maxLength": 43,
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          },
+          "state": {
+            "type": "string",
+            "maxLength": 43,
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          },
+          "requests": {
+            "type": "array",
+            "maxItems": 8,
+            "$comment": "Bounded as the core authorization-entry request schema (wire pending, CPS-6)."
+          },
+          "loginHint": {
+            "type": "string",
+            "maxLength": 320
+          },
+          "uiLocales": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "string",
+              "maxLength": 35
+            }
+          },
+          "colorScheme": {
+            "enum": [
+              "light",
+              "dark"
+            ]
+          },
+          "dpopJkt": {
+            "type": "string",
+            "maxLength": 43,
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          }
+        }
+      },
+      "forget": {
+        "required": [
+          "v",
+          "type"
+        ],
+        "properties": {
+          "subject": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        }
+      }
+    },
+    "outbound": {
+      "ready": {
+        "required": [
+          "v",
+          "type",
+          "part",
+          "version",
+          "protocol",
+          "issuer"
+        ],
+        "properties": {
+          "part": {
+            "type": "string",
+            "maxLength": 32
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "protocol": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxItems": 8
+          },
+          "issuer": {
+            "type": "string",
+            "maxLength": 270
+          }
+        }
+      },
+      "flow": {
+        "required": [
+          "v",
+          "type",
+          "phase"
+        ],
+        "properties": {
+          "phase": {
+            "enum": [
+              "started",
+              "ended"
+            ]
+          },
+          "outcome": {
+            "enum": [
+              "completed",
+              "canceled",
+              "popup-blocked",
+              "unavailable"
+            ]
+          }
+        }
+      },
+      "code": {
+        "required": [
+          "v",
+          "type",
+          "code",
+          "state",
+          "iss"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "state": {
+            "type": "string",
+            "maxLength": 43
+          },
+          "iss": {
+            "type": "string",
+            "maxLength": 270
+          }
+        }
+      },
+      "select": {
+        "required": [
+          "v",
+          "type",
+          "subject"
+        ],
+        "properties": {
+          "subject": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        }
+      },
+      "escape": {
+        "required": [
+          "v",
+          "type"
+        ]
+      },
+      "dismiss": {
+        "required": [
+          "v",
+          "type"
+        ]
+      }
+    },
+    "$comment": "Every message object has exactly the listed keys (required plus listed optional properties); additionalProperties is false throughout."
+  }
+}

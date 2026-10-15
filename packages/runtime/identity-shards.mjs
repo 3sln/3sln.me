@@ -1,13 +1,29 @@
 import {validateHostAlias,configuredReservedName} from '../identity/badge-policy.mjs';
 import {onboardingMarker,onboardingAlias,sameOnboardingIdentity} from '../identity/onboarding.mjs';
 import {systemMarker,systemBadge,sameSystemIdentity} from '../identity/system-bootstrap.mjs';
-import {isFreeHandle,isReservedHandle,encodeFreeHandleNumber,normalizeHandle,validatePaidHandle,MAX_FREE_HANDLE_NUMBER} from '../identity/handles.mjs';
+import {isFreeHandle,isReservedHandle,encodeFreeHandleNumber,normalizeHandle,validatePaidHandle,MAX_FREE_HANDLE_NUMBER,BOOT_HANDLE} from '../identity/handles.mjs';
 // The layout string is persisted routing protocol: changing it requires an
 // offline, verified migration. No request consults the legacy singleton.
 export const IDENTITY_LAYOUT = 'v1-64-fresh';
 export const IDENTITY_SHARDS = 64;
 const families = new Set(['account', 'handle', 'email', 'device', 'device-code', 'namespace']);
 const namespaceKey = handle => `identity-namespace/${handle}`;
+// Expiry index for unredeemed onboarding reservations, ordered by due time.
+// The release grace absorbs clock skew and redemptions verified just before
+// expiry; a reservation is never released before expiresAt + grace.
+const ONBOARDING_EXPIRY = 'identity-onboarding-expiry/';
+export const ONBOARDING_RELEASE_GRACE_MS = 600000;
+const onboardingExpiryKey = (expiresAt, handle) => `${ONBOARDING_EXPIRY}${String(expiresAt).padStart(16, '0')}/${handle}`;
+// Only a reservation nobody has started to redeem: an operator alias still in
+// `preissued`, unbound, unadmitted, without a canonical handle, matching the
+// indexed digest/expiry and past its grace. Assigned, allocated, paid, system,
+// claiming and consumed rows never match.
+function releasableOnboarding(row, entry, now) {
+  const value = row?.onboarding;
+  return row?.state === 'operator-alias' && value?.version === 1 && value.phase === 'preissued' && value.binding === null && value.admitted === false && value.canonical === null
+    && value.digest === entry.digest && value.expiresAt === entry.expiresAt && Number.isSafeInteger(value.expiresAt) && value.expiresAt + ONBOARDING_RELEASE_GRACE_MS <= now
+    && value.marker?.handle === entry.handle && entry.handle !== BOOT_HANDLE && !isFreeHandle(entry.handle);
+}
 const MAX_HANDLE_NUMBER = MAX_FREE_HANDLE_NUMBER;
 function namespaceIdentity(owner, assignmentId) {
   if (typeof owner !== 'string' || !owner || owner.length > 128 || assignmentId !== undefined && (typeof assignmentId !== 'string' || !assignmentId || assignmentId.length > 128)) throw new TypeError('Invalid handle allocation identity');
@@ -134,10 +150,31 @@ export class IdentityShardStorage {
   async onboardingReserve(item,claims,digest){
     namespaceIdentity(item.owner,item.assignmentId);if(validateHostAlias(item.name)!==item.name||!/^[a-f0-9]{64}$/.test(digest))throw new TypeError('Invalid onboarding reservation');
     const marker=onboardingMarker(item,claims,digest);if(!onboardingAlias({assignmentId:item.assignmentId,handle:'n.1',onboardingIdentity:marker}))throw new TypeError('Invalid onboarding identity');
-    return this.metadata.transaction(async tx=>{const key=namespaceKey(item.name),old=await tx.get(key);if(old)return old.state==='operator-alias'&&old.owner===item.owner&&old.assignmentId===item.assignmentId&&sameOnboardingIdentity(old.onboarding?.marker,marker)&&old.onboarding?.digest===digest?old.onboarding:null;const onboarding={version:1,digest,marker,phase:'preissued',binding:null,canonical:null,admitted:false,issuanceComplete:false,expiresAt:claims.expiresAt};await tx.put(key,{state:'operator-alias',owner:item.owner,assignmentId:item.assignmentId,onboarding});return onboarding;});
+    return this.metadata.transaction(async tx=>{const key=namespaceKey(item.name),old=await tx.get(key);if(old)return old.state==='operator-alias'&&old.owner===item.owner&&old.assignmentId===item.assignmentId&&sameOnboardingIdentity(old.onboarding?.marker,marker)&&old.onboarding?.digest===digest?old.onboarding:null;const onboarding={version:1,digest,marker,phase:'preissued',binding:null,canonical:null,admitted:false,issuanceComplete:false,expiresAt:claims.expiresAt};await tx.put(key,{state:'operator-alias',owner:item.owner,assignmentId:item.assignmentId,onboarding});if(Number.isSafeInteger(claims.expiresAt)){const due=claims.expiresAt+ONBOARDING_RELEASE_GRACE_MS,alarm=await tx.getAlarm?.();await tx.put(onboardingExpiryKey(claims.expiresAt,item.name),{handle:item.name,digest,expiresAt:claims.expiresAt});if(tx.setAlarm&&(!alarm||alarm>due))await tx.setAlarm(due);}return onboarding;});
   }
   async onboardingClaim(handle,digest,binding){if(typeof binding!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(binding))throw new TypeError('Invalid onboarding binding');return this.metadata.transaction(async tx=>{const key=namespaceKey(handle),row=await tx.get(key),value=row?.onboarding;if(row?.state!=='operator-alias'||value?.version!==1||value.digest!==digest||!['preissued','claiming','consumed'].includes(value.phase))return null;if(value.binding&&value.binding!==binding)return null;if(value.phase==='preissued'){value.binding=binding;value.phase='claiming';await tx.put(key,row);}return value;});}
   async onboardingStep(handle,digest,binding,step,canonical){return this.metadata.transaction(async tx=>{const key=namespaceKey(handle),row=await tx.get(key),value=row?.onboarding;if(row?.state!=='operator-alias'||value?.version!==1||value.digest!==digest||!onboardingAlias({assignmentId:row.assignmentId,handle:'n.1',onboardingIdentity:value.marker})||value.marker.handle!==handle||typeof value.admitted!=='boolean'||!['preissued','claiming','consumed'].includes(value.phase)||value.canonical!==null&&!isFreeHandle(value.canonical))return null;if(step==='issued'){if(binding!==null)return null;value.issuanceComplete=true;}else{if(value.binding!==binding||!binding||value.phase==='preissued')return null;if(step==='admitted')value.admitted=true;else if(step==='canonical'){if(value.phase!=='claiming'||!value.admitted||!isFreeHandle(canonical))return null;if(!value.canonical)value.canonical=normalizeHandle(canonical);}else if(step==='consumed'){if(!value.canonical||!value.admitted)return null;value.phase='consumed';}else throw new TypeError('Invalid onboarding step');}await tx.put(key,row);return value;});}
+  // Releases expired, never-redeemed onboarding reservations in one transaction
+  // with the namespace rows, so it serializes with onboardingClaim: a claim that
+  // commits first moves the row out of `preissued`; a release that commits first
+  // leaves no row to claim. Statically configured and boot names are only unindexed.
+  async onboardingSweep({now=Date.now(),limit=64}={}){
+    if(!Number.isSafeInteger(now)||!Number.isInteger(limit)||limit<1||limit>256)throw new TypeError('Invalid onboarding sweep');
+    return this.metadata.transaction(async tx=>{
+      const rows=await tx.list({prefix:ONBOARDING_EXPIRY,limit}),released=[];let next=null,seen=0;
+      for(const [key,entry]of rows){
+        const due=Number.isSafeInteger(entry?.expiresAt)?entry.expiresAt+ONBOARDING_RELEASE_GRACE_MS:null;
+        if(due!==null&&due>now){next=due;break;}
+        seen++;
+        if(due!==null&&typeof entry.handle==='string'&&!configuredReservedName(this.config,entry.handle)){const row=await tx.get(namespaceKey(entry.handle));if(releasableOnboarding(row,entry,now)){await tx.delete(namespaceKey(entry.handle));released.push(entry.handle);}}
+        await tx.delete(key);
+      }
+      if(next===null&&seen===limit)next=now+1000;
+      // An alarm at or before now may be the one running; always re-arm past it.
+      if(next!==null&&tx.setAlarm){const alarm=await tx.getAlarm?.();if(!alarm||alarm>next||alarm<=now)await tx.setAlarm(next);}
+      return {released,next};
+    });
+  }
   async handleLookup(handle){return await this.metadata.get(namespaceKey(handle))||null;}
   async nextHandleNumber(lane) {
     if(!Number.isInteger(lane)||lane<0||lane>=IDENTITY_SHARDS)throw new TypeError('Invalid handle counter lane');

@@ -2,11 +2,13 @@ import * as z from 'zod/v4';
 const collectionId=z.string().regex(/^(inbox|resource):[a-f0-9-]{36}$/);
 const key=z.string().min(1).max(1024);
 const requestId=z.string().uuid();
+// Tag IDs, never labels; the messaging service enforces the `sys:` registry and suspected-tag rules.
+const tagIds=z.array(z.string().min(1).max(64)).max(56);
 export const toolSchemas={
  collections_list:z.object({}).strict(),
  items_list:z.object({collectionId,limit:z.number().int().min(1).max(50).optional(),cursor:z.string().max(4096).optional(),prefix:z.string().max(1024).optional()}).strict(),
  item_read:z.object({collectionId,key}).strict(),
- item_write:z.object({collectionId,key,requestId,dataBase64:z.string().max(87384).optional(),contentType:z.string().max(100).optional(),condition:z.object({absent:z.literal(true).optional(),version:z.string().uuid().optional()}).strict().optional(),actions:z.object({tags:z.array(z.string().max(64)).max(32).optional(),classification:z.enum(['unclassified','personal','work','spam','automation']).optional(),quarantined:z.boolean().optional(),read:z.boolean().optional()}).strict().optional()}).strict(),
+ item_write:z.object({collectionId,key,requestId,dataBase64:z.string().max(87384).optional(),contentType:z.string().max(100).optional(),condition:z.object({absent:z.literal(true).optional(),version:z.string().uuid().optional()}).strict().optional(),actions:z.object({tags:tagIds.optional(),addTags:tagIds.optional(),removeTags:tagIds.optional(),classification:z.enum(['unclassified','personal','work','spam','automation']).optional(),quarantined:z.boolean().optional(),read:z.boolean().optional()}).strict().optional()}).strict(),
  item_delete:z.object({collectionId,key,requestId,version:z.string().uuid().optional()}).strict()
 };
 

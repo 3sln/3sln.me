@@ -7,7 +7,7 @@ const encode = value => base64url(textEncoder.encode(canonical(value)));
 const parse = segment => { try { return JSON.parse(strictText(fromBase64url(segment))); } catch { fail('invalid_token'); } };
 
 export async function signContactToken({ claims, header, privateKey, crypto = globalThis.crypto }) {
-  if (!algorithms[header?.alg] || !['contact+jwt', 'bindle-contact-endpoint+jwt', 'bindle-inbox+jwt'].includes(header.typ) || !boundedString(header.kid)) fail('invalid_token');
+  if (!algorithms[header?.alg] || !['contact+jwt', 'bindle-contact-endpoint+jwt', 'bindle-inbox+jwt', 'bindle-link-meta+jwt', 'bindle-link-data+jwt', 'bindle-contact-delivery+jwt'].includes(header.typ) || !boundedString(header.kid)) fail('invalid_token');
   const input = `${encode(header)}.${encode(claims)}`;
   const signature = await crypto.subtle.sign(algorithms[header.alg], privateKey, textEncoder.encode(input));
   return `${input}.${base64url(new Uint8Array(signature))}`;
@@ -44,21 +44,18 @@ export class ContactTokenService {
       if (!record) fail('not_found'); record.active = false; await tx.set(path, record);
     });
   }
-  async createGrant(owner, { kid, collections, mimeTypes, expiresAt, maxMessages = 100, maxBytes = 10485760, maxMessageBytes = 1048576,requiredTags=[],optionalTags=[] },internal) {
-    if(internal!==undefined){const binding=internal?.binding,uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);if(!internal||internal.kind!=='developer-contact/v1'||!binding||Object.keys(binding).sort().join(',')!=='beneficiary,expiresAt,owner,tier'||binding.owner!==owner||!uuid(binding.beneficiary)||!['free','paid','plus','ultra'].includes(binding.tier)||binding.expiresAt!==expiresAt||!Number.isSafeInteger(expiresAt)||expiresAt%86400000!==0||internal.pointer!==`developer-contact/v1/${new Date(expiresAt-1).toISOString().slice(0,10)}/${binding.beneficiary}/${binding.tier}`)fail('invalid_grant_metadata');}
+  async createGrant(owner, { kid, collections, mimeTypes, expiresAt, maxMessages = 100, maxBytes = 10485760, maxMessageBytes = 1048576,requiredTags=[],optionalTags=[] }) {
     const now = this.clock(),tagPolicy=contactTagPolicy({requiredTags,optionalTags});
     if (!Array.isArray(collections) || !collections.length || collections.length > 32 || collections.some(id => !boundedString(id)) || new Set(collections).size !== collections.length || !Array.isArray(mimeTypes) || !mimeTypes.length || mimeTypes.length > 32 || mimeTypes.some(type => !mimeValid(type)) || new Set(mimeTypes).size !== mimeTypes.length) fail('invalid_scope');
     if (!Number.isSafeInteger(expiresAt) || Math.floor(expiresAt / 1000) <= Math.floor(now / 1000) || expiresAt > now + 366 * 86400000 || !Number.isSafeInteger(maxMessages) || maxMessages < 1 || maxMessages > 100000 || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 1073741824 || !Number.isSafeInteger(maxMessageBytes) || maxMessageBytes < 1 || maxMessageBytes > 10485760 || maxMessageBytes > maxBytes) fail('invalid_limits');
     return this.store.transaction(async tx => {
       const signingKey = await tx.get(key('contact-key', owner, kid));
       if (!signingKey?.active) fail('invalid_key');
-      if(internal){const prior=await tx.get(internal.pointer);if(prior!==undefined){const {grantId,...binding}=prior??{},expected={version:1,...internal.binding};if(canonical(binding)!==canonical(expected)||typeof grantId!=='string')fail('invalid_grant_metadata');const grant=await tx.get(key('contact-grant',grantId));if(!grant||grant.owner!==owner||grant.id!==grantId||grant.internalKind!==internal.kind||grant.internalPointer!==internal.pointer)fail('invalid_grant_metadata');const expectedClaims={...grant.claims,iss:this.issuer,sub:owner,aud:`${this.issuer}/api/messages`,jti:grantId,exp:Math.floor(expiresAt/1000),collections,mimeTypes,maxMessages,maxBytes,maxMessageBytes,...tagPolicy};if(canonical(expectedClaims)!==canonical(grant.claims)||grant.header.kid!==kid)fail('invalid_grant_metadata');await this.live(tx,{header:grant.header,claims:grant.claims});return {grant,claims:grant.claims,protectedHeader:grant.header};}}
       if ((await tx.list(key('contact-grant'))).filter(row => row.value.owner === owner).length >= 1000) fail('grant_limit');
       for (const collection of collections) if (!(await tx.get(key('collection', owner, collection)))?.active) fail('invalid_collection');
       const claims = { iss: this.issuer, sub: owner, aud: `${this.issuer}/api/messages`, jti: this.crypto.randomUUID(), iat: Math.floor(now / 1000), exp: Math.floor(expiresAt / 1000), collections, mimeTypes, maxMessages, maxBytes, maxMessageBytes,...tagPolicy };
       const header = { alg: signingKey.alg, kid, typ: 'contact+jwt' };
       const grant = { id: claims.jti, owner, header, claims, active: true, messagesUsed: 0, bytesUsed: 0, createdAt: now };
-      if(internal){grant.internalKind=internal.kind;grant.internalPointer=internal.pointer;await tx.set(internal.pointer,{version:1,...internal.binding,grantId:grant.id});}
       await tx.set(key('contact-grant', claims.jti), grant);
       return { grant, claims, protectedHeader: header };
     });

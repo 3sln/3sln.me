@@ -95,7 +95,7 @@ export class NotificationService {
             job.lease = this.crypto.randomUUID(); job.leaseUntil = now + leaseMs; job.attempts++;
             if(channel==='email')await tx.set(key('notification-email-budget',owner),{lease:job.lease,leaseUntil:job.leaseUntil,nextAt:0});
             await tx.set(path, job);
-            result.push({ ...job, messageId: event.messageId, payload: messagePushPayload(eligible.message,job.preview), subscription });
+            result.push({ ...job, messageId: event.messageId, payload: messagePushPayload(eligible.message,job.preview,{owner}), subscription });
           }
         }
       }
@@ -135,9 +135,12 @@ export class NotificationService {
   });}
 }
 
-export function messagePushPayload(message,preview=false){
- const payload={type:'bindle-message',messageId:message.id,title:'New message',body:'You have an unread message.',path:'/console?message='+encodeURIComponent(message.id),actions:[]};
- if(!preview)return payload;const summary=message.notificationSummary,p=message.appNotification;if(!summary||summary.version!==1)return payload;
+// The destination owner is a routing hint for the provider console, never authority.
+// Its account label is lock-screen visible, so it is attached only with previews on.
+export function messagePushPayload(message,preview=false,{owner,accountLabel}={}){
+ const destination=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(owner??'')?owner:null;
+ const payload={type:'bindle-message',...destination?{owner:destination}:{},messageId:message.id,title:'New message',body:'You have an unread message.',path:'/console?'+(destination?'account='+destination+'&':'')+'message='+encodeURIComponent(message.id),actions:[]};
+ if(!preview)return payload;if(destination&&typeof accountLabel==='string'&&accountLabel.length>0&&accountLabel.length<=100)payload.accountLabel=accountLabel;const summary=message.notificationSummary,p=message.appNotification;if(!summary||summary.version!==1)return payload;
  if(p){payload.sender={name:p.name,origin:p.origin};payload.title=`${p.name} (${p.origin})`;}
  else payload.title=summary.title||'New message';
  payload.body=Array.from([p?summary.title:null,summary.text].filter(Boolean).join('\n')).slice(0,360).join('');payload.sourceDigest=summary.sourceDigest;

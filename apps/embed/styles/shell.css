@@ -1,0 +1,21 @@
+/* Island shell (embed-islands §3.4). Static per client; the fragment selects the part, so `:target` paints a
+   neutral skeleton before any script runs. Colours follow the iframe's used color-scheme until the runtime
+   applies the scheme from `name` and the handshake. No state-dependent size, opacity or visibility. */
+:root{color-scheme:light dark;font:14px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --d-surface:#ffffff;--d-surface-raised:#f4f5f7;--d-text:#1b1d21;--d-text-muted:#545a63;--d-accent:#2f5bd3;--d-on-accent:#ffffff;--d-border:#7c838d;--d-focus:#2f5bd3;--d-danger:#b42318;
+  --fixed-surface:#ffffff;--fixed-text:#1b1d21;--fixed-muted:#545a63;--fixed-danger:#b42318}
+@media (prefers-color-scheme:dark){:root:not([data-scheme=light]){--d-surface:#17191d;--d-surface-raised:#22252b;--d-text:#eef0f3;--d-text-muted:#b2b8c1;--d-accent:#8fb0ff;--d-on-accent:#0e1424;--d-border:#80878f;--d-focus:#8fb0ff;--d-danger:#ff9a8f;--fixed-surface:#17191d;--fixed-text:#eef0f3;--fixed-muted:#b2b8c1;--fixed-danger:#ff9a8f}}
+:root[data-scheme=dark]{color-scheme:dark;--d-surface:#17191d;--d-surface-raised:#22252b;--d-text:#eef0f3;--d-text-muted:#b2b8c1;--d-accent:#8fb0ff;--d-on-accent:#0e1424;--d-border:#80878f;--d-focus:#8fb0ff;--d-danger:#ff9a8f;--fixed-surface:#17191d;--fixed-text:#eef0f3;--fixed-muted:#b2b8c1;--fixed-danger:#ff9a8f}
+:root[data-scheme=light]{color-scheme:light}
+:root{--c-surface:var(--t-surface,var(--d-surface));--c-surface-raised:var(--t-surface-raised,var(--d-surface-raised));--c-text:var(--t-text,var(--d-text));--c-text-muted:var(--t-text-muted,var(--d-text-muted));
+  --c-accent:var(--t-accent,var(--d-accent));--c-on-accent:var(--t-on-accent,var(--d-on-accent));--c-border:var(--t-border,var(--d-border));--c-focus:var(--t-focus,var(--d-focus));--c-danger:var(--t-danger,var(--d-danger));--c-radius:var(--t-radius,8px)}
+/* Tokens are ignored under forced colours. */
+@media (forced-colors:active){:root{--c-surface:Canvas;--c-surface-raised:Canvas;--c-text:CanvasText;--c-text-muted:CanvasText;--c-accent:ButtonText;--c-on-accent:ButtonFace;--c-border:CanvasText;--c-focus:Highlight;--c-danger:CanvasText;--fixed-surface:Canvas;--fixed-text:CanvasText;--fixed-muted:CanvasText;--fixed-danger:CanvasText}}
+html,body{margin:0;block-size:100%;overflow:hidden;background:transparent}
+.part{display:none;box-sizing:border-box;block-size:100%;inline-size:100%}
+.part:target,html[data-part=avatar] #avatar\.v1,html[data-part=account-switcher] #account-switcher\.v1,html[data-part=sign-in] #sign-in\.v1{display:block}
+/* Skeletons: avatar stays transparent (the element's own avatar shows through); outlines for the others. */
+#account-switcher\.v1:empty{background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--c-radius)}
+#sign-in\.v1:empty{border:1px solid var(--c-border);border-radius:var(--c-radius)}
+.visually-hidden{position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}

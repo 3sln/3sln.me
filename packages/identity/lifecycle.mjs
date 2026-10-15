@@ -1,12 +1,15 @@
 const DAY = 86400000;
 
 /** Compute a reviewable maintenance plan without changing data. Activity must
- * include authenticated account AND app resource use, not just login events. */
+ * include authenticated account AND app resource use, not just login events.
+ * `adminHold` ({held, releasedAt}) freezes planning while an administrator hold
+ * exists; a release restarts the activity clock, so earlier notices never count. */
 export function planAccountLifecycle(account, { now, shelfAfterDays = 180, deleteAfterDays = 730,
-  graceDays = 90, deletionEnabled = false, deletionSignoff = null,paymentProtection } = {}) {
+  graceDays = 90, deletionEnabled = false, deletionSignoff = null,paymentProtection,adminHold } = {}) {
   if (!Number.isFinite(now) || ![shelfAfterDays, deleteAfterDays, graceDays].every(Number.isFinite) || shelfAfterDays < 30 || deleteAfterDays <= shelfAfterDays || graceDays < 90) throw new TypeError('Conservative lifecycle policy required');
+  if (adminHold?.held !== false && adminHold !== undefined) return { action: 'retain', reason: 'An administrator hold freezes automatic lifecycle steps.' };
   if (account.status !== 'active') return { action: 'retain', reason: 'Nonactive account needs a separate maintenance policy.' };
-  const activity = Math.max(account.lastActiveAt || account.createdAt, account.lastResourceActivityAt || 0);
+  const activity = Math.max(account.lastActiveAt || account.createdAt, account.lastResourceActivityAt || 0, Number.isFinite(adminHold?.releasedAt) ? adminHold.releasedAt : 0);
   if (!Number.isFinite(activity) || activity > now) return { action: 'retain', reason: 'Activity data requires review.' };
   if ((account.sessions || []).some(s => s.expiresAt > now)) return { action: 'retain', reason: 'A live owner session exists.' };
   if (now - activity < shelfAfterDays * DAY) return { action: 'retain', reason: 'The account is within the active retention window.' };

@@ -4,6 +4,8 @@ const positive=(value,fallback)=>{value=value===undefined?fallback:value;if(type
 export function signupCapacityLimits(config={}){const limit=positive(config.SIGNUP_MAX_ADMISSIONS,100000),freeLimit=positive(config.SIGNUP_FREE_MAX_ADMISSIONS,Math.min(10000,limit));if(freeLimit>limit)throw new TypeError('Invalid signup limit');return {limit,freeLimit};}
 export function abuseWindows({operation,ipHash,subnetHash,handleHash,regionHash,signupLimits={},phase,signupKind='free'}){
  if(operation==='signup'&&phase==='attempt')return [{key:`signup:attempt:${ipHash}`,windowMs:60000,limit:5},{key:`signup:attempt-network:${subnetHash}`,windowMs:3600000,limit:100}];
+ // Unauthenticated boot setup preparation: per-IP pseudonym windows plus a global ceiling.
+ if(operation==='boot-begin')return [{key:`boot-begin:burst:${ipHash}`,windowMs:60000,limit:5},{key:`boot-begin:ip:${ipHash}`,windowMs:3600000,limit:20},{key:'boot-begin:global',windowMs:3600000,limit:200}];
  if(operation==='device-poll')return [{key:`device-poll:burst:${ipHash}`,windowMs:60000,limit:30},{key:`device-poll:ip:${ipHash}`,windowMs:600000,limit:120}];
  const windows=[{key:`${operation}:burst:${ipHash}`,windowMs:60000,limit:operation==='signup'?3:10}];
  if(operation==='signup'){

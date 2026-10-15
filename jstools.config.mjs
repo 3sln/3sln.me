@@ -5,6 +5,7 @@ import {defineConfig} from '@3sln/js-tools';
 // their meaning when mirrored under /assets/. No source imports are rewritten.
 export const publicSources = [
   'apps/web/src',
+  'apps/embed',
   'vendor/dodo',
   'vendor/ngin',
   'packages/sdk/src',
@@ -15,6 +16,8 @@ export const publicSources = [
   'packages/recovery/identity-backup.mjs',
   'packages/identity/handles.mjs',
   'packages/messaging/form-policy.mjs',
+  'packages/messaging/tags.mjs',
+  'packages/messaging/store.mjs',
   'modules/publications',
   'scripts/recovery-kdf-worker.mjs',
   'scripts/message-frame-controller.mjs',
@@ -41,18 +44,25 @@ export default defineConfig({
   entries: {
     app: {module:'apps/web/src/main.mjs',css:'apps/web/styles.css'},
     authorize: {module:'apps/web/src/authorize.mjs',css:'apps/web/styles.css'},
+    // Islands shell runtime for the dedicated embed origin. build-assets re-roots its graph under /embed/assets/,
+    // gives it its own static import map and adds apps/embed/styles/parts.css as the shell's second stylesheet.
+    embed: {module:'apps/embed/src/boot.mjs',css:'apps/embed/styles/shell.css'},
   },
   // js-tools' standalone ESM bundler also serves public SDK entries: external
   // embedding pages have no application import map, just as workers do not.
-  // These two SDK entries execute in a page, not in a Worker runtime.
+  // These SDK entries execute in a page, not in a Worker runtime.
   workers: {
     recovery:'scripts/recovery-kdf-worker.mjs',
     messageFrame:'scripts/message-frame-controller.mjs',
     messageSanitizer:'scripts/message-sanitizer.mjs',
-    sdkLogin:'packages/sdk/src/login-element.mjs',
+    sdkDefine:'packages/sdk/src/define.mjs',
+    sdkCallback:'packages/sdk/src/callback.mjs',
     sdkIdentity:'packages/sdk/src/identity.mjs',
+    // The island worker has no import map, so it is bundled whole (embed islands EI-13).
+    embedWorker:'apps/embed/src/worker/index.mjs',
   },
-  exclude: ['packages/recovery/vectors.mjs'],
+  // The embed service worker is copied to /embed/sw.js with a build-derived generation, never fingerprinted.
+  exclude: ['packages/recovery/vectors.mjs','apps/embed/sw.js'],
   minify: false,
   minifyCss: true,
   // Pinned 0.2.0 fingerprints .mjs but only adds .js to its import map, and its

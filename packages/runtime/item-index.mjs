@@ -1,13 +1,14 @@
 import {publicMessageMetadata as publicMessage} from '../messaging/message-metadata.mjs';
 import {normalizeIncomingFilter,incomingSort,normalizeIncomingUpdate} from './message-views.mjs';
 import {StorageError} from '../storage/policy.mjs';
+import {migrateTags,changeTags} from '../messaging/tags.mjs';
 const encode=value=>btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(value)))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
 function decode(value){try{if(typeof value!=='string'||value.length>4096)throw new Error();return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(atob(value.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0))));}catch{throw new StorageError('invalid_args','Invalid page cursor.');}}
 /** SQL catalogs provide bounded keyset pages; payloads stay in object storage.
  * SQL is an injected resource supported by SQLite DOs and Node SQLite. */
 export class AccountItemIndex {
  constructor(sql){this.sql=sql;sql.exec('CREATE TABLE IF NOT EXISTS inbox_catalog (id TEXT PRIMARY KEY, owner TEXT NOT NULL, received_at INTEGER NOT NULL, collection TEXT NOT NULL, unread INTEGER NOT NULL, quarantined INTEGER NOT NULL, record TEXT NOT NULL)');sql.exec('CREATE INDEX IF NOT EXISTS inbox_owner_time ON inbox_catalog(owner,received_at DESC,id DESC)');sql.exec('CREATE INDEX IF NOT EXISTS inbox_collection_time ON inbox_catalog(owner,collection,received_at DESC,id DESC)');sql.exec('CREATE INDEX IF NOT EXISTS inbox_unread_time ON inbox_catalog(owner,unread,received_at DESC,id DESC)');sql.exec('CREATE INDEX IF NOT EXISTS inbox_quarantine_time ON inbox_catalog(owner,quarantined,received_at DESC,id DESC)');this.initIncoming();sql.exec('CREATE TABLE IF NOT EXISTS hosted_catalog (resource TEXT NOT NULL, object_key TEXT NOT NULL, record TEXT NOT NULL, PRIMARY KEY(resource,object_key))');}
- upsert(message){this.sql.exec('INSERT INTO inbox_catalog(id,owner,received_at,collection,unread,quarantined,record) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET collection=excluded.collection,unread=excluded.unread,quarantined=excluded.quarantined,record=excluded.record',message.id,message.owner,message.receivedAt??0,message.collection??'',message.readAt==null?1:0,message.quarantined?1:0,JSON.stringify(publicMessage(message)));this.projectIncoming(message);}
+ upsert(message){message=migrateTags(message);this.sql.exec('INSERT INTO inbox_catalog(id,owner,received_at,collection,unread,quarantined,record) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET collection=excluded.collection,unread=excluded.unread,quarantined=excluded.quarantined,record=excluded.record',message.id,message.owner,message.receivedAt??0,message.collection??'',message.readAt==null?1:0,message.quarantined?1:0,JSON.stringify(publicMessage(message)));this.projectIncoming(message);}
  remove(id){const prior=[...this.sql.exec('SELECT owner,item_id,unread FROM incoming_members WHERE id=?',id)][0];this.sql.exec('DELETE FROM inbox_catalog WHERE id=?',id);this.sql.exec('DELETE FROM incoming_members WHERE id=?',id);if(prior)this.refreshIncoming(prior.owner,prior.item_id,-1,-prior.unread);}
  get(id){const row=[...this.sql.exec('SELECT record FROM inbox_catalog WHERE id=?',id)][0];return row?JSON.parse(row.record):null;}
  page(owner,{collection,unread,quarantined,limit=100,cursor}={}){
@@ -35,13 +36,22 @@ export class AccountItemIndex {
  incomingState(key){return [...this.sql.exec('SELECT value FROM incoming_state WHERE key=?',key)][0]?.value;}
  setIncomingState(key,value){this.sql.exec('INSERT INTO incoming_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',key,String(value));}
  migrateIncoming(limit=200){
-  if(this.incomingState('ready')==='1')return true;
+  if(this.incomingState('ready')==='1')return this.migrateIncomingTags(limit);
   const after=this.incomingState('migration')??'',rows=[...this.sql.exec('SELECT id,record FROM inbox_catalog WHERE id>? ORDER BY id LIMIT ?',after,limit)];
   for(const row of rows)this.projectIncoming(JSON.parse(row.record));
   if(rows.length<limit)this.setIncomingState('ready','1');else this.setIncomingState('migration',rows.at(-1).id);
   return rows.length<limit;
  }
+ // Tag model v1: re-project legacy members in bounded batches so system tags reach the tag index.
+ migrateIncomingTags(limit=200){
+  if(this.incomingState('tag-model')==='1')return true;
+  const after=this.incomingState('tag-migration')??'',rows=[...this.sql.exec('SELECT id,record FROM incoming_members WHERE id>? ORDER BY id LIMIT ?',after,limit)];
+  for(const row of rows)this.projectIncoming(JSON.parse(row.record));
+  if(rows.length<limit)this.setIncomingState('tag-model','1');else this.setIncomingState('tag-migration',rows.at(-1).id);
+  return rows.length<limit;
+ }
  projectIncoming(message){
+  message=migrateTags(message);
   const c=message.conversation,conversation=c&&typeof c.id==='string'&&typeof c.source?.origin==='string'&&typeof c.source?.owner==='string';
   const itemId=conversation?'conversation:'+encode([c.source.origin,c.source.owner,c.id]):message.id;
   const prior=[...this.sql.exec('SELECT owner,item_id,unread,sequence,record FROM incoming_members WHERE id=?',message.id)][0],record=JSON.stringify(publicMessage(message));
@@ -68,8 +78,8 @@ export class AccountItemIndex {
   this.setIncomingState('revision',Number(this.incomingState('revision'))+1);
  }
  incomingPreferences(owner,id,fallback){
-  const existing=[...this.sql.exec('SELECT generation,revision,record FROM incoming_preferences WHERE owner=? AND id=?',owner,id)][0];if(existing)return {...existing,record:JSON.parse(existing.record)};
-  const previous=[...this.sql.exec('SELECT record FROM incoming_catalog WHERE owner=? AND id=?',owner,id)][0],source=previous?JSON.parse(previous.record):fallback,record={tags:[...source.tags??[]],classification:source.classification??'unclassified'};
+  const existing=[...this.sql.exec('SELECT generation,revision,record FROM incoming_preferences WHERE owner=? AND id=?',owner,id)][0];if(existing)return {...existing,record:migrateTags(JSON.parse(existing.record))};
+  const previous=[...this.sql.exec('SELECT record FROM incoming_catalog WHERE owner=? AND id=?',owner,id)][0],source=previous?JSON.parse(previous.record):fallback,record=migrateTags({tags:[...source.tags??[]],classification:source.classification??'unclassified'});
   this.sql.exec('INSERT INTO incoming_preferences(owner,id,generation,revision,record) VALUES(?,?,0,1,?)',owner,id,JSON.stringify(record));return {generation:0,revision:1,record};
  }
  updateIncoming(owner,input,now=Date.now()){
@@ -77,7 +87,7 @@ export class AccountItemIndex {
   if(!row)throw new StorageError('not_found','This conversation has no retained incoming items.',404);
   const current=JSON.parse(row.record),prefs=this.incomingPreferences(owner,request.id,current);if(prefs.revision!==request.expectedRevision)throw new StorageError('item_conflict','Conversation organization changed. Refresh before saving.',409);
   if(request.read===true&&request.expectedActivityRevision!==prefs.generation)throw new StorageError('item_conflict','New conversation activity arrived. Refresh before marking read.',409);
-  if(request.tags!==undefined)prefs.record.tags=request.tags;if(request.classification!==undefined)prefs.record.classification=request.classification;
+  try{const {tags,addTags,removeTags,classification}=request;changeTags(prefs.record,{tags,addTags,removeTags,classification},{source:'owner'},now,{owner:true});}catch(e){if(e.code!=='invalid_actions')throw e;throw new StorageError('invalid_view','Choose valid conversation tags.');}
   if(request.read!==undefined){prefs.record.readMode=request.read?'through':'unread';if(request.read){prefs.record.readThrough=prefs.generation;prefs.record.readAt=now;}}
   this.sql.exec('UPDATE incoming_preferences SET revision=?,record=? WHERE owner=? AND id=?',prefs.revision+1,JSON.stringify(prefs.record),owner,request.id);this.refreshIncoming(owner,request.id);
   return JSON.parse([...this.sql.exec('SELECT record FROM incoming_catalog WHERE owner=? AND id=?',owner,request.id)][0].record);

@@ -97,7 +97,7 @@ test('conversation owner tags and classification survive new events, deletions, 
  assert.deepEqual(index.page(owner,{collection:'legacy-private'}).items.filter(m=>m.id==='start').map(m=>({id:m.id,tags:m.tags,collection:m.collection})),before,'organization is not a legacy permission/membership edit');
  assert.throws(()=>index.updateIncoming(owner,{id:card.id,expectedRevision:1,tags:['stale']}),{code:'item_conflict'});
  index.remove('start');index.remove('reply');assert.equal((await index.incomingPage(owner,{})).items.length,0);
- const reopened=new AccountItemIndex(metadata.sql);reopened.upsert(message('later',{conversation,receivedAt:30,tags:['different']}));card=(await reopened.incomingPage(owner,{})).items[0];assert.deepEqual(card.tags,['owner:project']);assert.equal(card.classification,'work');assert.equal(card.organizationRevision,2);
+ const reopened=new AccountItemIndex(metadata.sql);reopened.upsert(message('later',{conversation,receivedAt:30,tags:['different']}));card=(await reopened.incomingPage(owner,{})).items[0];assert.deepEqual(card.tags,['owner:project','sys:work']);assert.equal(card.classification,'work');assert.equal(card.organizationRevision,2);
  assert.throws(()=>reopened.updateIncoming(other,{id:card.id,expectedRevision:2,tags:['cross-owner']}),{code:'not_found'});
 });
 test('conversation mark-read uses a local seen-event watermark, preserves newer arrivals and sends no receipt',async t=>{

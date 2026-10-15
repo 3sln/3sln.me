@@ -3,6 +3,9 @@ import {FederationObjectURLs} from './object-urls.mjs';
 import {objectKey} from '../storage/policy.mjs';
 import { digest, base64url, boundedString, canonical } from '../messaging/store.mjs';
 import { fail, exact, https, strings, object, pinSchema, validateValue } from './schema.mjs';
+import {DPOP_TYP,verifyProof,dpopNonces,consumeProof,jktPattern} from './dpop.mjs';
+import {createAppSession,rotateBound,revokeToken} from './app-sessions.mjs';
+import {mintClaim,linkExchange,redeemClaim,startSession,sessionState,forget,sessionAvatar,openStream,streamTick,endSession} from './embed-bindings.mjs';
 export const PREFERENCES='https://3sln.me/artefacts/contracts/preferences/v1';
 export const PROFILE='https://3sln.me/artefacts/contracts/profile/v1';
 export const DESCRIPTOR='https://3sln.me/artefacts/contracts/resource-descriptor/v1';
@@ -17,7 +20,8 @@ const scopeAllows=(value,method,args)=>{if(method==='presign'&&(value.prefix||va
 const assignedRefs=(field,value)=>asList(field,value).map(reference);
 const asList=(field,value)=>(field.cardinality?.max??1)===1?[value]:value;
 export class FederationService {
-  constructor({store,crypto=globalThis.crypto,clock=()=>Date.now(),issuer,clients=[],schemaFetcher,schemaHosts=[],authenticateOwner,dispatchCapability,allowInsecureLocalhost=false,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs}){
+  constructor({store,crypto=globalThis.crypto,clock=()=>Date.now(),issuer,clients=[],schemaFetcher,schemaHosts=[],authenticateOwner,dispatchCapability,allowInsecureLocalhost=false,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs,dpop,embedView,embedOrigin}){
+    this.dpopNonces=dpop?.secret?dpopNonces({secret:dpop.secret,crypto,clock}):null;this.embedView=embedView;this.embedOrigin=embedOrigin;
     this.objectURLService=objectURLs?.sign&&objectURLs?.verify?new FederationObjectURLs(this,objectURLs):null;this.refreshEnabled=refreshEnabled===true;this.connections=connections;this.routingKey=routingKey;this.validateSubject=validateSubject;this.resourceProvider=resourceProvider;if(routingKey&&!/^[a-f0-9-]{36}$/.test(routingKey))fail('invalid_config');this.allowInsecureLocalhost=allowInsecureLocalhost;const origin=this.url(issuer).origin;if(origin!==issuer)fail('invalid_config','Issuer must be an HTTPS origin.');
     Object.assign(this,{store,crypto,clock,issuer,schemaFetcher,schemaHosts,authenticateOwner,dispatchCapability});this.audience=`${issuer}/bindle/rpc`;this.clients=new Map();
     for(const client of clients){this.url(client.id);const origin=this.url(client.origin).origin;if(origin!==client.origin||!boundedString(client.name,100)||!boundedString(client.id,200))fail('invalid_config');strings(client.redirectUris,16);if(!client.redirectUris.length)fail('invalid_config');for(const uri of client.redirectUris){if(this.url(uri).origin!==origin)fail('invalid_config');}if(this.clients.has(client.id))fail('invalid_config');this.clients.set(client.id,copy(client));}
@@ -35,13 +39,31 @@ export class FederationService {
   async beginAuthorization(input){
     exact(input,['clientId','redirectUri','challenge','challengeMethod','state','requests']);const client=this.client(input.clientId,input.redirectUri);
     if(input.challengeMethod!=='S256'||typeof input.challenge!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(input.challenge)||!boundedString(input.state,512)||!Array.isArray(input.requests)||input.requests.length>8)fail('invalid_request');
+    const requests=await this.pinRequests(input.requests);
+    const requestId=this.random();await this.store.transaction(async tx=>{await this.bounded(tx,'request',32);return tx.set(key('request',requestId),{...copy(input),requests,requestId,expiresAt:this.clock()+600000,status:'pending'});});return {requestId,view:{client:copy(client),requests:requests.map(({schema,digest,...request})=>({...request,schema,digest})),issuer:this.issuer}};
+  }
+  async pinRequests(list){
     const requests=[];
-    for(const request of input.requests){exact(request,['fragment','required','purpose','fields','methods']);if(typeof request.required!=='boolean'||!boundedString(request.purpose,1000))fail('invalid_request');strings(request.fields,32);if(!request.fields.length||requests.some(r=>r.fragment===request.fragment))fail('invalid_request');const pinned=await this.schema(request.fragment);const methods=request.methods??{};if(!object(methods))fail('invalid_request');
+    for(const request of list){exact(request,['fragment','required','purpose','fields','methods']);if(typeof request.required!=='boolean'||!boundedString(request.purpose,1000))fail('invalid_request');strings(request.fields,32);if(!request.fields.length||requests.some(r=>r.fragment===request.fragment))fail('invalid_request');const pinned=await this.schema(request.fragment);const methods=request.methods??{};if(!object(methods))fail('invalid_request');
       for(const name of request.fields){if(!Object.hasOwn(pinned.schema.fields,name))fail('invalid_request');}
       for(const [name,contracts] of Object.entries(methods)){if(!request.fields.includes(name)||pinned.schema.fields[name].type!=='resource'||!object(contracts))fail('invalid_request');for(const [contract,list] of Object.entries(contracts)){if(!pinned.schema.fields[name].contracts.includes(contract))fail('invalid_request');strings(list,32);if(!list.length||list.some(method=>!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(method)))fail('invalid_request');}}
       requests.push({...copy(request),methods:copy(methods),digest:pinned.digest,schema:pinned.schema});
     }
-    const requestId=this.random();await this.store.transaction(async tx=>{await this.bounded(tx,'request',32);return tx.set(key('request',requestId),{...copy(input),requests,requestId,expiresAt:this.clock()+600000,status:'pending'});});return {requestId,view:{client:copy(client),requests:requests.map(({schema,digest,...request})=>({...request,schema,digest})),issuer:this.issuer}};
+    return requests;
+  }
+  async entryIdentity(authority){const identity=await this.authenticateOwner(authority),subject=await this.owner(authority);return {subject,authTime:Number.isSafeInteger(identity?.authTime)?identity.authTime:null};}
+  /** Owner-shard half of a provider-owned authorization entry. The entry store has
+   * already durably recorded this owner and requestId; retries resume the request. */
+  async beginEntryAuthorization(authority,input){
+    exact(input,['requestId','entry']);const entry=input.entry;exact(entry,['entryHash','clientId','redirectUri','challenge','state','requests','digests','intent','subjectConstraint','maxAge','delivery','dpopJkt','embedJkt']);
+    if(!this.opaque(input.requestId)||!/^[A-Za-z0-9_-]{43}$/.test(entry.entryHash??'')||!['login','select-account','reauthenticate'].includes(entry.intent)||!['redirect','popup','embed-popup'].includes(entry.delivery)||entry.dpopJkt!==undefined&&!jktPattern.test(entry.dpopJkt)||(entry.embedJkt!==undefined)!==(entry.delivery==='embed-popup')||entry.embedJkt!==undefined&&!jktPattern.test(entry.embedJkt))fail('invalid_request');
+    const client=this.client(entry.clientId,entry.redirectUri);if(typeof entry.challenge!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(entry.challenge)||!boundedString(entry.state,512)||!Array.isArray(entry.requests)||entry.requests.length>8)fail('invalid_request');
+    const {subject,authTime}=await this.entryIdentity(authority);
+    if(entry.intent==='reauthenticate'){if(entry.subjectConstraint!==subject)fail('account_mismatch','Sign in to the account this application asked about.');if(!Number.isSafeInteger(entry.maxAge)||authTime===null||authTime<this.clock()-entry.maxAge*1000)fail('reauthentication_required','Sign in again to confirm this account.');}
+    const requests=await this.pinRequests(entry.requests);if(entry.digests!==undefined&&(!Array.isArray(entry.digests)||entry.digests.length!==requests.length||requests.some((r,n)=>r.digest!==entry.digests[n])))fail('schema_changed','Immutable fragment changed; use a new URL.');
+    const binding={entryHash:entry.entryHash,intent:entry.intent,delivery:entry.delivery,...entry.dpopJkt?{dpopJkt:entry.dpopJkt}:{},...entry.embedJkt?{embedJkt:entry.embedJkt}:{},...entry.intent==='reauthenticate'?{subjectConstraint:entry.subjectConstraint,maxAge:entry.maxAge}:{}};
+    await this.store.transaction(async tx=>{const existing=await tx.get(key('request',input.requestId));if(existing){if(existing.entry?.entryHash!==entry.entryHash)fail('invalid_request');return;}await this.bounded(tx,'request',32);await tx.set(key('request',input.requestId),{clientId:entry.clientId,redirectUri:entry.redirectUri,challenge:entry.challenge,challengeMethod:'S256',state:entry.state,requests,requestId:input.requestId,entry:binding,expiresAt:this.clock()+600000,status:'pending'});});
+    return {requestId:input.requestId,view:{client:copy(client),requests:requests.map(({schema,digest,...request})=>({...request,schema,digest})),issuer:this.issuer}};
   }
   async pending(tx,id){const request=await tx.get(key('request',id));if(!request||request.status!=='pending'||request.expiresAt<=this.clock())fail('invalid_request','Authorization request expired or completed.');return request;}
   async inspect(requestId,authority){let binding;if(authority!==undefined){const subject=await this.owner(authority);if(this.connections){const pending=await this.store.transaction(tx=>this.pending(tx,requestId));binding=await this.connections.binding(pending.clientId);}await this.syncResources(subject);}return this.store.transaction(async tx=>{const request=await this.pending(tx,requestId);const subject=authority===undefined?null:await this.owner(authority,tx);if(subject&&this.connections){request.connectionBinding=binding;request.connectionReviewed=true;await tx.set(key('request',requestId),request);}const identity=subject?await this.authenticateOwner(authority):null;const requests=[];for(const r of request.requests){let preferences=null,resources=[],affectedApps=[],consumerDigest;if(subject){preferences=await tx.get(key('preferences',`${subject}|${r.fragment}`));resources=(await tx.list(key('resource',''))).map(x=>x.value).filter(x=>x.owner===subject).map(({id,label,contracts,provider,scoping,preview})=>({id,label,contracts,provider,...scoping?{scoping}:{},...preview?{preview}:{} }));const snapshot=await this.consumerSnapshot(tx,subject,r.fragment,identity.epoch);affectedApps=snapshot.consumers;consumerDigest=snapshot.digest;}requests.push({...r,values:preferences?.values??{},revision:preferences?.revision,resources,affectedApps,consumerDigest});}return {requestId,issuer:this.issuer,client:copy(this.clients.get(request.clientId)),requests,authenticated:!!subject,expiresAt:request.expiresAt};});}
@@ -121,15 +143,19 @@ export class FederationService {
       return {fragment,revision};
     });
   }
-  async approve(authority,input){let issuedCodeKey,approvedRequest,notificationConsent=false;const identity=await this.authenticateOwner(authority);await this.syncResources(identity.subject);exact(input,['requestId','approved','denied']);if(input.denied!==undefined&&input.denied!==true)fail('invalid_args');if(!input.denied&&!Array.isArray(input.approved))fail('invalid_args');const response=await this.store.transaction(async tx=>{const subject=await this.owner(authority,tx);const currentIdentity=await this.authenticateOwner(authority);if(currentIdentity.subject!==identity.subject||currentIdentity.epoch!==identity.epoch)fail('stale_consent');const request=await this.pending(tx,input.requestId);if(input.denied){request.status='denied';await tx.set(key('request',input.requestId),request);return {redirectUri:this.redirect(request,{error:'access_denied'})};}
+  async approve(authority,input,options={}){let issuedCodeKey,approvedRequest,notificationConsent=false,claim;const identity=await this.authenticateOwner(authority);await this.syncResources(identity.subject);exact(input,['requestId','approved','denied']);if(input.denied!==undefined&&input.denied!==true)fail('invalid_args');if(!input.denied&&!Array.isArray(input.approved))fail('invalid_args');const response=await this.store.transaction(async tx=>{const subject=await this.owner(authority,tx);const currentIdentity=await this.authenticateOwner(authority);if(currentIdentity.subject!==identity.subject||currentIdentity.epoch!==identity.epoch)fail('stale_consent');const request=await this.pending(tx,input.requestId);if(!!request.entry!==(options?.entry===true))fail('invalid_request','Continue from the provider sign-in page.');if(input.denied){request.status='denied';await tx.set(key('request',input.requestId),request);return {redirectUri:this.redirect(request,{error:'access_denied'})};}
+    const reauthenticated=request.entry?.intent==='reauthenticate';if(reauthenticated&&(subject!==request.entry.subjectConstraint||!Number.isSafeInteger(identity.authTime)||identity.authTime<this.clock()-request.entry.maxAge*1000))fail('reauthentication_required','Sign in again to confirm this account.');
     if(input.approved.length>request.requests.length||new Set(input.approved.map(a=>a.fragment)).size!==input.approved.length)fail('invalid_grant');const grants=[];
     for(const selection of input.approved){exact(selection,['fragment','fields','resources','methods','revision']);const wanted=request.requests.find(r=>r.fragment===selection.fragment);if(!wanted)fail('invalid_grant');strings(selection.fields,32);if(!selection.fields.length||selection.fields.some(name=>!wanted.fields.includes(name))||wanted.required&&wanted.fields.some(name=>!selection.fields.includes(name)))fail('invalid_grant');const preferences=await tx.get(key('preferences',`${subject}|${selection.fragment}`));if(!preferences||preferences.digest!==wanted.digest||selection.revision!==preferences.revision)fail('stale_consent','Review the current preference values before approval.');const resources=Object.assign(Object.create(null),selection.resources??{}),methods=Object.assign(Object.create(null),selection.methods??{});if(!object(resources)||!object(methods)||Object.keys(resources).some(n=>!selection.fields.includes(n))||Object.keys(methods).some(n=>!selection.fields.includes(n)))fail('invalid_grant');
       for(const name of selection.fields){const field=wanted.schema.fields[name];if(!Object.hasOwn(preferences.values,name)&&(field.cardinality?.min??1)>0)fail('invalid_preferences');if(field.type!=='resource'){if(resources[name]!==undefined||methods[name]!==undefined)fail('invalid_grant');continue;}resources[name]??=[];methods[name]??={};strings(resources[name],16);const assigned=Object.hasOwn(preferences.values,name)?assignedRefs(field,preferences.values[name]):[];if((resources[name]??[]).length<(field.cardinality?.min??1)||resources[name].some(id=>!assigned.includes(id)))fail('invalid_grant');if(!object(methods[name]??{}))fail('invalid_grant');for(const[contract,allowed]of Object.entries(methods[name]??{})){strings(allowed,32);if(!allowed.length||allowed.some(m=>!wanted.methods[name]?.[contract]?.includes(m)))fail('invalid_grant');for(const id of resources[name]){const resource=await tx.get(key('resource',id));if(!resource||resource.owner!==subject||allowed.some(m=>!resource.contracts[contract]?.includes(m)))fail('invalid_grant');}}}
       await this.bounded(tx,'grant',256);const id=this.random(),grant={id,subject,clientId:request.clientId,fragment:selection.fragment,digest:wanted.digest,fields:copy(selection.fields),resources:copy(resources),methods:copy(methods),active:true,epoch:identity.epoch,assignedResources:Object.fromEntries(selection.fields.filter(name=>wanted.schema.fields[name].type==='resource').map(name=>[name,Object.hasOwn(preferences.values,name)?assignedRefs(wanted.schema.fields[name],preferences.values[name]):[]])),approvedResources:copy(resources),resourceScopes:Object.fromEntries(Object.entries(resources).map(([field,ids])=>[field,Object.fromEntries(ids.map(id=>[id,scope(asList(wanted.schema.fields[field],preferences.values[field]).find(value=>reference(value)===id))]))])),resourceGenerations:Object.fromEntries(await Promise.all(Object.values(resources).flat().map(async id=>[id,(await tx.get(key('resource',id)))?.generation??null]))),approvedAt:this.clock()};await tx.set(key('grant',id),grant);grants.push(id);notificationConsent||=Object.entries(methods).some(([field,contracts])=>hasNotificationMethod({[field]:contracts})&&resources[field]?.length);
     }
     if(request.requests.some(r=>r.required&&!input.approved.some(a=>a.fragment===r.fragment)))fail('consent_required','Declining a required fragment cancels this connection.');
-    await this.bounded(tx,'code',64);const code=this.random();issuedCodeKey=key('code',await digest(this.crypto,`code\0${code}`));approvedRequest=request;await tx.set(issuedCodeKey,{subject,epoch:identity.epoch,clientId:request.clientId,redirectUri:request.redirectUri,challenge:request.challenge,grants,expiresAt:this.clock()+60000});request.status='approved';await tx.set(key('request',request.requestId),request);return {redirectUri:this.redirect(request,{code})};
-  });if(issuedCodeKey&&this.connections){try{if(!approvedRequest.connectionReviewed)fail('stale_consent','Review this application connection before approval.');const connection=await this.connections.connect(this.clients.get(approvedRequest.clientId),approvedRequest.connectionBinding,{notifications:notificationConsent});await this.active(identity.subject,identity.epoch);await this.store.transaction(async tx=>{const record=await tx.get(issuedCodeKey);if(!record)fail('invalid_grant');record.connection=connection;await tx.set(issuedCodeKey,record);for(const id of record.grants){const grant=await tx.get(key('grant',id));if(grant){grant.connection=copy(connection);await tx.set(key('grant',id),grant);}}});}catch(error){await this.store.transaction(async tx=>{const record=await tx.get(issuedCodeKey);for(const id of record?.grants??[])await tx.delete(key('grant',id));await tx.delete(issuedCodeKey);const request=await tx.get(key('request',input.requestId));if(request?.status==='approved'){request.status='pending';request.connectionReviewed=false;await tx.set(key('request',input.requestId),request);}});throw error;}}return response;}
+    await this.bounded(tx,'code',64);const code=this.random(),codeHash=await digest(this.crypto,`code\0${code}`);issuedCodeKey=key('code',codeHash);approvedRequest=request;
+    // Only an attested embed entry approved through the entry route pairs a claim with its code.
+    let claimHash;if(options?.claim===true&&request.entry?.delivery==='embed-popup'&&request.entry.embedJkt)({claim,claimHash}=await mintClaim(this,tx,{codeHash,subject,epoch:identity.epoch,clientId:request.clientId,embedJkt:request.entry.embedJkt}));
+    await tx.set(issuedCodeKey,{subject,epoch:identity.epoch,clientId:request.clientId,redirectUri:request.redirectUri,challenge:request.challenge,grants,expiresAt:this.clock()+60000,...request.entry?{intent:request.entry.intent,...request.entry.dpopJkt?{dpopJkt:request.entry.dpopJkt}:{},...reauthenticated?{authTime:identity.authTime}:{},...claimHash?{claimHash}:{}}:{}});request.status='approved';await tx.set(key('request',request.requestId),request);return {redirectUri:this.redirect(request,{code}),...claim?{claim}:{}};
+  });if(issuedCodeKey&&this.connections){try{if(!approvedRequest.connectionReviewed)fail('stale_consent','Review this application connection before approval.');const connection=await this.connections.connect(this.clients.get(approvedRequest.clientId),approvedRequest.connectionBinding,{notifications:notificationConsent});await this.active(identity.subject,identity.epoch);await this.store.transaction(async tx=>{const record=await tx.get(issuedCodeKey);if(!record)fail('invalid_grant');record.connection=connection;await tx.set(issuedCodeKey,record);for(const id of record.grants){const grant=await tx.get(key('grant',id));if(grant){grant.connection=copy(connection);await tx.set(key('grant',id),grant);}}});}catch(error){await this.store.transaction(async tx=>{const record=await tx.get(issuedCodeKey);for(const id of record?.grants??[])await tx.delete(key('grant',id));if(record?.claimHash)await tx.delete(key('claim',record.claimHash));await tx.delete(issuedCodeKey);const request=await tx.get(key('request',input.requestId));if(request?.status==='approved'){request.status='pending';request.connectionReviewed=false;await tx.set(key('request',input.requestId),request);}});throw error;}}return response;}
   redirect(request,params){const url=new URL(request.redirectUri);for(const[k,v]of Object.entries({...params,state:request.state,iss:this.issuer}))url.searchParams.set(k,v);return url.href;}
   async liveGrantIds(tx,authority){
     const grants=[];for(const id of authority.grants){const grant=await tx.get(key('grant',id));if(grant?.active&&grant.subject===authority.subject&&grant.clientId===authority.clientId&&grant.epoch===authority.epoch)grants.push(id);}
@@ -148,7 +174,7 @@ export class FederationService {
     let live=0;const removed=new Set();
     for(const {key:familyKey,value:family}of await tx.list(key('family',''))){
       if(family.subject!==current.subject)continue;
-      let invalid=family.status!=='active'||family.expiresAt<=this.clock()||family.epoch!==current.epoch||!this.clients.has(family.clientId);
+      let invalid=family.status!=='active'||family.expiresAt<=this.clock()||(family.idleExpiresAt??Infinity)<=this.clock()||family.epoch!==current.epoch||!this.clients.has(family.clientId);
       if(!invalid&&this.connections){try{invalid=!family.connection||await this.connections.check(family.connection,family.clientId)!==true;}catch(error){if(['invalid_token','unauthorized'].includes(error.code))invalid=true;else throw error;}}
       if(!invalid){try{await this.liveGrantIds(tx,family);}catch(error){if(error.code==='unauthorized')invalid=true;else throw error;}}
       if(invalid){for(const hash of family.history??[])await tx.delete(key('refresh',hash));await tx.delete(familyKey);removed.add(family.familyId);}else live++;
@@ -164,26 +190,29 @@ export class FederationService {
     return {family,refresh_token,refresh_expires_in:28800};
   }
   async exchange(input){
-    exact(input,['code','verifier','clientId','redirectUri']);this.client(input.clientId,input.redirectUri);
+    exact(input,['code','verifier','clientId','redirectUri','dpop']);this.client(input.clientId,input.redirectUri);
     if(!this.opaque(input.code)||typeof input.verifier!=='string'||!/^[A-Za-z0-9._~-]{43,128}$/.test(input.verifier))fail('invalid_grant');
-    const hash=await digest(this.crypto,`code\0${input.code}`),challenge=await digest(this.crypto,input.verifier);
+    const hash=await digest(this.crypto,`code\0${input.code}`),challenge=await digest(this.crypto,input.verifier),proof=input.dpop===undefined?null:await this.tokenProof(input.dpop);
     return this.store.transaction(async tx=>{
       const code=await tx.get(key('code',hash));if(!code||code.expiresAt<=this.clock()||code.clientId!==input.clientId||code.redirectUri!==input.redirectUri||code.challenge!==challenge)fail('invalid_grant');
+      // A key named by the entry must be proven; an unpinned key cannot bind the session.
+      if((code.dpopJkt??null)!==(proof?.jkt??null))fail('invalid_dpop_proof','The DPoP proof does not match this authorization.');if(proof)await this.consumeProof(tx,proof);
       await this.active(code.subject,code.epoch);if(this.connections&&(!code.connection||await this.connections.check(code.connection,code.clientId)!==true))fail('unauthorized');
       const authority={subject:code.subject,epoch:code.epoch,clientId:code.clientId,grants:copy(code.grants),...code.connection?{connection:copy(code.connection)}:{}};
-      let refresh;if(this.refreshEnabled)refresh=await this.createRefreshFamily(tx,authority);
-      const response=await this.issueAccess(tx,refresh?.family??authority);await tx.delete(key('code',hash));
-      return {...response,...refresh?{refresh_token:refresh.refresh_token,refresh_expires_in:refresh.refresh_expires_in}:{}};
+      let refresh;if(this.refreshEnabled)refresh=code.dpopJkt?await createAppSession(this,tx,authority,code.dpopJkt):await this.createRefreshFamily(tx,authority);
+      const response=await this.issueAccess(tx,refresh?.family??authority);await tx.delete(key('code',hash));await linkExchange(this,tx,code,refresh?.family);
+      return {...response,...refresh?{refresh_token:refresh.refresh_token,refresh_expires_in:refresh.refresh_expires_in,...refresh.refresh_idle_expires_in!==undefined?{refresh_idle_expires_in:refresh.refresh_idle_expires_in}:{}}:{},...code.intent==='reauthenticate'&&Number.isSafeInteger(code.authTime)?{auth_time:Math.floor(code.authTime/1000)}:{}};
     });
   }
   async refresh(input){
     if(!this.refreshEnabled)fail('unsupported_grant_type','Refresh tokens are not enabled.');
-    exact(input,['refreshToken','clientId']);if(!this.clients.has(input.clientId))fail('invalid_client');if(!this.opaque(input.refreshToken))fail('invalid_grant');
-    const hash=await digest(this.crypto,`refresh\0${input.refreshToken}`);
+    exact(input,['refreshToken','clientId','dpop']);if(!this.clients.has(input.clientId))fail('invalid_client');if(!this.opaque(input.refreshToken))fail('invalid_grant');
+    const hash=await digest(this.crypto,`refresh\0${input.refreshToken}`),proof=input.dpop===undefined?null:await this.tokenProof(input.dpop);
     const result=await this.store.transaction(async tx=>{
       const record=await tx.get(key('refresh',hash)),family=record&&await tx.get(key('family',record.familyId));
       // A foreign client cannot revoke a valid session by presenting its secret.
       if(!family||family.clientId!==input.clientId||family.issuer!==this.issuer||family.audience!==this.audience||family.expiresAt<=this.clock()||record.expiresAt!==family.expiresAt||family.status!=='active')fail('invalid_grant');
+      if(family.jkt){if(proof?.jkt===family.jkt)await this.consumeProof(tx,proof);return rotateBound(this,tx,{record,family,hash,token:input.refreshToken,proof});}
       if(record.used||family.currentHash!==hash||!Array.isArray(family.history)||family.history.length>=128){family.status='revoked';await tx.set(key('family',family.familyId),family);return {failure:'invalid_grant'};}
       await this.active(family.subject,family.epoch);if(this.connections&&(!family.connection||await this.connections.check(family.connection,family.clientId)!==true))fail('unauthorized');
       const response=await this.issueAccess(tx,family),refresh_token=this.random(),nextHash=await digest(this.crypto,`refresh\0${refresh_token}`);
@@ -198,7 +227,7 @@ export class FederationService {
     if(!Number.isSafeInteger(limit)||limit<1||limit>256)fail('invalid_args');
     return this.store.transaction(async tx=>{
       let removed=0,remaining=false,nextAlarmAt=Infinity;const now=this.clock();
-      for(const kind of ['request','code','token','journal','refresh','family','object-url','url-mint'])for(const row of await tx.list(key(kind,''))){
+      for(const kind of ['request','code','token','journal','refresh','family','object-url','url-mint','claim','embed','embed-session','embed-stream','dpop'])for(const row of await tx.list(key(kind,''))){
         const expired=row.value.expiresAt<=now||kind==='request'&&row.value.status!=='pending';
         if(expired&&removed<limit){await tx.delete(row.key);removed++;continue;}
         remaining=true;nextAlarmAt=Math.min(nextAlarmAt,expired?now+60000:row.value.expiresAt);
@@ -206,6 +235,18 @@ export class FederationService {
       return {removed,remaining,nextAlarmAt:remaining?Math.max(now+60000,nextAlarmAt):null};
     });
   }
+  async tokenProof(dpop){if(!this.dpopNonces)fail('invalid_dpop_proof','DPoP is not configured.');return verifyProof(this.crypto,dpop,{typ:DPOP_TYP,htm:'POST',htu:`${this.issuer}/oauth/token`,now:this.clock(),nonce:value=>this.dpopNonces.check('token',value)});}
+  async embedProof(dpop,purpose,ath,htm='POST'){if(!this.dpopNonces||!this.embedOrigin)fail('unauthorized','The embedded session is unavailable.');try{return await verifyProof(this.crypto,dpop,{typ:DPOP_TYP,htm,htu:`${this.embedOrigin}/embed/api/${purpose}`,now:this.clock(),ath,nonce:value=>this.dpopNonces.check('embed',value)});}catch{fail('unauthorized','The embedded session is unavailable.');}}
+  consumeProof(tx,proof){return consumeProof(tx,key('dpop',''),proof,this.crypto,this.clock);}
+  revokeToken(input){return revokeToken(this,input);}
+  redeemClaim(input){return redeemClaim(this,input);}
+  embedSession(input){return startSession(this,input);}
+  embedState(input){return sessionState(this,input);}
+  embedForget(input){return forget(this,input);}
+  embedAvatar(input){return sessionAvatar(this,input);}
+  embedEvents(input){return openStream(this,input);}
+  embedEventsTick(input){return streamTick(this,input);}
+  embedEnd(input){return endSession(this,input);}
   inspectObjectURL(input){if(!this.objectURLService)fail('temporarily_unavailable');return this.objectURLService.inspect(input);}
   objectURL(input){if(!this.objectURLService)fail('temporarily_unavailable');return this.objectURLService.execute(input);}
   async grants(authority){const subject=await this.owner(authority);return this.store.transaction(async tx=>({grants:(await tx.list(key('grant',''))).map(row=>row.value).filter(grant=>grant.subject===subject&&grant.active).map(({epoch,resourceGenerations,...grant})=>({...grant,client:copy(this.clients.get(grant.clientId))}))}));}

@@ -8,7 +8,7 @@ The proposed [wire specification](../spec/contact-delivery.md) gives signed cont
 
 Use `kind:"one-off",noReply:true` for a document that carries no reply authority. Use `kind:"conversation-init",noReply:false` for the same document plus a protected signed proposal, shared conversation gate secret, and a narrowly bound acceptance return allowance. These are explicit grant permissions, not heuristics based on HTML, MIME, or subject. Neither creates universal membership; each owner approves peers and keeps its own copy. The return allowance reuses the directed invitation acceptance model rather than introducing a new general callback or application-state service.
 
-Both paths authenticate the live contact parent. Identity-authored requests additionally sign the same canonical envelope. Anonymous one-offs remain possible only under an explicit unverified mode; the mandatory provider admission receipt must not masquerade as an author signature. Every conversation-init has a verified creator. This preserves the existing anonymous contact use case without silently weakening the new identity profile.
+Both paths authenticate the live contact parent. Identity-authored requests additionally sign the same canonical envelope. **Superseded, proposed (user decision 2026-10-14):** the earlier explicit unverified mode for anonymous one-offs is withdrawn. Every link delivery, one-off or conversation-init, carries a verified identity author proof, and the provider admission receipt is evidence of admission, not a substitute for it. The sole exception is app messages via the front-end SDK app-connection path ([app messages](../spec/app-messages.md)), which is not link delivery. Existing anonymous `?sig=` delivery stays implemented until the same change that ships authored delivery retires it; see [bindle links](bindle-links.md).
 
 Reuse `application/vnd.bindle.contact-token+jwt` with the explicit `profile="contact-delivery-v1"` negotiation parameter. Keep a distinct protected JWS `typ` and RPC audience/resource/method class. A legacy representation returned by a server that ignores the parameter is rejected, never upgraded. Adding a second media type offered little benefit; reusing the legacy token's audience or pretending it is an OAuth app grant would incorrectly enlarge authority.
 
@@ -26,7 +26,7 @@ The candidate resource address belongs to one contact parent. The RPC dispatcher
 | Published conversation v1 | Legacy submission schema, optional bearer authorship, existing ordering authority. | Independently reviewed v2 bootstrap and directed consent. Do not mutate the existing JSON or advertise v2 conformance. |
 | Current identity key lookup | Conversation-specific public key endpoint; not a generic handle directory. | Minimal provider-advertised directory and pinned identity-key continuity before this candidate's identity profile is interoperable. |
 
-Required tags are receiver-applied from the live parent. Signed optional tags are a bounded selection from its whitelist; immutable original delivery tags feed owner rules. Views are organization, not delivery or read authority. Legacy collection ACL labels cannot be discarded during this transition.
+Required tags are receiver-applied from the link's intake configuration, and the sender's optional tags are a bounded selection from its allowlist. **Superseded, proposed (user decision 2026-10-14):** both lists are mutable, revisioned, server-side per-link configuration editable by the owner without reissuing the link, not signed claims; legacy signed values seed it.  immutable original delivery tags feed owner rules. Views are organization, not delivery or read authority. Legacy collection ACL labels cannot be discarded during this transition.
 
 ## Integrity and retry decisions
 
@@ -38,7 +38,7 @@ The protected genesis lists proposed participants, not their consent. Duplicate 
 
 ## Implementation sequence and gates
 
-1. Review the exact candidate schema, complete examples, canonical digest/proof vectors, kind scope and anonymous exception. Keep the actual contract out of the public registry until implementation, conformance evidence and registry bytes agree. Human sign-off records remain provisional tracking, not a new permission prerequisite for authorized work.
+1. Review the exact candidate schema, complete examples, canonical digest/proof vectors, kind scope, and the identity-only authorship rule (no anonymous exception, per the 2026-10-14 user decision), including retirement of anonymous `?sig=` delivery in the same change. Keep the actual contract out of the public registry until implementation, conformance evidence and registry bytes agree. Human sign-off records remain provisional tracking, not a new permission prerequisite for authorized work.
 2. Implement bounded strict parsers and shared semantic validation independent of HTTP/RPC framing. Test duplicate keys/parts, Unicode, canonical encodings, MIME disagreement, body digest, all bound identities, dual credentials and scope attenuation.
 3. Add explicit new-profile parents and short-lived RPC child capabilities. Test legacy token rejection, no privilege expansion, current revocation before replay, and cross-transport parent receipt reuse.
 4. Add durable local admission intents for body, receipt, protected invitation, quota and notification/index obligations. Inject crashes before/after blob commit and state reconciliation; verify no duplicate or partially acknowledged invitation.
@@ -46,6 +46,10 @@ The protected genesis lists proposed participants, not their consent. Duplicate 
 6. Publish only the actual interoperable definition, exact JSON registry route and tested supported-profile discovery. Existing endpoints remain explicit legacy profiles; no silent downgrade when a new profile is unavailable.
 
 Pending decisions: exact admission-signing key discovery profile and historical retention; operator-configurable kind limits below the wire ceiling; deployed identity continuity and future conversation-v2 acceptance conformance. These cannot be inferred from the candidate JSON alone. This change intentionally does not implement delivery, rename existing published artefacts, or add a new application-state subsystem.
+
+## Implementation notes (slice L0, provisional)
+
+`packages/messaging/contact-delivery.mjs`, `contact-delivery-wire.mjs` and `contact-delivery-service.mjs` implement the parsers, author verification and admission described in the spec, with [review](../release/contact-delivery-impl-review.md); nothing is routed yet. Reference-host compatibility detail: the live parent record carries `delivery:{resource,kinds,collection,conditional?}`. `collection` is an internal legacy authorization partition that places the record in the owner's single logical incoming store; it is never sender-visible or sender-selectable and is not part of the wire profile. Receipt rows are keyed `(owner, parent, author issuer, author subject, operationId)` and retain the applied intake revision. Receipt garbage collection, blob staging and receipt-budget wrapping remain L4 work. No conversation-init vector exists yet for the nested-signature rule (S3).
 
 ## Executable vectors
 

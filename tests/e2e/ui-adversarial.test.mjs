@@ -4,6 +4,7 @@ import {launch,baseURL,waitForApp,screenshot,publicAssetCache,completeSignupQues
 
 // Real Chromium renders actual application assets. API interception is restricted
 // to explicitly labeled fault-injection cases; worker-flow covers real endpoints.
+const INTAKE='application/vnd.bindle.contact-intake+json',intake=()=>({version:1,form:'legacy',intakeRevision:null,optionalTags:[],kinds:['one-off'],mimeTypes:['text/plain'],maxMessageBytes:65536,maxMessages:5,maxBytes:65536,quotaScope:'parent',expiresAt:Date.now()+3600000,conditional:false});
 let browser;
 test.before(async()=>{browser=await launch();});
 test.after(async()=>{await browser?.close();});
@@ -41,7 +42,8 @@ test('expired session erases private content and returns to sign in',async t=>{
   await page.route('**/api/views',route=>route.fulfill({status:401,json:{error:'unauthorized',message:'Sign in to continue.'}}));
   await page.getByRole('button',{name:'New View',exact:true}).first().click();await page.getByLabel('View name').fill('Try expired session');
   await page.getByRole('button',{name:'Save View',exact:true}).click();
-  await page.locator('.auth-card').waitFor();assert.equal(await page.getByText('Private collection sentinel',{exact:true}).count(),0);
+  // Multi-account: an expired member returns to the provider account chooser (other accounts stay signed in), whose sign-in path stays one click away.
+  await page.getByText('Your session expired. Sign in again.',{exact:true}).waitFor();await page.getByRole('button',{name:'Back to sign in',exact:true}).waitFor();assert.equal(await page.getByText('Private collection sentinel',{exact:true}).count(),0);
 });
 test('double submission cannot create two mutations',async t=>{
   const {page}=await pageWithAccount(t);let requests=0;
@@ -91,22 +93,27 @@ test('installed public shell reloads offline without cached account responses',a
   await context.setOffline(true);await page.reload();await page.getByText(/You’re offline/).waitFor();await page.locator('.auth-card').waitFor();
   assert.equal(await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).isDisabled(),true);await screenshot(page,'offline-shell');
 });
-test('contact composer keeps the same delivery key after a failed response and never sends on GET',async t=>{
+test('console contact composer re-signs the same operation after a failed response, signs nothing on GET and never sends anonymously',async t=>{
   const context=await browser.newContext();t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(8000);
-  const claims={collections:['inbox'],mimeTypes:['text/plain'],maxMessageBytes:65536};const token=`e30.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.signature`;
-  const invitation=`/users/reader/contact/11111111-1111-1111-1111-111111111111?sig=fixture-signed-endpoint`;
-  const deliveries=[];await page.route(`**${invitation}`,route=>{
+  const account={id:'11111111-2222-4333-8444-555555555555',handle:'n.reader',status:'active',hasPassword:true,passkeyCount:0};
+  await page.route('**/api/config',route=>route.fulfill({json:{environment:'Adversarial browser fixture',termsVersion:'2026-10-11',providers:{}}}));
+  await page.route('**/api/session',route=>route.fulfill({json:{authenticated:true,account,csrfToken:'fixture-csrf',sessionContext:'fixture'}}));
+  await page.route('**/api/account',route=>route.fulfill({json:{account,collections:[{id:'inbox',name:'Inbox'}],messages:[],contacts:[],rules:[],resources:[],grants:[],views:[]}}));
+  await page.route('**/api/views',route=>route.fulfill({json:{views:[{id:'all',name:'All messages',builtin:true,revision:1,filter:{version:1},sort:'activity-desc'}]}}));await page.route('**/api/incoming?*',route=>route.fulfill({json:{items:[],cursor:null,indexRevision:1}}));
+  const invitation=`/users/reader/contact/11111111-1111-1111-1111-111111111111?sig=fixture.signed.endpoint`,signed=[],deliveries=[];
+  await page.route('**/api/links/envelope',async route=>{const input=route.request().postDataJSON();signed.push(input);await route.fulfill({json:{envelope:{payload:{operationId:input.operationId,createdAt:input.createdAt,content:{mimeType:input.mimeType,byteLength:input.byteLength,sha256:input.sha256}},proof:{alg:'ES256',kid:'k',signature:'s'}}}});});
+  await page.route(`**${invitation}`,route=>{
     const request=route.request();
-    if(request.method()==='GET'&&request.headers().accept==='application/vnd.bindle.contact-token+jwt')return route.fulfill({body:token,contentType:'application/vnd.bindle.contact-token+jwt'});
+    if(request.method()==='GET'&&request.headers().accept==='application/vnd.bindle.contact-intake+json')return route.fulfill({json:{version:1,form:'legacy',intakeRevision:null,optionalTags:[],kinds:['one-off'],mimeTypes:['text/plain'],maxMessageBytes:65536,maxMessages:5,maxBytes:65536,quotaScope:'parent',expiresAt:Date.now()+3600000,conditional:false},contentType:'application/vnd.bindle.contact-intake+json'});
     if(request.method()!=='POST')return route.continue();
-    const multipart=request.postData();assert.ok(request.headers()['content-type'].startsWith('multipart/form-data; boundary='));
-    const idempotencyKey=/name="idempotencyKey"\r\n\r\n([^\r\n]+)/.exec(multipart)?.[1];assert.ok(idempotencyKey);deliveries.push({idempotencyKey,multipart});
-    return route.fulfill(deliveries.length===1?{status:503,json:{message:'Try again'}}:{status:202,json:{accepted:true,id:'message'}});
+    const multipart=request.postData();assert.ok(request.headers()['content-type'].startsWith('multipart/form-data; boundary='));assert.equal(request.headers().cookie,undefined);
+    const envelope=JSON.parse(/name="envelope"[^\r]*\r\nContent-Type: application\/json\r\n\r\n([^\r\n]+)/.exec(multipart)[1]);assert.equal(/name="(collection|idempotencyKey|mimeType)"/.test(multipart),false);deliveries.push(envelope);
+    return route.fulfill(deliveries.length===1?{status:503,json:{error:'admission_unavailable',message:'Try again'}}:{status:202,json:{receipt:{payload:{messageId:'message'},proof:{}}}});
   });
-  await page.goto(`${baseURL}${invitation}`);await page.getByLabel('Your message').waitFor();assert.equal(deliveries.length,0);assert.equal(new URL(page.url()).searchParams.has('sig'),false);
-  await page.getByLabel('Your message').fill('A short note');await page.getByRole('button',{name:'Send message',exact:true}).click();await page.getByRole('alert').waitFor();
+  await page.goto(`${baseURL}/console#contact=${encodeURIComponent(baseURL+invitation)}&intent=send-message`);await page.getByLabel('Your message').waitFor();assert.equal(deliveries.length,0);assert.equal(signed.length,0);assert.equal(new URL(page.url()).hash,'');
+  await page.getByLabel('Your message').fill('A short note');await page.getByRole('button',{name:'Send message',exact:true}).click();await page.getByRole('alert').first().waitFor();
   await page.getByRole('button',{name:'Send message',exact:true}).click();await page.getByRole('heading',{name:'Your message is on its way.'}).waitFor();
-  assert.equal(deliveries.length,2);assert.equal(deliveries[0].idempotencyKey,deliveries[1].idempotencyKey);
+  assert.equal(deliveries.length,2);assert.equal(deliveries[0].payload.operationId,deliveries[1].payload.operationId);assert.equal(signed[0].createdAt,signed[1].createdAt);assert.equal(signed[0].link,'http://'+new URL(baseURL).host+invitation);
 });
 
 test('identity email availability does not claim reminder delivery',async t=>{
@@ -173,13 +180,13 @@ test('contact profile is literal scoped optional metadata with no automatic avat
   await page.route('**/api/account',route=>route.fulfill({json:{account:{id:'owner-fixture',handle:'owner'},collections:[],messages:[],contacts:[],rules:[],resources:[]}}));
   await page.route('**'+invitation,route=>{
    const accept=route.request().headers().accept;
-   if(accept==='application/vnd.bindle.contact-token+jwt')return route.fulfill(scenario==='expired'?{status:403,body:'Expired'}:{body:token,contentType:'application/vnd.bindle.contact-token+jwt'});
+   if(accept===INTAKE)return route.fulfill(scenario==='expired'?{status:401,json:{error:'unauthorized'}}:{json:intake(),contentType:INTAKE});
    if(accept==='application/vnd.bindle.contact-profile+json'){profiles++;return route.fulfill(scenario==='failure'?{status:503,body:'Unavailable'}:{json:{identityURI:'https://forged.example',profile:scenario==='disabled'?null:scenario==='long'?{displayName:'Z'.repeat(100)}:scenario==='partial'?{bio:'Sign in',unknown:'not shared'}:{displayName:'<img src=x onerror=alert(1)>',bio:'Sign in',avatar:'https://images.example/avatar.png'}},contentType:'application/vnd.bindle.contact-profile+json'});}
    return route.continue();
   });
-  await page.goto(baseURL+invitation);await page.getByText('Identidad del contacto: reader',{exact:true}).waitFor();assert.equal(new URL(page.url()).search,'');
-  if(scenario==='expired'){await page.getByText('La invitación está incompleta, vencida o revocada. Pide un enlace firmado vigente.').waitFor();assert.equal(profiles,0);assert.equal(await page.getByRole('button',{name:'Enviar mensaje',exact:true}).count(),0);}
-  else{await page.getByRole('button',{name:'Enviar mensaje',exact:true}).waitFor();if(scenario==='shared'||scenario==='partial'){await page.getByText('Compartido por este enlace de contacto',{exact:true}).waitFor();assert.equal(await page.locator('.contact-profile-bio').textContent(),'Sign in','User biography must not be translated');}if(scenario==='long'){await page.getByRole('heading',{name:'Envía un mensaje a '+'Z'.repeat(100)+'.',exact:true}).waitFor();await screenshot(page,'contact-profile-long-es-320');}if(scenario==='shared'){await page.getByRole('heading',{name:'Envía un mensaje a <img src=x onerror=alert(1)>.',exact:true}).waitFor();assert.equal(await page.locator('.contact-recipient-profile strong').textContent(),'<img src=x onerror=alert(1)>');assert.equal(await page.locator('.contact-recipient-profile img').count(),0);const avatar=page.getByRole('link',{name:'Ver avatar compartido',exact:true});assert.equal(await avatar.getAttribute('rel'),'noreferrer noopener');await screenshot(page,'contact-profile-shared-es-320');}else assert.equal(await page.getByRole('link',{name:'Ver avatar compartido',exact:true}).count(),0);}
+  await page.goto(baseURL+invitation);await page.getByText(/^Identidad del contacto: \u2068?reader@[^\s]+?\u2069?$/).waitFor();assert.equal(new URL(page.url()).search,'');
+  if(scenario==='expired'){await page.getByText('Este enlace de contacto ha caducado, se ha revocado o no es válido.').first().waitFor();assert.equal(profiles,0);assert.equal(await page.locator('a.contact-intent').count(),0);}
+  else{await page.locator(scenario==='shared'?'section.contact-signed-in':'section.contact-signin').waitFor();assert.equal(await page.locator('textarea').count(),0);if(scenario==='shared'||scenario==='partial'){await page.getByText('Compartido por este enlace de contacto',{exact:true}).waitFor();assert.equal(await page.locator('.contact-profile-bio').textContent(),'Sign in','User biography must not be translated');}if(scenario==='long'){await page.getByRole('heading',{name:new RegExp('^Envía un mensaje a \u2068?'+'Z'.repeat(100)+'\u2069?\\.$')}).waitFor();await screenshot(page,'contact-profile-long-es-320');}if(scenario==='shared'){await page.getByRole('heading',{name:/^Envía un mensaje a \u2068?<img src=x onerror=alert\(1\)>\u2069?\.$/}).waitFor();assert.equal(await page.locator('.contact-recipient-profile strong').textContent(),'<img src=x onerror=alert(1)>');assert.equal(await page.locator('.contact-recipient-profile img').count(),0);const avatar=page.getByRole('link',{name:'Ver avatar compartido',exact:true});assert.equal(await avatar.getAttribute('rel'),'noreferrer noopener');await screenshot(page,'contact-profile-shared-es-320');}else assert.equal(await page.getByRole('link',{name:'Ver avatar compartido',exact:true}).count(),0);}
   assert.equal(avatarRequests,0);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.equal(await page.locator('[href*="forged.example"]').count(),0);
  }
 });
@@ -200,8 +207,8 @@ test('public pages follow system theme with readable controls and preserve the C
   await page.locator('.auth-card .button.primary').hover();await assertContrast('.auth-card .button.primary');assert.equal(await page.evaluate(()=>window.themeCaptchaRenders),renders,'Changing device theme must preserve the challenge');
  }
  const invitation='/users/theme-owner/contact/11111111-1111-1111-1111-111111111111?sig=theme-private';const token=`e30.${Buffer.from(JSON.stringify({collections:['inbox'],mimeTypes:['text/plain']})).toString('base64url')}.signature`;
- await page.route('**'+invitation,route=>{const accept=route.request().headers().accept;if(accept==='application/vnd.bindle.contact-token+jwt')return route.fulfill({body:token,contentType:accept});if(accept==='application/vnd.bindle.contact-profile+json')return route.fulfill({json:{profile:{displayName:'Destinatario',bio:'Perfil compartido'}},contentType:accept});return route.continue();});
- await page.goto(baseURL+invitation);await page.getByRole('heading',{name:'Envía un mensaje a Destinatario.',exact:true}).waitFor();await assertContrast('.contact-recipient-profile strong');await assertContrast('.contact-profile-bio');await assertContrast('.auth-card .input');await screenshot(page,'system-theme-dark-contact-es-320');
+ await page.route('**'+invitation,route=>{const accept=route.request().headers().accept;if(accept===INTAKE)return route.fulfill({json:intake(),contentType:accept});if(accept==='application/vnd.bindle.contact-profile+json')return route.fulfill({json:{profile:{displayName:'Destinatario',bio:'Perfil compartido'}},contentType:accept});return route.continue();});
+ await page.goto(baseURL+invitation);await page.getByRole('heading',{name:/^Envía un mensaje a \u2068?Destinatario\u2069?\.$/}).waitFor();await assertContrast('.contact-recipient-profile strong');await assertContrast('.contact-profile-bio');await assertContrast('.auth-card .button.primary');await screenshot(page,'system-theme-dark-contact-es-320');
  for(const path of ['/recovery/setup','/mcp/consent']){await page.goto(baseURL+path);await page.locator('.auth-card,.mcp-consent').first().waitFor();assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).colorScheme),'dark');assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await screenshot(page,'system-theme-dark-'+(path.includes('recovery')?'recovery':'mcp')+'-320');}
  await page.route('**/api/session',route=>route.fulfill({json:{account:{id:'theme-owner',handle:'owner'}}}));await page.route('**/api/account',route=>route.fulfill({json:{account:{id:'theme-owner',handle:'owner'},collections:[],messages:[],contacts:[],rules:[],resources:[]}}));await page.goto(baseURL+'/console?signup');await page.locator('.app-shell').waitFor();assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).colorScheme),'light');assert.equal(await page.locator('.sidebar .logo img').evaluate(node=>node.currentSrc.includes('ondark')),false,'Console retains its reviewed light logo');
 

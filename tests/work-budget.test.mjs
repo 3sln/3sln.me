@@ -1,3 +1,4 @@
+import {authored} from './link-helpers.mjs';import {multipartDeliveryBody} from '../packages/messaging/contact-delivery-wire.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -79,14 +80,16 @@ test('Node HTTP caps metadata churn and ingest; GET, deletion, logout and contac
   const pending=await (await request('/api/auth/signup','POST',{handle:'bounded_work',method:'password',password:'bounded owner test password',termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json();const recovery=await (await request('/api/auth/recovery/download','POST',{pendingToken:pending.pendingToken})).json();const activation=await request('/api/auth/recovery/confirm','POST',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true});assert.equal(activation.status,200);const session=await activation.json(),headers={Cookie:activation.headers.get('Set-Cookie').split(';')[0],'X-CSRF-Token':session.csrfToken};
   const account=await (await request('/api/account','GET',undefined,headers)).json(),collection=account.collections[0].id,controller=app.resources.accounts.get(session.account.id);
   assert.equal((await request('/api/rules','PUT',{rules:[]},{...headers,'X-CSRF-Token':'bad'})).status,403);assert.equal(await controller.metadata.get('storage-write/v1'),undefined);
-  const contactResponse=await request('/api/contacts','POST',{name:'Bounded share',collections:[collection],mimeTypes:['text/plain'],expiresAt:Date.now()+3600000},headers);assert.equal(contactResponse.status,200);const contact=await contactResponse.json();const token=await (await request(contact.url,'GET',undefined,{Accept:'application/vnd.bindle.contact-token+jwt'})).text();
-  let claims=JSON.parse(Buffer.from(token.split('.')[1],'base64url'));const forged=`${token.split('.')[0]}.${Buffer.from(JSON.stringify({...claims,nonce:'forged'})).toString('base64url')}.${token.split('.')[2]}`;
-  const delivery={collection,mimeType:'text/plain',text:'valid content',idempotencyKey:'accepted'};assert.equal((await request('/api/messages','POST',delivery,{Authorization:`Bearer ${forged}`})).status,401);assert.equal((await controller.metadata.get('storage-write/v1')).foreground.used,1);
-  assert.equal((await request('/api/messages','POST',{...delivery,idempotencyKey:''},{Authorization:`Bearer ${token}`})).status,400);assert.equal((await controller.metadata.get('storage-write/v1')).foreground.used,1);
-  const delivered=await request('/api/messages','POST',delivery,{Authorization:`Bearer ${token}`});assert.equal(delivered.status,202);const message=await delivered.json();assert.equal((await controller.metadata.get('storage-write/v1')).foreground.used,2);
+  const contactResponse=await request('/api/contacts','POST',{name:'Bounded share',collections:[collection],mimeTypes:['text/plain'],expiresAt:Date.now()+3600000},headers);assert.equal(contactResponse.status,200);const contact=await contactResponse.json();
+  // Authored delivery: signing the envelope writes nothing and is exempt from the write budget.
+  const sign=async input=>(await request('/api/links/envelope','POST',input,headers)).json(),post=(message,extra={})=>app.fetch(new Request(contact.url,{method:'POST',headers:{'Content-Type':message.contentType,...extra},body:message.bytes}));
+  const valid=await authored(sign,contact.url,{text:'valid content'}),forged=structuredClone(valid.envelope);forged.proof.signature='A'.repeat(86);
+  assert.equal((await post({...valid,...multipartDeliveryBody(forged,valid.body)})).status,401);assert.equal((await controller.metadata.get('storage-write/v1')).foreground.used,1);
+  assert.equal((await post(valid,{'Idempotency-Key':crypto.randomUUID()})).status,400);assert.equal((await controller.metadata.get('storage-write/v1')).foreground.used,1);
+  const delivered=await post(valid);assert.equal(delivered.status,202,await delivered.clone().text());const message={id:(await delivered.json()).receipt.payload.messageId};assert.equal((await controller.metadata.get('storage-write/v1')).foreground.used,2);
   assert.equal((await request(`/api/messages/${message.id}`,'PATCH',{read:true,tags:['first']},headers)).status,200);const record=await controller.metadata.get('storage-write/v1');assert.equal(record.foreground.used,3);
   const denied=await request(`/api/messages/${message.id}`,'PATCH',{tags:['denied']},headers);assert.equal(denied.status,429);assert.equal((await denied.json()).error,'rate_limited');assert.deepEqual((await controller.messages.read(session.account.id,message.id)).tags,['first']);
-  assert.equal((await request('/api/messages','POST',{...delivery,idempotencyKey:'over-limit'},{Authorization:`Bearer ${token}`})).status,429);assert.equal((await controller.metadata.get('storage/reservations')).count,0);
+  assert.equal((await post(await authored(sign,contact.url,{text:'over limit'}))).status,429);assert.equal((await controller.metadata.get('storage/reservations')).count,0);
   assert.equal((await request(`/api/messages/${message.id}`,'GET',undefined,headers)).status,200);assert.equal((await request(contact.url,'GET',undefined,{Accept:'application/json'})).status,200);assert.deepEqual(await controller.metadata.get('storage-write/v1'),record);
   assert.equal((await request('/api/search/preferences','PUT',{enabled:true,consent:true,beamEnabled:false},headers)).status,429);
   assert.equal((await request('/api/search/preferences','PUT',{enabled:false},headers)).status,200);

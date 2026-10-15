@@ -20,7 +20,11 @@ const encodePath=path=>path.split('/').map(encodeURIComponent).join('/');
 // Called after js-tools has emitted its final wire-ups, import map, and HTML.
 // No source imports are guessed here: every emitted content-addressed artifact
 // is included, including vendor shared chunks not named by the import map.
-export async function generateServiceWorker(result,{out=result.config.out,publicAssets=[]}={}){
+// `privateAssets` are emitted, content-addressed modules that must load only on
+// demand (host administration): they stay in the import map but are never
+// precached into every visitor's public shell cache.
+export async function generateServiceWorker(result,{out=result.config.out,publicAssets=[],privateAssets=[]}={}){
+ const excluded=new Set(privateAssets.map(publicPath));
  if(typeof result.buildId!=='string'||!/^[a-f0-9]{10,64}$/.test(result.buildId))throw new TypeError('A final js-tools build ID is required.');
  const root=resolve(out),assetRoot=result.config.assetRoot;
  publicPath('/'+assetRoot);const assetDirectory=join(root,assetRoot),urls=new Set();
@@ -29,11 +33,12 @@ export async function generateServiceWorker(result,{out=result.config.out,public
   // Stable-name files must be explicitly declared as public, never swept up.
   if(!/[.-][A-Za-z0-9_$]{8,64}\.[^.]+$/.test(name))throw new TypeError(`Unfingerprinted emitted asset: ${name}`);
   if(name.startsWith('offline-'))continue;
-  urls.add(publicPath('/'+encodePath(relative(root,file).split('\\').join('/'))));
+  const url=publicPath('/'+encodePath(relative(root,file).split('\\').join('/')));if(excluded.has(url))continue;
+  urls.add(url);
  }
  for(const value of publicAssets){const path=publicPath(value);if(!/\.(?:svg|png|webp|ico|webmanifest|css|html|txt|woff2?)$/.test(path))throw new TypeError('Only explicitly public presentation files may use stable cache URLs.');urls.add(path);}
  const mandatory=[...Object.values(result.imports),...Object.values(result.workers??{}),...Object.values(result.entries).flatMap(entry=>[entry.module,entry.css,entry.wireup].filter(Boolean))];
- for(const value of mandatory){const path=publicPath(value);if(!urls.has(path))throw new TypeError(`Build graph target is not content-addressed: ${path}`);}
+ for(const value of mandatory){const path=publicPath(value);if(excluded.has(path))continue;if(!urls.has(path))throw new TypeError(`Build graph target is not content-addressed: ${path}`);}
  if(!result.html.includes('console.html'))throw new TypeError('An emitted root HTML document is required.');
  const document=await readFile(join(root,'console.html'));
  if(!Object.values(result.entries).some(entry=>document.toString('utf8').includes(entry.wireup)))throw new TypeError('Offline HTML does not reference this build wire-up.');

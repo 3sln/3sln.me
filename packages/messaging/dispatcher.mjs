@@ -13,7 +13,7 @@ export class NotificationDispatcher {
    try{
     if(!await this.notifications.authorizeDelivery(owner,job.id,job.lease))continue;
     const idempotencyKey=`${job.id}:${job.delivered+1}`;
-    if(job.channel==='push'&&this.push){await this.push.send(job.subscription,job.payload,{idempotencyKey});delivered=true;}
+    if(job.channel==='push'&&this.push){const label=job.preview&&job.payload.owner===owner?(await this.recipient?.current?.(owner))?.handle:null;await this.push.send(job.subscription,typeof label==='string'&&label.length<=100?{...job.payload,accountLabel:label}:job.payload,{idempotencyKey});delivered=true;}
     if(job.channel==='email'&&this.email){const target=await this.recipient.current(owner);if(target?.verifiedEmail){const payload=await this.payloads.getOrCreate(idempotencyKey,async()=>({email:target.verifiedEmail,owner,token:await this.notifications.issueUnsubscribe(owner,'email'),idempotencyKey}));if(payload.email===target.verifiedEmail){await this.email.sendReminder(payload);delivered=true;}}}
    }catch(error){gone=job.channel==='push'&&[404,410].includes(error.status);}
    finally{try{await this.notifications.finish(owner,job.id,job.lease,{delivered,gone});}catch(error){if(error.code!=='stale_lease')throw error;}}

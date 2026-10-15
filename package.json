@@ -13,7 +13,7 @@
     "check:worker": "npm run build:assets && wrangler deploy --dry-run --outdir .output/worker",
     "dev:node": "npm run build:assets && node apps/node/server.mjs",
     "test:e2e": "node scripts/run-browser-checks.mjs",
-    "test:ui-state": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/release-state.mjs tests/browser/plans-search.mjs tests/browser/beaming.mjs tests/browser/beaming-security.mjs tests/browser/mcp-conversations.mjs tests/browser/owner-flow-audit.mjs tests/browser/app-connections.mjs tests/browser/browser-automation.mjs tests/browser/google-drive.mjs tests/browser/identity-names.mjs tests/browser/signup-views.mjs tests/browser/message-outcomes-audit.mjs tests/browser/message-actions.mjs tests/browser/message-motion-audit.mjs tests/browser/token-onboarding.mjs tests/browser/onboarding-audit.mjs tests/browser/host-badges.mjs"
+    "test:ui-state": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/release-state.mjs tests/browser/plans-search.mjs tests/browser/beaming.mjs tests/browser/beaming-security.mjs tests/browser/mcp-conversations.mjs tests/browser/owner-flow-audit.mjs tests/browser/app-connections.mjs tests/browser/browser-automation.mjs tests/browser/google-drive.mjs tests/browser/identity-names.mjs tests/browser/signup-views.mjs tests/browser/message-outcomes-audit.mjs tests/browser/message-actions.mjs tests/browser/message-motion-audit.mjs tests/browser/token-onboarding.mjs tests/browser/onboarding-audit.mjs tests/browser/host-badges.mjs tests/browser/multi-account.mjs tests/browser/multi-account-audit.mjs tests/browser/contact-links.mjs tests/browser/admin-console.mjs tests/browser/authorize-entry.mjs"
   },
   "engines": {
     "node": ">=24"

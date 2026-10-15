@@ -2,6 +2,8 @@
 
 Status: provisional phase-one design; no runtime, SDK, cookie or browser behavior is implemented by this document. Coordinate with [session authority](multi-account-sessions.md). Human review records are nonblocking for authorized reversible development; implementation still needs the conformance evidence below.
 
+Implementation note (2026-10-14): the provider-console slice is implemented locally — [chooser](../../apps/web/src/ui/release-accounts.mjs), [actions](../../apps/web/src/bl/accounts.mjs), per-tab selector, opaque `BroadcastChannel` invalidation, and notification destinations (`owner` routing hint always; handle label only when previews are enabled; click opens a fresh `/console?account=…&message=…` window and requires an explicit chooser switch). Session authority follows the per-account cookie choice in [session authority](multi-account-sessions.md#implemented-choice-independent-per-account-cookies-2026-10-14). App consent, iframes and embeddable elements remain unimplemented.
+
 Reviewer: __________  Date: __________  Outcome: __________
 
 ## Recommendation
@@ -37,7 +39,7 @@ Menu actions:
 
 An expired entry can be shown as requiring sign-in only after provider validation; a remembered handle alone never authorizes switching. Add-account cancellation clears only that attempt's temporary credentials, setup capability and device flow, while keeping previously authenticated sessions intact. A late successful login response must not reinstall an account after cancellation without a deliberate user continuation; cookie/session-set races require the backend's cancellation/reconciliation behavior, not just ignoring a promise.
 
-For the first slice, the console has one preferred working account per browser session collection. Other tabs detect changes and stop stale work. Independent working accounts per tab could use an explicitly session-bound selector later, but must not be accidentally implied by retaining old tabs. Authorization requests are request-local exceptions: choosing B for an app does not change console A.
+The converged implementation direction uses an explicitly session-bound selector per tab. The collection active pointer is an initial/default choice; existing tabs keep their validated selected member rather than follow a mutable cookie default. Each private request carries its tab's expected owner and session context, and the server validates that member against the presented authenticated snapshot plus current live authority. Selecting B in another tab or authorization request does not turn A's form into a write to B. Revocation or removed membership still invalidates A and blanks its private UI. This depends on the backend snapshot-scope/rotation review and is not implemented by this document.
 
 ## Owner transition is a security boundary
 
@@ -112,7 +114,7 @@ Click flow:
 
 1. Validate bounded notification data and open/focus only an exact same-origin console route. Prefer a window already showing the destination; do not navigate the first arbitrary console and accidentally interrupt another account's private draft. Otherwise open a new window or request an explicit switch through the console controller.
 2. The continuation carries an opaque server-bound destination/message reference with expiry. Keep account identifiers/handles and capabilities out of notification URLs where possible; a reference grants navigation only. The owner API still resolves and authorizes the target account. Do not forward it to other origins.
-3. If that destination is already the active authenticated account, revalidate and fetch. If it has a live but inactive session, show “Switch to this account to open the message” and perform the ordinary authenticated generation-fenced mutation only after confirmation. An alternative future tab-local selection needs an explicit authenticated selector model; GET, a forged navigation or notification payload alone never changes the browser-wide active account. Click is navigation, not form submission or app consent.
+3. If that destination is already the active authenticated account, revalidate and fetch. If it has a live but inactive session, show “Switch to this account to open the message” and perform the ordinary authenticated generation-fenced mutation only after confirmation. The tab-local selection uses the authenticated selector model; GET, a forged navigation or notification payload alone never changes an account selection. Click is navigation, not form submission or app consent.
 4. If absent/expired, show provider-owned sign-in for the destination, without exposing its content or claiming an account exists to a third-party app. After login verify exact destination; signing into another account must not search it for a matching message UUID. Offer retry/add-account or cancel.
 5. Re-fetch the authorized message and current content digest. Advisory form/link locators only open/focus current content; changed/deleted messages show a bounded explanation. Never auto-dispatch a form or reuse a prepared submission capability from push data.
 
@@ -143,4 +145,4 @@ Cookie collection concurrency and stale response overwrites are backend concerns
 
 DOM tests must assert no cross-owner text/URLs/capabilities survive transitions. Browser tests must exercise real cookies, two tabs, late responses and inaccessible cross-origin DOM, not just mock a picker. Network assertions must show no preconsent account/state events and no account-dependent SDK response. Service-worker tests must verify account-targeted routing without automatic effects. Run core/Worker/Node checks appropriate to the eventual source changes; no such implementation evidence is claimed here.
 
-Open product choices: five-account cap is proposed; notification account-name opt-in wording and opaque-label persistence need UX validation; browser-wide versus fully tab-local working-account selection remains an explicit staged choice; embedded authenticated account selection remains deferred. These do not justify weakening existing session, consent or recovery requirements.
+Open product choices: five-account cap is proposed; notification account-name opt-in wording and opaque-label persistence need UX validation; tab-local selection depends on the reviewed authenticated snapshot model; embedded authenticated account selection remains deferred. These do not justify weakening existing session, consent or recovery requirements.

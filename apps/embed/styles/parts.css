@@ -1,0 +1,50 @@
+/* Part styles (embed-islands §6, §8, §13.1, §14). Fixed row heights, constant list scroll height, internal
+   scrolling only, focus rings inside the box (the root clips), trust text on a fixed palette. */
+.control{font:inherit;color:inherit;margin:0;cursor:pointer;transition:background-color .12s,border-color .12s}
+.control:focus-visible{outline:2px solid var(--c-focus);outline-offset:-2px}
+html[data-armed=false] .control{cursor:default;filter:saturate(.5)}
+html[data-armed=false] .signin.filled{background:color-mix(in srgb,var(--c-accent) 70%,var(--c-surface))}
+
+/* avatar */
+html[data-part=avatar] #avatar\.v1{display:grid;place-items:center}
+.avatar{inline-size:min(100vw,100vh);block-size:min(100vw,100vh);display:block;object-fit:cover}
+.avatar:not([src]){visibility:hidden}
+
+/* sign-in */
+.signin{box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:8px;inline-size:100%;block-size:100%;padding:0 14px;border-radius:var(--c-radius);border:1px solid var(--c-accent);font-weight:600;white-space:nowrap}
+.signin.filled{background:var(--c-accent);color:var(--c-on-accent)}
+.signin.outline{background:var(--c-surface);color:var(--c-accent);border-color:var(--c-border)}
+.signin .label{overflow:hidden;text-overflow:ellipsis}
+.signin .mark{inline-size:14px;block-size:14px;border-radius:50%;border:2px solid currentColor;box-sizing:border-box;flex:none}
+@media (forced-colors:active){.signin{border:1px solid ButtonText}}
+
+/* account switcher: 320 × 320 (regular) or 320 × 248 (compact), set by the element */
+.switcher{box-sizing:border-box;display:grid;grid-template-rows:auto 56px minmax(0,1fr) 48px;block-size:100vh;inline-size:100vw;background:var(--c-surface);color:var(--c-text);overflow:hidden}
+.switcher .head{background:var(--fixed-surface);color:var(--fixed-text);padding:6px 12px;border-block-end:1px solid var(--c-border)}
+.switcher .head p{margin:0;font-size:12px;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.switcher .head .host{font-weight:600}
+.switcher .head .note{color:var(--fixed-muted)}
+.tile{inline-size:32px;block-size:32px;border-radius:50%;flex:none;object-fit:cover;background:transparent}
+.tile.large{inline-size:40px;block-size:40px}
+.tile:not([src]){visibility:hidden}
+.card,.row,.action{box-sizing:border-box;display:flex;align-items:center;gap:10px;inline-size:100%;border:0;background:transparent;text-align:start;padding:0 12px}
+.card{block-size:56px;border-block-end:1px solid var(--c-border)}
+.card:hover,.row:hover,.action:hover{background:var(--c-surface-raised)}
+.text{display:grid;min-inline-size:0}
+.name,.handle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.name{font-weight:600}
+.handle{color:var(--c-text-muted);font-size:12px}
+.list{list-style:none;margin:0;padding:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.list li{block-size:44px}
+.row{block-size:44px}
+.row[data-empty]{visibility:hidden}
+.more{color:var(--c-accent)}
+.actions{display:flex;align-items:stretch;border-block-start:1px solid var(--c-border)}
+.action{justify-content:center;flex:1;padding:0 6px;font-size:13px;color:var(--c-accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.action.danger{color:var(--c-danger)}
+.action[aria-disabled=true]{color:var(--c-text-muted)}
+.confirm{display:grid;grid-template-columns:1fr auto;align-items:center;gap:6px;padding-inline-start:12px}
+.confirm .warn{margin:0;font-size:12px;color:var(--fixed-danger);background:var(--fixed-surface);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.confirm-buttons{display:flex;block-size:100%}
+.switcher.compact{grid-template-rows:auto 48px minmax(0,1fr) 44px}
+.switcher.compact .card{block-size:48px}

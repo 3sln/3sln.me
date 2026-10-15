@@ -10,7 +10,8 @@ import {nodeSqlPort} from '../../packages/search/index.mjs';
 import { IdentityRepository, FixedWindowGuard, AccountController } from '../../packages/runtime/accounts.mjs';
 import {McpShardController,mcpAuthorities} from '../../packages/mcp/runtime.mjs';
 import {FederationController,federationMetadata} from '../../packages/federation/runtime.mjs';
-import {federationAuthority,federationControllerOptions,FEDERATION_LAYOUT,federationEpoch} from '../../packages/runtime/federation.mjs';
+import {federationAuthority,federationControllerOptions,federationEntries,federationEntriesCleanup,FEDERATION_LAYOUT,federationEpoch} from '../../packages/runtime/federation.mjs';
+import {AdminStorage} from '../../packages/identity/admin-store.mjs';
 
 export class SerialGate {
  constructor(){this.tail=Promise.resolve();}
@@ -49,7 +50,7 @@ export async function nodeResources({directory,config,formTransport}){
  if(formTransport!==undefined&&typeof formTransport?.send!=='function')throw new TypeError('Invalid form transport port.');
  await mkdir(directory,{recursive:true,mode:0o700});await mkdir(join(directory,'accounts'),{recursive:true,mode:0o700});await mkdir(join(directory,'abuse'),{recursive:true,mode:0o700});
  const catalogDb=new SqliteMetadata(join(directory,'plan-catalog.sqlite')),catalogRegistry=new PlanCatalogRegistry({metadata:catalogDb,config}),catalog=cachedCatalogPort(catalogRegistry);
- const identities=new SqliteMetadata(join(directory,'identities.sqlite'));const repository=new IdentityRepository({metadata:identities,config});
+ const identities=new SqliteMetadata(join(directory,'identities.sqlite'));const repository=new IdentityRepository({metadata:identities,config});identities.onAlarm=()=>repository.alarm();{const alarm=await identities.getAlarm();if(alarm)identities.arm(alarm);}
  const deviceDb=new SqliteMetadata(join(directory,'devices.sqlite'));const deviceRepo=new IdentityRepository({metadata:deviceDb});
  const deviceRequests={create:r=>deviceRepo.createDevice(r),get:id=>deviceRepo.getDevice(id),findByUserCode:code=>deviceRepo.findDeviceByCode(code),compareAndSwap:(id,revision,r)=>deviceRepo.compareAndSwapDevice(id,revision,r)};
  const blobs=new FileBucket(join(directory,'blobs')),archives=new FileBucket(join(directory,'archives'));const accountMap=new Map(),guardMap=new Map();
@@ -58,7 +59,7 @@ export async function nodeResources({directory,config,formTransport}){
  await guardFor('signup:waitlist:v1');
  const accounts={get:id=>{
    if(!/^[a-f0-9-]{36}$/.test(id))throw new Error('Invalid account identifier');
-   if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,FORM_POSTBACK_TRANSPORT:formTransport,DEVELOPER_CONTACT_POPULATION:population,BILLING_CATALOG:catalog,FEDERATION_IDENTITY_CHECK:async(owner,epoch)=>{const account=await repository.get(owner);return account?.status==='active'&&await federationEpoch(account)===epoch;},WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner)},sql:metadata.sql});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
+   if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,FORM_POSTBACK_TRANSPORT:formTransport,DEVELOPER_CONTACT_POPULATION:population,BILLING_CATALOG:catalog,FEDERATION_IDENTITY_CHECK:async(owner,epoch)=>{const account=await repository.get(owner);return account?.status==='active'&&await federationEpoch(account)===epoch;},WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner),IDENTITY_ACCOUNT:async owner=>{const account=await repository.get(owner);return account?{status:account.status,handle:account.handle}:null;}},sql:metadata.sql});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
  }};
 
  population=activePopulationPort({repository,accounts,threshold:Number(config.DEVELOPER_CONTACT_ACTIVE_THRESHOLD??1500),authority:async(name,method,input)=>(await guardFor(name)).populationAction(method,input)});await (await guardFor('active-user-v1/census')).populationAction('baseline');
@@ -70,5 +71,15 @@ export async function nodeResources({directory,config,formTransport}){
  const mcp=mcpAuthorities(shard=>{if(!mcpMap.has(shard)){const metadata=new SqliteMetadata(join(directory,'mcp',`mcp-auth-v1-64-${shard}.sqlite`));const controller=new McpShardController({metadata,config,shard,accounts,repository});metadata.onAlarm=()=>controller.cleanup();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});mcpMap.set(shard,{metadata,controller});}return mcpMap.get(shard).controller;});
  await mkdir(join(directory,'federation'),{recursive:true,mode:0o700});const federationMap=new Map();
  const federation=federationAuthority({config,repository,shard:owner=>{if(!federationMap.has(owner)){const metadata=new SqliteMetadata(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`));const implementation=new FederationController({...federationControllerOptions({config,repository,accounts,owner}),metadata:federationMetadata(metadata)});metadata.onAlarm=async()=>{const result=await implementation.cleanup();if(result.remaining)await metadata.setAlarm(result.nextAlarmAt);};metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});const controller=new Proxy(implementation,{get:(target,method)=>typeof target[method]==='function'?async(...args)=>{const result=await target[method](...args);if(!['ready','manifest','cleanup'].includes(method)&&!await metadata.getAlarm())await metadata.setAlarm(Date.now()+600000);return result;}:target[method]});federationMap.set(owner,{metadata,controller});}return federationMap.get(owner).controller;}});
- return {repository,deviceRequests,accounts,abuse,population,assets,mcp,federation,catalog,close(){catalogDb.close();identities.close();deviceDb.close();for(const {metadata}of accountMap.values())metadata.close();for(const {metadata}of guardMap.values())metadata.close();for(const {metadata}of mcpMap.values())metadata.close();for(const {metadata}of federationMap.values())metadata.close();}};
+ // One global pre-owner authorization-entry store, pruned by its own alarm; null unless FEDERATION_ENTRY_ENABLED.
+ // End-session has no Node session-ending hook yet, so it is never offered.
+ let entriesDb=null,federationEntryStore=null;
+ if(config.FEDERATION_ENTRY_ENABLED==='true'){
+  entriesDb=new SqliteMetadata(join(directory,'federation','authorization-entries.sqlite'));
+  const entries=federationEntries({config:{...config,FEDERATION_END_SESSION_ENABLED:'false'},store:federationMetadata(entriesDb),authority:federation});
+  entriesDb.onAlarm=async()=>{const next=await federationEntriesCleanup(entries);if(next)await entriesDb.setAlarm(next);};entriesDb.getAlarm().then(time=>{if(time)entriesDb.arm(time);});
+  const create=entries.create.bind(entries);entries.create=async(...args)=>{const result=await create(...args);if(!await entriesDb.getAlarm())await entriesDb.setAlarm(Date.now()+600000);return result;};federationEntryStore=entries;
+ }
+ const adminDb=new SqliteMetadata(join(directory,'admin.sqlite')),adminStore=new AdminStorage(adminDb);
+ return {repository,deviceRequests,accounts,abuse,population,assets,mcp,federation,federationEntries:federationEntryStore,adminStore,catalog,close(){catalogDb.close();adminDb.close();entriesDb?.close();identities.close();deviceDb.close();for(const {metadata}of accountMap.values())metadata.close();for(const {metadata}of guardMap.values())metadata.close();for(const {metadata}of mcpMap.values())metadata.close();for(const {metadata}of federationMap.values())metadata.close();}};
 }

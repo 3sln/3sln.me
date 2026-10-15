@@ -6,18 +6,30 @@ const faultResult=(code,message,error={})=>({__federationError:{code,message,...
 /** Portable composition boundary. Both hosted and self-hosted runtimes inject
  * metadata, live owner authentication and actual contract adapters here. */
 export class FederationController {
-  constructor({metadata,auth,issuer,clients=[],schemaFetcher,schemaHosts=[],dispatcher,crypto=globalThis.crypto,clock=()=>Date.now(),allowInsecureLocalhost=false,enabled=true,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs}){
+  constructor({metadata,auth,issuer,clients=[],schemaFetcher,schemaHosts=[],dispatcher,crypto=globalThis.crypto,clock=()=>Date.now(),allowInsecureLocalhost=false,enabled=true,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs,dpop,embedView,embedOrigin}){
     if(!metadata?.transaction||!auth?.owner)throw new TypeError('Transactional metadata and authenticated owner resource required');
     Object.assign(this,{metadata,auth,issuer,clients,dispatcher,clock,enabled,allowInsecureLocalhost});
-    this.service=new FederationService({store:metadata,issuer,clients,crypto,clock,schemaFetcher,schemaHosts,allowInsecureLocalhost,routingKey,validateSubject,resourceProvider,connections,refreshEnabled,objectURLs,authenticateOwner:(authority)=>auth.owner(authority.context,{mutation:authority.mutation}),dispatchCapability:ctx=>this.dispatch(ctx,crypto)});
+    this.service=new FederationService({store:metadata,issuer,clients,crypto,clock,schemaFetcher,schemaHosts,allowInsecureLocalhost,routingKey,validateSubject,resourceProvider,connections,refreshEnabled,objectURLs,dpop,embedView,embedOrigin,authenticateOwner:(authority)=>auth.owner(authority.context,{mutation:authority.mutation}),dispatchCapability:ctx=>this.dispatch(ctx,crypto)});
   }
   ready(){return this.enabled&&this.clients.length>0&&typeof this.service.schemaFetcher==='function'&&(typeof this.dispatcher==='function'||typeof this.dispatcher?.execute==='function');}
   requireReady(){if(!this.ready())fail('temporarily_unavailable','Federation is not configured and release enabled.');}
-  manifest(){this.requireReady();return {version:'0',issuer:this.issuer,grant_types_supported:['authorization_code',...this.service.refreshEnabled?['refresh_token']:[]],authorization_request_endpoint:`${this.issuer}/api/oauth/requests`,preferences_contract:'https://3sln.me/artefacts/contracts/preferences/v1',authorization_endpoint:`${this.issuer}/oauth/authorize`,token_endpoint:`${this.issuer}/oauth/token`,rpc_endpoint:`${this.issuer}/bindle/rpc`,jwks_uri:`${this.issuer}/oauth/jwks`,login_presentation:['redirect'],contracts:[]};}
+  manifest(){this.requireReady();return {version:'0',issuer:this.issuer,grant_types_supported:['authorization_code',...this.service.refreshEnabled?['refresh_token']:[]],authorization_request_endpoint:`${this.issuer}/api/oauth/requests`,preferences_contract:'https://3sln.me/artefacts/contracts/preferences/v1',authorization_endpoint:`${this.issuer}/oauth/authorize`,token_endpoint:`${this.issuer}/oauth/token`,rpc_endpoint:`${this.issuer}/bindle/rpc`,jwks_uri:`${this.issuer}/oauth/jwks`,login_presentation:['redirect'],revocation_endpoint:`${this.issuer}/oauth/revoke`,...this.service.dpopNonces?{dpop_signing_alg_values_supported:['ES256']}:{},contracts:[]};}
   authority(context,mutation){return {context,mutation};}
   beginAuthorization(input){this.requireReady();return this.service.beginAuthorization(input);}
   inspect(context,id){this.requireReady();return this.service.inspect(id,context?.sessionToken?this.authority(context,false):undefined);}
-  approve(context,input){this.requireReady();return this.service.approve(this.authority(context,true),input);}
+  approve(context,input,options){this.requireReady();return this.service.approve(this.authority(context,true),input,options);}
+  entryIdentity(context){this.requireReady();return this.service.entryIdentity(this.authority(context,true));}
+  beginEntryAuthorization(context,input){this.requireReady();return this.service.beginEntryAuthorization(this.authority(context,true),input);}
+  revokeToken(input){this.requireReady();return this.service.revokeToken(input);}
+  redeemClaim(input){this.requireReady();return this.service.redeemClaim(input);}
+  embedSession(input){this.requireReady();return this.service.embedSession(input);}
+  embedState(input){this.requireReady();return this.service.embedState(input);}
+  embedForget(input){this.requireReady();return this.service.embedForget(input);}
+  embedAvatar(input){this.requireReady();return this.service.embedAvatar(input);}
+  embedEvents(input){this.requireReady();return this.service.embedEvents(input);}
+  embedEventsTick(input){this.requireReady();return this.service.embedEventsTick(input);}
+  embedEnd(input){this.requireReady();return this.service.embedEnd(input);}
+  async dpopNonce(purpose){this.requireReady();if(!['token','embed'].includes(purpose)||!this.service.dpopNonces)fail('temporarily_unavailable');return this.service.dpopNonces.issue(purpose);}
   configure(context,input){this.requireReady();return this.service.configure(this.authority(context,true),input);}
   registerResource(context,input){this.requireReady();return this.service.registerResource(this.authority(context,true),input);}
   cleanup(input){return this.service.cleanup(input);}
@@ -55,4 +67,4 @@ export class FederationController {
 export function federationMetadata(storage){return {transaction:operation=>storage.transaction(async native=>operation({get:key=>native.get(key),set:(key,value)=>native.put(key,value),delete:key=>native.delete(key),list:async prefix=>[...await native.list({prefix})].map(([key,value])=>({key,value}))}))};}
 
 /** Preserve typed faults across runtimes whose RPC serialization drops Error properties. */
-export function federationRemote(stub){const facade={};for(const method of ['ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL'])facade[method]=async(...args)=>{const envelope=await stub.invoke(method,args);if(!envelope.ok)throw Object.assign(new Error(envelope.error.message),envelope.error);return envelope.result;};return facade;}
+export function federationRemote(stub){const facade={};for(const method of ['ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','dpopNonce'])facade[method]=async(...args)=>{const envelope=await stub.invoke(method,args);if(!envelope.ok)throw Object.assign(new Error(envelope.error.message),envelope.error);return envelope.result;};return facade;}

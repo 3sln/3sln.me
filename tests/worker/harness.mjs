@@ -14,6 +14,8 @@ export {McpAuthorizationObject,PlanCatalogObject};
 export class TestDirectory extends IdentityDirectory {
   async pushVector(config,subscription,payload){let sent;const transport=createPushTransport(config,{fetcher:async(url,options)=>{sent=options;return new Response(null,{status:201});}}),result=await transport.send(subscription,payload);return {accepted:result.accepted,encrypted:!Buffer.from(sent.body).includes(Buffer.from(payload.proof)),encoding:new Headers(sent.headers).get('Content-Encoding'),redirect:sent.redirect};}
   async rows(){return [...await this.ctx.storage.list()];}
+  async alarmAt(){return this.ctx.storage.getAlarm();}
+  async fireAlarm(){await this.ctx.storage.deleteAlarm();await super.alarm();}
   async passwordVector(password, encoded){const hasher=createWorkerArgon2Hasher();return {match:await hasher.verify(password,encoded),wrong:await hasher.verify(password+'wrong',encoded)};}
 }
 export class TestAccount extends AccountObject {

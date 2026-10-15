@@ -51,6 +51,10 @@
       {
         "name": "FEDERATION",
         "class_name": "FederationObject"
+      },
+      {
+        "name": "ADMIN_AUTHORITY",
+        "class_name": "AdminAuthority"
       }
     ]
   },
@@ -85,6 +89,12 @@
       "tag": "v5",
       "new_sqlite_classes": [
         "PlanCatalogObject"
+      ]
+    },
+    {
+      "tag": "v6",
+      "new_sqlite_classes": [
+        "AdminAuthority"
       ]
     }
   ],

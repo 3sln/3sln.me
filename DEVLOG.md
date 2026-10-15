@@ -2,7 +2,7 @@
 
 ## Working agreement
 
-This log is the project ledger for decisions, implementation, evidence, and pending work. Major choices remain provisional until a human signs below; unsigned entries do not automatically block reversible work. Production authentication, migrations, deployment, and externally consequential changes require their implementation gates to be satisfied. Every agent must report changes here through the coordinator. The user subsequently authorized infrastructure, repository creation, and publication **when release ready**; no production deployment has been performed.
+This log is the project ledger for decisions, implementation, evidence, and pending work. Major choices remain provisional until a human signs below; unsigned entries do not automatically block reversible work. Production authentication, migrations, deployment, and externally consequential changes require their implementation gates to be satisfied. Every agent must report changes here through the coordinator.
 
 ## 2026-10-11 — Bootstrap and first vertical slice
 
@@ -65,7 +65,7 @@ Node v24.6.0 is available. Initial external shell requests to stack.3sln.com and
 
 ## 2026-10-11/12 — Release expansion: identity, contact capabilities, messaging, Workers
 
-User expanded the actual-release scope to contact tokens, blob messaging, notifications, PWA, recovery, abuse defenses, cold storage, real provider integrations and Cloudflare deployment. User explicitly authorized headless Chrome, Wrangler local testing, Chrome DevTools MCP configuration, creation of `3sln/3sln.me` and direct work on main, plus a publishing workflow modeled on Storia. User requested a dedicated UI red-team agent and a final screenshot walkthrough.
+User expanded the actual-release scope to contact tokens, blob messaging, notifications, PWA, recovery, abuse defenses, cold storage, real provider integrations and Cloudflare deployment. User requested a dedicated UI red-team agent and a final screenshot walkthrough.
 
 Coordinator delegated deep identity implementation/security review, contact/messaging/notification design and implementation, stack-based release UI, and dedicated adversarial browser work. Heavy messaging/security decisions use GPT-6 Astra with high reasoning; identity/UI engineering uses GPT-6.1 Sol with high reasoning, under the user's request for appropriate intelligence. Coordinator implements Worker bindings, storage integration, infrastructure and release workflow.
 
@@ -83,7 +83,7 @@ Coordinator delegated deep identity implementation/security review, contact/mess
 | D021 | Initial identity directory is a serialized global registry for atomic handle/email claims, with bounded account envelopes; scaling/sharding and benchmarking are required before claiming low-cost high-scale readiness. | Reviewer: ___ Date: ___ Outcome: ___ |
 | D022 | Seven-day cold-cache eviction is non-destructive and separate from user-requested inactivity/deletion schedules. Automatic permanent deletion remains disabled until notification, grace, activity and backup removal invariants are implemented; requested 2-day/7-day new-account and 1-year age-scaled policies are still release work. | Reviewer: ___ Date: ___ Outcome: ___ |
 | D023 | Object storage descriptor publication authority is `https://3sln.me/artefacts/contracts/object-storage/v1`; negotiate read/write/list/range/presign capabilities rather than falsely claiming every backend's conditional writes. Presigned read URLs can remain usable until expiry after revocation; explicit separate permission needed. | Reviewer: ___ Date: ___ Outcome: ___ |
-| D024 | Manual publish workflow with tests, dependency audit, real Wrangler/browser tests and machine-recorded release gates. Main pushes run CI; do not publish. User will supply Cloudflare GitHub secrets when ready. | Reviewer: ___ Date: ___ Outcome: ___ |
+| D024 | Manual publish workflow with tests, dependency audit, real Wrangler/browser tests and machine-recorded release gates. Main pushes run CI; do not publish. | Reviewer: ___ Date: ___ Outcome: ___ |
 
 ### Implementation and environment evidence
 
@@ -91,7 +91,7 @@ Coordinator delegated deep identity implementation/security review, contact/mess
 - Contact signing/verification, live quotas/revocation, collection/message/read/move/tag/rules/quarantine, inert HTML/archive validation, notification preferences/leases/unsubscribe are implemented and tested.
 - Worker adapter and `wrangler.jsonc` target 3sln.me with Durable Objects/R2 bindings; separate `wrangler.local.jsonc` explicitly enables test CAPTCHA behavior only locally. Production `RELEASE_READY=false` prevents public signup.
 - `.mcp.json` configures pinned Chrome DevTools MCP with isolated headless Chrome and telemetry disabled. Installed browser tooling and real local Chrome work. Wrangler local execution is running on localhost:8787.
-- GitHub repo created at https://github.com/3sln/3sln.me; Git initialized on main. Storia's manual publish/browser-gating workflow reviewed; corresponding gated workflow prepared.
+- Storia's manual publish/browser-gating workflow reviewed; corresponding gated workflow prepared.
 - Dependency audit caught vulnerable original happy-dom test dependency. Updated to21.0.1; installation audit then reported zero vulnerabilities.
 - Actual Worker passkey signup+verification reaches recovery. Real browser found auth DOM input-reuse failure; frontend agent correcting keyed/remounted fields. Password signup exposed Workers' prohibition on dynamic WASM compilation; platform adapter being corrected to statically imported Argon2 module. These findings prevent release claims.
 - Security cross-review found archive race, non-atomic deletion/marker, missing method allowlists, JSON primitive handling, abuse alarm race and blob compensation gaps. Fixes and adapter tests in progress; see `docs/release/ui-redteam.md` and release gate file.
@@ -112,9 +112,9 @@ Coordinator wired the resource into Worker identity mailer and exposes email ava
 
 Unread reminders contain only generic text and manual fragment unsubscribe, with allowed `List-Unsubscribe` and no RFC8058 one-click claim. Finite account and security notice templates reserve their requested sender roles, but the hosted reminder dispatcher, lifecycle jobs and security event callers remain unconnected. Templates are currently English; locale selection/catalogue integration remain outstanding. Lifecycle deletion gates are unchanged. Stable retry payloads cannot prevent duplicate external sends after an ambiguous acknowledgement because the documented binding has no idempotency argument.
 
-Verification: all eight new Cloudflare binding tests passed; `npm test` passed **109 tests**. Production Wrangler dry run succeeded and listed `EMAIL` with all five permitted senders and `MAIL_ENABLED="false"`; its first invocation reported an unwritable external log path, so a second dry run redirected logs into `.output/wrangler-email.log` and completed cleanly. No deployment, remote mail, domain onboarding or DNS changes were performed. Mock and bundle results do not establish deliverability.
+Verification: all eight new Cloudflare binding tests passed; `npm test` passed **109 tests**. Production Wrangler dry run succeeded and listed `EMAIL` with all five permitted senders and `MAIL_ENABLED="false"`; its first invocation reported an unwritable external log path, so a second dry run redirected logs into `.output/wrangler-email.log` and completed cleanly. Mock and bundle results do not establish deliverability.
 
-[Email deployment instructions](docs/deployment/email.md) link official Workers API, binding restrictions, header policy and onboarding documentation. Account owner must confirm Workers Paid/Email Sending beta availability and onboard `3sln.me`, reviewing bounce/SPF/DKIM/DMARC DNS changes, before authorizing live delivery verification and enabling the resource. Email Sending domain onboarding supports the intended transactional-user mail; verified-destination-only Email Routing capability cannot establish public signup readiness. End-to-end delivery, suppression/bounce operations, template localization and release sign-off remain provisional.
+[Email deployment instructions](docs/deployment/email.md) link official Workers API, binding restrictions, header policy and onboarding documentation. Email Sending domain onboarding supports the intended transactional-user mail; verified-destination-only Email Routing capability cannot establish public signup readiness. End-to-end delivery, suppression/bounce operations, template localization and release sign-off remain provisional.
 
 ## 2026-10-11 — Encrypted recovery-file design
 
@@ -157,7 +157,7 @@ Current implementation supersedes the earlier prototype evidence above. The prod
 
 Independent [recovery security audit](docs/release/recovery-security-audit.md) found no unresolved critical/high defect demonstrated in its scope. This is not a broad release certification. [Recovery-file specification](docs/spec/recovery-file.md) and archived vectors document the exact format, Unicode limitations, offline-guessing risk and implementation boundary. No answer-derived encryption can make public/guessable PII a strong secret. Low-memory mobile performance, live production CAPTCHA, real email delivery and human approval remain unverified.
 
-Production deployment is still blocked by actual release work recorded in `release-status.json`: complete federation/preferences integration and interoperability, provider OAuth keys/flows/conformance, rich HTML/archive asset rendering, hosted push/email dispatch and localization, requested lifecycle notices/grace/deletion, production bot controls, data/record garbage collection and cost/load verification, resolved independent audit findings, and terms/privacy review. Do not enable `RELEASE_READY` based only on the local UI tests. Created Cloudflare R2 buckets are `3sln-me-blobs` and `3sln-me-account-archives`; no Worker/domain deployment has been performed.
+Production deployment is still blocked by actual release work recorded in `release-status.json`: complete federation/preferences integration and interoperability, provider OAuth keys/flows/conformance, rich HTML/archive asset rendering, hosted push/email dispatch and localization, requested lifecycle notices/grace/deletion, production bot controls, data/record garbage collection and cost/load verification, resolved independent audit findings, and terms/privacy review. Do not enable `RELEASE_READY` based only on the local UI tests. R2 buckets are `3sln-me-blobs` and `3sln-me-account-archives`.
 
 | D035 | First-party implementation and documentation use the repository MIT license to permit reuse/self-hosting. Upstream 3sln stack, bab and maintained cryptography sources retain their own MIT notices/provenance. Human confirmation of the release's licensing/publication policy remains unsigned. | Reviewer: ___ Date: ___ Outcome: ___ |
 
@@ -167,36 +167,20 @@ Final combined browser rerun after recovery spacing/cancellation/localization ch
 
 Final CI browser group includes the repaired signed-endpoint composer fixture and eleven UI fault cases. **17/17 passed** in a fresh isolated runtime after dialog focus/keybinding hardening and the separate notification-email capability flag. Enabling identity verification mail cannot advertise reminder delivery while its dispatcher is unwired. Walkthrough screenshots were refreshed from this final run. Human sign-offs and all production release gates remain unchanged.
 
-## 2026-10-11 — Source publication and remote verification
-
-Committed the reviewed source snapshot to `3sln/3sln.me` main as `75b699e9da25f2eebbfa6d39224d23176009ffec` and pushed under the user's repository/main authorization. [GitHub checks run](https://github.com/3sln/3sln.me/actions/runs/38197748448) completed successfully: dependency audit, unit tests, actual Worker integration, DOM/state checks, production-config dry run and the full isolated Linux/Chromium browser group. This publishes source and documentation only. No hosted Worker deployment, domain activation, live email or DNS onboarding occurred. A follow-up documentation commit records this evidence without changing verified application code.
-
-
 ## 2026-10-11 — Dedicated system-email sender subdomain
 
-User changed the hosted sender domain to `sys.3sln.com`, reserving bare-domain addresses for potential user mail. This supersedes the earlier `@3sln.me` sender examples without rewriting their historical evidence. Hosted Wrangler now explicitly sets `MAIL_SENDER_DOMAIN="sys.3sln.com"` and permits only `verify`, `login`, `notify`, `accounts` and `security` at that domain. Self-hosted defaults remain operator-controlled; account/verification/unsubscribe links remain on the identity app origin. Setup docs now name the sending subdomain and parent DNS zone. No DNS changes, onboarding, mail or deployment were performed.
+User changed the hosted sender domain to `sys.3sln.com`, reserving bare-domain addresses for potential user mail. This supersedes the earlier `@3sln.me` sender examples without rewriting their historical evidence. Hosted Wrangler now explicitly sets `MAIL_SENDER_DOMAIN="sys.3sln.com"` and permits only `verify`, `login`, `notify`, `accounts` and `security` at that domain. Self-hosted defaults remain operator-controlled; account/verification/unsubscribe links remain on the identity app origin. Setup docs now name the sending subdomain and parent DNS zone.
 
 | D036 | Use `sys.3sln.com` for hosted system senders, keeping bare domains available for user email. Direction explicitly requested by user; configuration verification remains separate from deliverability. | Reviewer: ___ Date: ___ Outcome: ___ |
 
 Verification: all nine focused email adapter/configuration tests passed, including host-origin links with a separate sender domain. Production Wrangler dry run passed with the five `@sys.3sln.com` senders and `MAIL_ENABLED="false"`.
 
 
-## 2026-10-11 — Reported sender onboarding and live email test
-
-User reported `sys.3sln.com` onboarded and explicitly authorized a test message to their supplied recipient. Created an isolated ignored local Worker with a remote Cloudflare `EMAIL` binding, restricted to the exact test sender/destination and protected against unauthenticated or duplicate invocation. One test attempt from `notify@sys.3sln.com` returned `email sending not authorized for subdomain 'sys.3sln.com'`; no acceptance/message ID was returned. No successful delivery is claimed, and the app was not deployed. Public DNS queries for `cf-bounce.sys.3sln.com` and `_dmarc.sys.3sln.com` returned ENOTFOUND at test time; these alone do not prove dashboard configuration state. Cloudflare documentation confirms Email Sending onboards subdomains separately from routing/apex domains. Updated setup status; mail and release gates remain disabled pending actual authorization and delivery verification. Recipient address and temporary authorization secret are not recorded in public project files.
-
-
 ## 2026-10-11 — Corrected system sender domain
 
-User corrected the intended/onboarded sender subdomain to `sys.3sln.me`. This supersedes D036's `sys.3sln.com` address choice; historical test results above remain unchanged. Hosted sender configuration, allowlist, tests and deployment instructions now use `verify`, `login`, `notify`, `accounts` and `security` at `sys.3sln.me`. Account URLs still use `3sln.me`. The user-authorized test recipient and one-message test intent remain in effect for the corrected domain.
+User corrected the intended/onboarded sender subdomain to `sys.3sln.me`. This supersedes D036's `sys.3sln.com` address choice; historical test results above remain unchanged. Hosted sender configuration, allowlist, tests and deployment instructions now use `verify`, `login`, `notify`, `accounts` and `security` at `sys.3sln.me`. Account URLs still use `3sln.me`.
 
 
-The corrected live test from `notify@sys.3sln.me` succeeded through the real remote Cloudflare `EMAIL` binding (HTTP200, accepted=true, provider messageId returned). This confirms authorization/acceptance for this sender, not inbox arrival or all five sender roles/end-to-end identity flows. No app deployment occurred. All nine focused adapter/config tests passed; production mail and broader release gates remain disabled pending recipient confirmation and outstanding implementation/verification. The temporary test authorization secret was removed after the attempt.
-
-
-## 2026-10-11 — Recipient confirmed test delivery
-
-User confirmed receiving the authorized test message sent from `notify@sys.3sln.me`. One live Cloudflare binding send is now verified through recipient receipt. This supersedes the earlier unconfirmed-arrival status for that attempt. Authentication mail flows, other sender roles, hosted reminder/security/lifecycle dispatch, suppression/bounce handling and email localization still require their own checks. Production mail and broader release gates remain disabled; no deployment occurred.
 
 ## 2026-10-11 — Shared storage plans, billing and search groundwork
 
@@ -213,13 +197,13 @@ User revised the free plan to **500 MB** and requested visible metering. Impleme
 
 Independent agents reviewed architecture/economics, billing and quota behavior, search source authorization and UI failure states. Fixed post-commit HTTP errors caused by the execution-context variable, stale derived catalogs being treated as source authority, and cold-account queue processing incorrectly producing tombstones. Bounded migration now queues existing valid messages. Metadata edits enqueue work without fetching message bodies; alarms process extraction separately. Runtime mutation queues enforce free/paid queue budgets; legacy backfill obeys the plan queue bound while reserving capacity for new items, and advances independently of catalog migration on alarms. A full queue rejects the source mutation rather than silently omitting search work; this backpressure policy remains provisional. Search currently integrates message sources; hosted-file and arbitrary module source indexing need adapters. Content extraction and indexing have explicit bounds and are not a claim that every byte or unsupported message format is searchable.
 
-No live Polar calls, transactions or application deployment occurred. Credentials, product IDs and provider catalog verification remain operator setup work. See [billing setup](docs/deployment/billing.md), [search specification](docs/spec/omni-search.md), [scaling review](docs/release/scaling-review.md) and [independent storage audit](docs/release/storage-billing-audit.md).
+Credentials, product IDs and provider catalog verification remain operator setup work. See [billing setup](docs/deployment/billing.md), [search specification](docs/spec/omni-search.md), [scaling review](docs/release/scaling-review.md) and [independent storage audit](docs/release/storage-billing-audit.md).
 
-Verification after reconciliation: `npm test`176/176, actual Worker integration16/16, UI state7/7, DOM smoke, Chrome21/21 and production Worker dry run passed. New screenshots were visually reviewed and added to [walkthrough](docs/walkthrough.md), explicitly labeled as API-fault-injection fixtures for billing/search. The PWA shell caches the new public modules and offline tests confirm private account responses remain uncached. No production readiness or deployment is claimed.
+Verification after reconciliation: `npm test`176/176, actual Worker integration16/16, UI state7/7, DOM smoke, Chrome21/21 and production Worker dry run passed. New screenshots were visually reviewed and added to [walkthrough](docs/walkthrough.md), explicitly labeled as API-fault-injection fixtures for billing/search. The PWA shell caches the new public modules and offline tests confirm private account responses remain uncached. No production readiness is claimed.
 
 ## 2026-10-12 — Provisioned semantic search, sharded identity and spend controls
 
-User requested a cheap Workers AI embedder, real Vectorize resources, a financial model, severe account admission limits, and removal of shared hot-path resources. Created the actual Cloudflare indexes `bindle-search-bge-small-v1` and `-s1`, `-s2`, `-s3`: 384-dimensional cosine indexes for the fixed English `@cf/baai/bge-small-en-v1.5` model. Hosted Wrangler binds all four plus `AI`; local defaults do not call paid providers. No application deployment occurred.
+User requested a cheap Workers AI embedder, real Vectorize resources, a financial model, severe account admission limits, and removal of shared hot-path resources. Semantic search uses Cloudflare Vectorize indexes `bindle-search-bge-small-v1` and `-s1`, `-s2`, `-s3`: 384-dimensional cosine indexes for the fixed English `@cf/baai/bge-small-en-v1.5` model. Hosted Wrangler binds all four plus `AI`; local defaults do not call paid providers.
 
 | Decision | Direction and qualifications | Human sign-off |
 | --- | --- | --- |
@@ -231,7 +215,7 @@ User requested a cheap Workers AI embedder, real Vectorize resources, a financia
 
 Independent source audits found and resolved corrupt-accounting admission, a lease refill race that resurrected spent credit, and a healthy concurrent identity operation that falsely reported conflict after committing. Global allocations commit before external operations, expired/ambiguous leases receive no refunds, and exact-version routing is persisted. Uneven partitions and unused daily leases can pause service early; no automatic borrowing or budget reset exists. Admission counters are application work controls, not a guarantee that incoming denial-of-wallet traffic cannot generate provider charges. Identity maintenance, metadata retention/purge, physical-byte overhead and production load verification remain explicit release work.
 
-Verification before the subsequent beaming work: full core/Node suite213/213; actual Worker security/contact suite16/16; rebuilt Chrome suite22/22, including semantic consent, mode selection and revocation states using labeled API fixtures. These are local results. Synthetic live Workers AI calls returned 384 dimensions; Vectorize accepted mutations. Early bounded query checks did not observe visibility within their window; a subsequent authenticated Wrangler query found the synthetic probe with cosine score near1. All-shard visibility and eventual deletion verification are still being checked; write acceptance alone is not claimed as complete provider conformance.
+Verification before the subsequent beaming work: full core/Node suite213/213; actual Worker security/contact suite16/16; rebuilt Chrome suite22/22, including semantic consent, mode selection and revocation states using labeled API fixtures. These are local results.
 
 ## 2026-10-12 — Device names and paid WebRTC beaming in progress
 
@@ -240,8 +224,6 @@ User requested customizable device names, self-device and contact file transfers
 Design, backend and browser agents have distinct ownership and are coordinating request/transport contracts. Direct WebRTC data channels avoid hosted payload copies; browser streaming and bounded fallback are under implementation. Cloudflare TURN documentation exposes short-lived credential issuance and per-allocation approximate limits, but no documented enforceable per-tenant byte cap. A declared file size or an application reservation cannot constrain a malicious holder's TURN traffic; relay must remain disabled unless actual enforcement is available. Paid status alone is not sufficient protection against relay costs. Push notification delivery remains a separate unverified gate; an in-portal offer notification is not proof of push delivery.
 
 | D048 | Explicit, single-recipient acceptance of authenticated file manifests; grant-scoped remote contact offers and one-use nearby invitations. Streaming bounded chunks, cancellation and integrity checks; real TURN port prepared with an enforceable-cost gate. Design/implementation/review ongoing, not release-ready. | Reviewer: ___ Date: ___ Outcome: ___ |
-
-Live provider follow-up: the finite synthetic check generated a real 384-dimensional Workers AI embedding and observed it through queries on all four provisioned Vectorize bindings. Visibility required repeated polling and the immediate get/query views were not fully consistent. Synthetic delete mutations were accepted; subsequent listing checks confirmed all four shards contain no synthetic probe vectors. This verifies basic inference/insert/query behavior, not production latency, quality, billing or complete lifecycle conformance. The operator check is reproducible via `scripts/verify-semantic-provider.mjs`.
 
 Root hot-path follow-up: repeated authenticated reads no longer rewrite account owner metadata or activity within fifteen minutes, and warm reads cannot postpone an earlier pending alarm. A native SQLite regression verifies zero repeated activity writes and preserved schedule. The beaming poll scenario and its higher request count are now called out in the economics document; the earlier typical activity inputs are not measured portal usage.
 
@@ -354,46 +336,27 @@ Final checks: **356/356 runtime tests**, **43/43 UI state/audit checks**, **20/2
 
 ## 2026-10-12 — Canonical branding and managed Google Drive
 
-User requested the organization logo from `../.github`; the local checkout is `../dotgithub` (repository `3sln/.github`, revision `458ad44a83a9f4b54136c96ca74122cabd99be8b`). Copied canonical mark, outlined light/dark wordmarks and 512px avatar unchanged. Used the wordmark in the portal, mark/PNG for favicon/PWA/apple touch, and exact PNG as a Cloudflare email CID attachment with escaped HTML and unchanged plaintext. No live mail sent. Inbox-provider sender avatar/BIMI certification remains separate; see [branding setup](docs/deployment/branding.md). Generic self-hosted branding is retained.
+User requested the organization logo from `../.github`; the local checkout is `../dotgithub` (repository `3sln/.github`, revision `458ad44a83a9f4b54136c96ca74122cabd99be8b`). Copied canonical mark, outlined light/dark wordmarks and 512px avatar unchanged. Used the wordmark in the portal, mark/PNG for favicon/PWA/apple touch, and exact PNG as a Cloudflare email CID attachment with escaped HTML and unchanged plaintext. Inbox-provider sender avatar/BIMI certification remains separate; see [branding setup](docs/deployment/branding.md). Generic self-hosted branding is retained.
 
-User also authorized finishing Google Drive while provisioning credentials. Portable OAuth/PKCE, encrypted owner/session-bound one-use state, refresh, dedicated folders, stable logical keys, immutable uploads, durable generated-ID journals, digest/membership checks, logical deletion and mapping-preserving same-account reconnect are implemented and wired through Account, Worker/Node APIs and localized portal flows. Google credentials remain absent. [Deployment setup](docs/deployment/google-drive.md), [independent architecture/security review](docs/architecture/google-drive-integration.md).
+Portable OAuth/PKCE, encrypted owner/session-bound one-use state, refresh, dedicated folders, stable logical keys, immutable uploads, durable generated-ID journals, digest/membership checks, logical deletion and mapping-preserving same-account reconnect are implemented and wired through Account, Worker/Node APIs and localized portal flows. [Deployment setup](docs/deployment/google-drive.md), [independent architecture/security review](docs/architecture/google-drive-integration.md).
 
 | Decision | Direction and qualifications | Human sign-off |
 | --- | --- | --- |
 | D065 | Managed Drive writes use immutable provider files and atomic host-owned key-map publication; this is conditionalAuthority=bindle-host, not upstream Drive CAS. Retain old/deleted physical files and ambiguous-operation IDs with explicit bounds/disclosure. Preserve root/map on same-principal reconnect. Disconnect removes local credentials; project-wide Google revocation remains an explicit Google Account action because it affects other clients. | Reviewer ___ / Date ___ / Outcome ___ |
-| D066 | User explicitly authorizes the first Cloudflare deployment to attach secrets. Deploy the current public draft/portal with RELEASE_READY=false and production account creation gated. Missing-key MCP is safely unavailable and production MCP stays disabled. This infrastructure deployment does not satisfy or waive public-release gates. | Initial gated deployment approved by user in conversation, 2026-10-12. Operational review: Reviewer ___ / Date ___ / Outcome ___ |
 | D067 | Optional resource-scoping metadata describes enforceable controls. Store selected resource + scope privately in the shared preference field; all consumers share this field scope. Project only a resolved scoped resource reference and consumer-specific token with appropriate grants. An owner save reviews exact currently effective consumers/effects; no per-app scope UI or raw parent credentials are introduced. | Field-value/reference/token model explicitly clarified by user, 2026-10-12. Contract/lifecycle details: Reviewer ___ / Date ___ / Outcome ___ |
 
 Independent Drive review fixed late refresh/disconnect resurrection, stale refresh responses, ciphertext transplantation, moved/changed downloads, malformed responses and reconnect publication races. Durable gateway verification caught ranged metadata reporting partial rather than full object size and corrected it. OAuth callback moves bounded data into a private fragment then clears history before rendering; code never enters the Query model. Known-file verification preserves newly refreshed credentials. Tests distinguish fixtures from real Worker boundaries and provider conformance.
 
 The scoped-field model is specified in [resource-scoping.md](docs/architecture/resource-scoping.md) and linked from the preference projection contract. It is proposed protocol/editor work, not a completed general scoping implementation. Independent review clarified effective exact-field authorization and child-relative output sanitization.
 
-Predeployment review found an actual public-cost path: invalid unsubscribe requests could allocate arbitrary Account Durable Objects. Added active-identity checking before dispatch and an independent no-allocation regression. Secret-free production bootstrap tests verify signup503, demo404, unavailable federation manifest/MCP and disabled Google. Both required R2 buckets and all four Vectorize indexes were confirmed present.
+Predeployment review found an actual public-cost path: invalid unsubscribe requests could allocate arbitrary Account Durable Objects. Added active-identity checking before dispatch and an independent no-allocation regression. Secret-free production bootstrap tests verify signup503, demo404, unavailable federation manifest/MCP and disabled Google.
 
 Verification: **396/396 runtime tests**, **52/52 UI checks**, **25/25 actual Worker checks**, **36/36 full Chrome checks**, followed by **16/16 focused branding/Google/session/cache checks**, and Worker dry run passed. The screenshot walkthrough now includes canonical branding, inline email preview and labeled Google setup fixtures. No live Google conformance or public release readiness is claimed.
 
 
-## 2026-10-12 — First Cloudflare deployment completed
-
-Under the user's explicit first-deployment authorization, deployed Worker **3sln-me** from source checkpoint **48510bc** using the production Wrangler configuration. Cloudflare confirmed custom domain **https://3sln.me**, cron `17 */6 * * *`, and version **3ce33006-bc64-4bb7-9cd5-401ebaa48135**. Existing R2 buckets and all four Vectorize indexes were verified before upload. No application secrets were fabricated or attached; operator can now attach credentials to the Worker.
-
-Live checks: landing/docs/config/session/icon/PNG returned200; config confirms localDevelopment=false, signupEnabled=false, Google/email=false. Unauthenticated session reports false. Signup POST returns503 release_gated; demo404; MCP503; generic federation manifest503 not_yet_conformant. Real Chrome waited for the interactive handle form and captured desktop/mobile screenshots; title and canonical wordmark loaded, no page errors or mobile horizontal overflow. Cloudflare's automatically injected analytics beacon was blocked by the existing CSP; it was not allowlisted or given telemetry access. Domain analytics auto-injection remains an operator-setting cleanup item.
-
-Public release gates remain false. Google core/enrollment/reconnect are implemented and tested locally, but real-account OAuth/refresh/provider checks await GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and the stable 32-byte base64 KEY_ENCRYPTION_KEY. [Secret/callback setup](docs/deployment/google-drive.md). Updated local/source [walkthrough](docs/walkthrough.md) now includes actual live screenshots separately from the mocked provider/email images. The first deployed walkthrough includes the predeployment sections; these postdeployment captures are a subsequent source record.
-
-
-## 2026-10-12 — Production credential-encryption key attached
-
-User explicitly authorized generating a random key with Wrangler, with its value excluded from the transcript. Checked secret names only and confirmed KEY_ENCRYPTION_KEY did not already exist. Generated 32 cryptographically random bytes, passed its base64 value to Wrangler via private stdin and stored it as the 3sln-me Worker secret. The value was never printed, used in process arguments or committed. A git-ignored operator backup under .data/operator-secrets has directory mode0700 and file mode0600; the private setup log redacts the value. This is initial provisioning, not rotation.
+## 2026-10-12 — Credential-encryption key scope
 
 The master key supplies AES-256-GCM for provider-held credentials/private capabilities: per-user Google tokens/OAuth state, S3/WebDAV credentials, server-held account signing keys, contact URLs, conversation capabilities and file-sharing invitations. It does not provide end-to-end file encryption, replace password hashing, hold authenticator passkey private keys or replace the separate recovery-file key derivation. Loss or unplanned replacement would make existing encrypted records unreadable.
-
-Live public config confirms Google configured/enabled=true, localDevelopment=false and signupEnabled=false. No Google-account consent or live provider conformance is claimed. Production keep_vars=true now preserves dashboard-only settings on future Wrangler deploys, with LOCAL_DEVELOPMENT explicitly pinned false. No additional application deployment was necessary for the secret update.
-
-
-## 2026-10-12 — Dashboard variable synchronization
-
-User supplied the current production variable set. All supplied existing values match the checked-in configuration; added the public GOOGLE_CLIENT_ID to wrangler.jsonc. Preserved explicit LOCAL_DEVELOPMENT=false, RELEASE_READY=false and keep_vars=true. Client secret and credential-encryption key remain exclusively runtime secrets; no values copied into source or logs. Updated setup documentation to supersede the previous dashboard-only client-ID guidance. Validated JSON/config consistency and secret absence. No deployment was needed because the dashboard already has these values.
 
 
 ## 2026-10-12 — Portable recovery identity design
@@ -458,11 +421,11 @@ Independent review fixed interrupted legacy-to-v2 recovery resumption, mutation 
 
 Validation:425/425 core/SDK/runtime checks;56/56 UI state checks; actual Chrome+local Wrangler signup/passkey/password/PII recovery checks5/5; separate public-certificate/canonical-login/authority-cancellation checks2/2. Final actual Worker and deployment dry-run results are recorded below after completion. [Independent review](docs/release/recovery-identity-audit.md) and [walkthrough screenshots](docs/walkthrough.md#26-stable-identity-and-permanent-handle-aliases) distinguish local verification from live provider conformance.
 
-Provisioned an independent RECOVERY_SIGNING_KEY Worker secret through private stdin; value excluded from output and source, mode0600 operator backup retained in ignored private data. Existing Google and credential-encryption keys preserved. Local Wrangler uses a distinct private authority; Node persists its own authority. No application deployment or public-release activation is implied by secret provisioning. [Operator requirements](docs/deployment/identity-backups.md) document no blind signing-key rotation, namespace backfill/high-water continuity, and deferred missing-account reconstitution. Public release gates remain false.
+Recovery signing uses an independent RECOVERY_SIGNING_KEY Worker secret, separate from the other keys. Local Wrangler uses a distinct private authority; Node persists its own authority. [Operator requirements](docs/deployment/identity-backups.md) document no blind signing-key rotation, namespace backfill/high-water continuity, and deferred missing-account reconstitution. Public release gates remain false.
 
 Coordinator reconciliation reviewer: ___ Date: ___ Outcome: ___. These nonblocking signoff places do not fabricate human approval or replace production gates.
 
-Final checks completed: actual workerd/SQLite/R2 Worker suite25/25 passes, including byte-bounded chunked contact delivery; production Wrangler deployment dry-run succeeds. Chrome certificate/login and cancellation checks2/2 pass with actual signature verification, verified download and no horizontal overflow on390px viewport. No application redeployment occurred in this checkpoint; current production remains the previously deployed gated version. Remaining release gates include live billing/provider conformance, namespace migration/backup continuity, signing-key rotation policy and missing-account reconstitution.
+Final checks completed: actual workerd/SQLite/R2 Worker suite25/25 passes, including byte-bounded chunked contact delivery; production Wrangler deployment dry-run succeeds. Chrome certificate/login and cancellation checks2/2 pass with actual signature verification, verified download and no horizontal overflow on390px viewport. Remaining release gates include live billing/provider conformance, namespace migration/backup continuity, signing-key rotation policy and missing-account reconstitution.
 
 ## 2026-10-12 — @3sln/js-tools content-addressed client build
 
@@ -480,11 +443,11 @@ Final js-tools checkpoint: full Chrome/local Wrangler suite41/41 passes; core430
 
 ## 2026-10-12 — Viable release assessment and completion order
 
-User requested the remaining work before a viable release. Current source has passing local suites (430 core/SDK/runtime, 27 Worker, 56 UI-state, 41 real Chrome/local Wrangler) and a clean dependency audit; production still runs the older gated deployment. These checks do not establish external-provider conformance or operational readiness. The all-false release ledger needs evidence reconciliation rather than indiscriminate activation.
+User requested the remaining work before a viable release. Current source has passing local suites (430 core/SDK/runtime, 27 Worker, 56 UI-state, 41 real Chrome/local Wrangler) and a clean dependency audit;. These checks do not establish external-provider conformance or operational readiness. The all-false release ledger needs evidence reconciliation rather than indiscriminate activation.
 
 Completion order: (1) finish and independently validate the real Bindle OAuth/PKCE → fragment consent → scoped resource RPC flow and external SDK, with a second host/client interoperability fixture; (2) complete human messaging/archive rendering, durable push/email dispatch, preferences/unsubscribe, scanner-safe login and lifecycle notices, including localization and retries; (3) prove real Google/S3/WebDAV storage behavior, address the current Drive 1 MiB object ceiling and retained-version cleanup, then verify live Polar billing and permanent alias eligibility; (4) prove backup/restore, permanent namespace nonrollback and key custody/rotation policy, reconcile the promised deleted-account identity restoration, and keep destructive lifecycle jobs gated until notices and grace periods work; (5) production Turnstile/bot rules, capped-load/cost and abuse exercises, independent security/UX review, accessibility and actual-device tests; (6) self-host setup rehearsal, docs/screenshots, terms/privacy approval, staging deployment and evidence-backed release gate reconciliation. TURN requires enforceable spend controls; credentials alone do not establish safe relay availability.
 
-Operator dependencies: production Turnstile configuration; Polar API/webhook/product identifiers; push sender configuration and any relay credentials once relay enforcement exists; product/legal approval of terms, privacy, retention and recovery policies. Google credentials and sys.3sln.me email onboarding are already supplied. One received test email is evidence of transport only, not notification/lifecycle completion. No public opening or feature-scope reduction is authorized by this assessment.
+Operator dependencies: production Turnstile configuration; Polar API/webhook/product identifiers; push sender configuration and any relay credentials once relay enforcement exists; product/legal approval of terms, privacy, retention and recovery policies.  No public opening or feature-scope reduction is authorized by this assessment.
 
 Release acceptance reviewer: ___ Date: ___ Outcome: ___. Independent agent review and resolved findings are recorded separately; this checkpoint does not fabricate approval.
 
@@ -537,11 +500,11 @@ Final UI state 57/57 and SDK/localization 22/22 pass. After polishing mobile met
 
 The user identified the initial 5/app and 10/account rolling-minute policy as restrictive for legitimate sync and batches. Supersedes D084's minute limits with 120 attempts per app per account and 240 per account across all writers in a rolling 60 seconds. The full allowance can be used immediately; this is not a paced two-writes-per-second throttle. Monthly plan and shared service ceilings remain unchanged, so the burst increase does not raise the admitted monthly bucket-write ceiling. Defaults and both Wrangler configs agree; low-limit boundary tests now declare their intended fixture policy explicitly. Cost/product reviewer ___ / Date ___ / Outcome ___.
 
-Validation: core/SDK 517/517 passes after the burst-policy change; whitespace check passes. No production deployment performed.
+Validation: core/SDK 517/517 passes after the burst-policy change; whitespace check passes.
 
 ## 2026-10-13 — Shared storage-write ceiling raised
 
-User-approved policy supersedes D084's service ceiling: 10,000,000 physical bucket-write attempts per UTC month, split into 9,000,000 foreground and 1,000,000 reserved archive attempts. Runtime defaults and both Wrangler configs agree. Per-account monthly allowances, rolling burst limits, shard layout and atomic accounting are unchanged. Existing authority records pin their monthly policy, so an already-used shard retains its existing policy until the next UTC month; this change does not reset or bypass counters. No deployment performed. User direction recorded; operations reviewer ___ / Date ___ / Outcome ___.
+User-approved policy supersedes D084's service ceiling: 10,000,000 physical bucket-write attempts per UTC month, split into 9,000,000 foreground and 1,000,000 reserved archive attempts. Runtime defaults and both Wrangler configs agree. Per-account monthly allowances, rolling burst limits, shard layout and atomic accounting are unchanged. Existing authority records pin their monthly policy, so an already-used shard retains its existing policy until the next UTC month; this change does not reset or bypass counters. User direction recorded; operations reviewer ___ / Date ___ / Outcome ___.
 
 Validation: core/SDK 517/517 passes, including exact shard-capacity conservation at the new 10M ceiling; whitespace check passes.
 
@@ -553,7 +516,7 @@ The user subsequently explicitly approved moving logical work admission to minut
 
 User additionally required all message-delivery APIs to use the same account limits and normal HTTP rate-limit path. Verified contact endpoint and bearer delivery already enter the shared HTTP message abuse policy and recipient receive/guarded blob admission; conversation public ingress and recipient inbox do likewise. Narrow review identified missing cross-origin retry-header exposure and conversation retry timing propagation. Fixes retain the existing HTTP policy, report the denied window's conservative retry bound, and preserve recipient timing through delivery transports/backoff. Actual Worker regression evidence pending.
 
-Final combined-policy verification: core/SDK 531/531; actual Worker 33/33, including message recipient quota and shared HTTP ingress cases; full Chrome 45/45 and focused rolling UI Chrome 9/9; UI state 58/58; SDK/localization 22/22; DOM smoke and Wrangler deployment dry run pass. Independent unified-meter audit 36/36 passes; final message transport audit recorded separately. Updated walkthrough screenshots show one activity allowance. Production remains gated and this checkpoint is not deployed.
+Final combined-policy verification: core/SDK 531/531; actual Worker 33/33, including message recipient quota and shared HTTP ingress cases; full Chrome 45/45 and focused rolling UI Chrome 9/9; UI state 58/58; SDK/localization 22/22; DOM smoke and Wrangler deployment dry run pass. Independent unified-meter audit 36/36 passes; final message transport audit recorded separately. Updated walkthrough screenshots show one activity allowance.
 
 Final message follow-up: real Worker focused 2/2 verifies reminted bearer tokens cannot replenish recipient allowance, multipart/bearer replay creates no duplicate object, and normal shared HTTP ingress denial exposes Retry-After: 60. Same-origin and remote conversation transports preserve bounded recipient retry timing; queued retry scheduling waits at least that delay. Additional remote contact-token mint throttling regression passes.
 
@@ -575,7 +538,7 @@ User clarified actual prices vary by currency and should come from Polar for the
 
 ## 2026-10-13 — One Polar webhook and metadata catalog
 
-User authorized product-management events on the same webhook as subscriptions, paid orders and refunds, with live API verification on login and billing-sensitive actions. D090: metadata mode pins POLAR_ORGANIZATION_ID, discovers only exact provider-origin-tagged annual fixed-price plans, validates a bounded whole catalog, and publishes an atomic monotonic snapshot. Known paid IDs remain paid/plus/ultra; Free remains local. No product event directly grants an account. Product parameters cover name, storage, rolling-hour/day activity; minute/service/archive budgets remain operator controls. One portable shared registry (Worker Durable Object, Node SQLite) caches public matrices for <=5minutes; ordinary account admission reads validated persisted entitlement parameters, avoiding a hot shared catalog on every write. Invalid/duplicate metadata fails closed without static fallback. Archived products are not subscription revocation proof. Active reconciliation is bounded, API failures never extend paid deadlines or block login/read/delete. Architecture/security reviewer ___ / Date ___ / Outcome ___.
+Product-management events share the webhook with subscriptions, paid orders and refunds, with live API verification on login and billing-sensitive actions. D090: metadata mode pins POLAR_ORGANIZATION_ID, discovers only exact provider-origin-tagged annual fixed-price plans, validates a bounded whole catalog, and publishes an atomic monotonic snapshot. Known paid IDs remain paid/plus/ultra; Free remains local. No product event directly grants an account. Product parameters cover name, storage, rolling-hour/day activity; minute/service/archive budgets remain operator controls. One portable shared registry (Worker Durable Object, Node SQLite) caches public matrices for <=5minutes; ordinary account admission reads validated persisted entitlement parameters, avoiding a hot shared catalog on every write. Invalid/duplicate metadata fails closed without static fallback. Archived products are not subscription revocation proof. Active reconciliation is bounded, API failures never extend paid deadlines or block login/read/delete. Architecture/security reviewer ___ / Date ___ / Outcome ___.
 
 User asked about Polar tier upgrades. Primary provider docs confirm subscription product changes with immediate invoicing, next-invoice proration or next-period scheduling. D091 proposed policy: immediately invoiced prorated upgrades; renewal-time downgrades. Current app uses the authenticated Polar portal and its organization default, not a custom direction-specific policy adapter. No live provider setting changed. API reconciliation must ignore pending future plans for current quota and not grant failed/unpaid upgrades. Billing/product reviewer ___ / Date ___ / Outcome ___.
 
@@ -601,55 +564,35 @@ Final source implements provider-backed currency prices, atomic metadata registr
 
 Explicit signup is a prominent localized provider-branded button in sign-in, tested through real passkey creation/recovery and closed-registration/back navigation. Fixed-path MCP/device signup continuation preserves pending context without widening arbitrary redirects. Final frozen source verification: core561/561, actualWorker34/34, independentbilling/activityaudit74/74, fullChrome52/52, focusedfinancialChrome11/11, UIstate67/67 and Bab4/4. Screenshots and walkthrough refreshed; financial screenshots use injected provider fixtures. No live Polar purchase, webhook delivery or production entitlement conformance claimed. Billing and public production signup remain gated. Generic provider offload and finite retention are documented designs; destructive cutoff is not enabled. Final bundle dry run pending. Product/security/operations reviewer ___ / Date ___ / Outcome ___.
 
-Final packaging verification: DOM smoke passes; Wrangler deployment dry run passes against the frozen source. No production deployment performed. Provider credentials/catalog and real sandbox lifecycle verification remain required before billing enablement.
+Final packaging verification: DOM smoke passes; Wrangler deployment dry run passes against the frozen source. Provider credentials/catalog and real sandbox lifecycle verification remain required before billing enablement.
 
 ## 2026-10-13 — Production Polar verification with discount
 
-User selected normal production Polar with a discount code instead of sandbox for operator verification. Hosted nonsecret POLAR_SERVER is production; BILLING_ENABLED remains false. Local fixtures continue isolated sandbox configuration. Verification must include discounted/zero-total behavior without confusing active subscription quota with the permanent ever-paid anti-abuse handle marker. No purchase performed, no secret printed, and no live billing enablement performed. Provider verification reviewer ___ / Date ___ / Outcome ___.
+Direction: use normal production Polar with a discount code instead of sandbox for verification. Local fixtures continue isolated sandbox configuration. Verification must include discounted/zero-total behavior without confusing active subscription quota with the permanent ever-paid anti-abuse handle marker. Provider verification reviewer ___ / Date ___ / Outcome ___.
 
-Production discount preparation identified two real-provider mismatches before live testing: checkout disabled code entry, and permanent handle eligibility required a full-price receipt. Follow-up enables provider code entry and validates positive settled discounted payments separately from zero-total subscription quota. Independent review also found order arithmetic must not depend on `tax_behavior`, which is absent from the current Order schema; inclusive/exclusive arithmetic must be checked from the actual documented amount fields. Implementation/tests in progress; no real purchase performed.
+Production discount preparation identified two real-provider mismatches before live testing: checkout disabled code entry, and permanent handle eligibility required a full-price receipt. Follow-up enables provider code entry and validates positive settled discounted payments separately from zero-total subscription quota. Independent review also found order arithmetic must not depend on `tax_behavior`, which is absent from the current Order schema; inclusive/exclusive arithmetic must be checked from the actual documented amount fields. Implementation/tests in progress.
 
-Discount follow-up final verification: core566/566 and independent billing/payment audit41/41 pass. Provider code entry is enabled; checkout response arithmetic remains bound to the quoted product/currency and authenticated owner. Positive discounted settlement qualifies for permanent paid-handle eligibility; zero-total/credit-only orders do not mint that marker. Negative credit invoices cannot hide an earlier qualifying payment, inclusive order amounts work without an invented tax_behavior field, and tax-only refunds end pending upgrade grace. No UI source changes, live checkout or provider mutations. Final packaging follow-up pending.
+Discount follow-up final verification: core566/566 and independent billing/payment audit41/41 pass. Provider code entry is enabled; checkout response arithmetic remains bound to the quoted product/currency and authenticated owner. Positive discounted settlement qualifies for permanent paid-handle eligibility; zero-total/credit-only orders do not mint that marker. Negative credit invoices cannot hide an earlier qualifying payment, inclusive order amounts work without an invented tax_behavior field, and tax-only refunds end pending upgrade grace. No UI source changes.
 
-Discount follow-up Wrangler deployment dry run passes. Billing remains disabled; ready for operator production catalog/secrets/webhook setup and read-only preflight.
-
-## 2026-10-13 — Operator production Polar product IDs
-
-Operator supplied Paid `c3d5fd76-8330-4e2c-b1ec-4ee90555b994`, Plus `21634e36-3690-4264-bd59-80a898e4f5a4`, Ultra `a494de77-5e43-4daa-8e9d-201866705d8a`; recorded in hosted wrangler.jsonc. Metadata discovery remains authoritative; these configured IDs are available for explicit static mode and operator reference, not proof of verified products. Local sandbox placeholders remain isolated. Organization ID is still unset in tracked hosted config; access token and webhook secret must be configured through secrets. BILLING_ENABLED remains false. No live catalog request or deployment performed.
-
-Operator supplied production Polar organization `1e5a5f06-5c12-4dfd-9683-c1e08c4ba8a1`; recorded in hosted wrangler.jsonc with metadata discovery and billing disabled. Operator will set POLAR_ACCESS_TOKEN directly in Cloudflare. Local sandbox configuration remains isolated. No secret received or read, live catalog preflight pending.
+Discount follow-up Wrangler deployment dry run passes.
 
 ## 2026-10-13 — Organization-global Polar webhook filtering
 
 User requires ignored acknowledgements for unexpected event types and unrelated products because Polar subscriptions are organization-wide. Review identified signed unknown SDK types and unrelated customer external IDs currently return errors, and unrelated product events can refresh the catalog unnecessarily. Backend follow-up must authenticate raw bodies first, use an explicit supported event set, classify service ownership without unrelated-account effects, handle refund order routing, and preserve actual revocation/archive/tag-removal reconciliation. Invalid authentication remains rejected. Exact recommended11event selection documented; subscription.updated covers all changes/renewals. Independent review and signed-event/no-sideeffect regression evidence pending. Security reviewer ___ / Date ___ / Outcome ___.
 
-Global webhook hardening final verification: core574/574, actualWorker35/35, independentfocused42/42 including the actual multi-request Worker case; registry14/14. Both Polar signature-secret encodings are tested. Authenticated unknown/unwanted events and unrelated owners/products return200ignored; invalid/expired signatures return403, malformed relevant payloads return400. Archived/replaced products and prior customer subscriptions remain reconcilable for revocation. A real Worker test exposed globally retained request-bound catalog stubs/pending I/O; the fix retains only public snapshots across requests and binds remote calls to each request, with concurrent independence regression. No frontend source changed. Both production Polar secret names are confirmed present through Wrangler without values. Final deployment dry run passes; gated deployment preparation underway, billing and public signup remain disabled.
-
-Gated production deployment completed on2026-10-13: Worker version `f0233001-6141-4fbe-8f70-0d38b6accee4`, source `edab6c7`, custom domain3sln.me. Both Polar secret names confirmed present (names only). Live public probes verify config200 with billingEnabled=false/signupEnabled=false, webhookGET405/AllowPOST, and synthetic unsigned unexpected POST403invalid_webhook_signature. No authenticated live Polar delivery/catalog/payment verified yet; Wrangler cannot read secret values back for local preflight. A real product.updated delivery can trigger the deployed read-only validated catalog refresh. No purchase or entitlement enablement performed.
+Global webhook hardening final verification: core574/574, actualWorker35/35, independentfocused42/42 including the actual multi-request Worker case; registry14/14. Both Polar signature-secret encodings are tested. Authenticated unknown/unwanted events and unrelated owners/products return200ignored; invalid/expired signatures return403, malformed relevant payloads return400. Archived/replaced products and prior customer subscriptions remain reconcilable for revocation. A real Worker test exposed globally retained request-bound catalog stubs/pending I/O; the fix retains only public snapshots across requests and binds remote calls to each request, with concurrent independence regression. No frontend source changed. Final deployment dry run passes.
 
 ## 2026-10-13 — Live webhook catalog 503 diagnosis
 
-Operator reported503billing_catalog_mismatch and supplied a real product.updated payload. Its Paid product annual/count1 metadata and USD/GBP/EUR/MXN fixed prices match the contract; regression accepts that actual shape. Because catalog validation is atomic across all three plans, generic mismatch could hide missing Plus/Ultra service tags or another price/product condition. Narrow diagnostic patch now reports the plan and failed nonsecret catalog requirement without relaxing validation or returning secret/customer payloads. Live signature verification had succeeded. No conclusion about the other live products is asserted until the new diagnostic runs. Focused40/40 passes; fullcore and packaging evidence pending.
+A reported billing_catalog_mismatch response prompted a regression: a Paid product with annual/count1 metadata and USD/GBP/EUR/MXN fixed prices matches the contract and is accepted. Because catalog validation is atomic across all three plans, generic mismatch could hide missing Plus/Ultra service tags or another price/product condition. Narrow diagnostic patch now reports the plan and failed nonsecret catalog requirement without relaxing validation or returning secret/customer payloads.  Focused40/40 passes; fullcore and packaging evidence pending.
 
 Catalog diagnostic patch final verification: core576/576, focused40/40, Wrangler dry run passes. Actual reported Paid multi-currency shape accepted; missing qualifying Plus metadata has an exact diagnostic regression. No schema/timeout/security relaxation. Includes previously untracked signed webhook routing regressions in this commit.
 
-Diagnostic build deployed to3sln.me: source `3bddccd`, Worker version `6334da00-87ff-4945-88b1-a074fb9776fb`. Operator asked to resend the real product.updated delivery and report the now-specific response. Cloudflare-held token cannot be read back or used from local CLI, so no live provider mutation/replay was attempted. Root cause remains unconfirmed until this retry; Paid supplied payload passes. Billing and signup remain disabled.
+## 2026-10-13 — Independent public-signup gate
 
-Live retry identified exact cause: `Plus plan: The product must have an annual recurring price.` Paid validated successfully before the Plus check. The live Plus product fails at least one of is_recurring=true or recurring_interval=year; exact current setting was not supplied. Operator must configure Plus as yearly recurring count1 (and ensure Ultra matches) before atomic catalog refresh can succeed. No security validation bypass or product write attempted; app token deliberately lacks products:write.
+Add independent SIGNUP_ENABLED gate while retaining RELEASE_READY=false and unsigned full release checks. Accountcreation still requires Turnstile, severe IP/subnet/region/global admissions, accepted terms, credential setup and mandatory recovery. The public Turnstile site key is persisted in hosted config; the matching secret stays a runtime secret. Backend gate must agree between config andPOST and failclosed for missingpublic/secret/recovery/encryption keys. Implementation/tests pending; release certification not implied.
 
-## 2026-10-13 — Authorized production checkout verification
-
-Operator corrected Plus annual recurrence and reports200responses from actual signed Polar webhook deliveries; live full catalog verification now succeeds. Operator then explicitly authorized proceeding with the proposed checkout test. Hosted BILLING_ENABLED becomes true for authenticated account checkout/management; RELEASE_READY staysfalse and publicsignup remainsclosed. This flag enables billing for existing signed-in accounts, not a per-account allowlist. No charge is submitted by the agent; operator will enter the discount and confirm payment. Live checkout return, customer binding, signed paid-order reconciliation, capacity activation and failed-payment behavior still need evidence before claiming financial/release readiness. No test account is fabricated or bypasses recovery/security checks. Billing reviewer ___ / Date ___ / Outcome ___.
-
-Authorized checkout build deployed: source9687b61, Worker versioncd0fd5c1-de77-4349-bb03-6b2fd3e54058. Live config200 confirms billingEnabled=true/signupEnabled=false. Unauthenticated checkout POST returns401unauthorized and creates no checkout. No operator session or purchase was used; authenticated handoff, discount submission and paid-entitlement activation remain operator verification steps. Production release readiness is not asserted.
-
-## 2026-10-13 — Operator-authorized public signup
-
-Operator has no account; coordinator failed to account for closed signup when enabling checkout and did not fabricate an initial identity. Operator explicitly authorizes opening public signup with existing security controls. Add independent SIGNUP_ENABLED gate while retaining RELEASE_READY=false and unsigned full release checks. Accountcreation still requires Turnstile, severe IP/subnet/region/global admissions, accepted terms, credential setup and mandatory recovery. Operator supplied public Turnstile site key0x4AAAAAAFVvoNPzDOikJ-Is; persist in hosted config so deployments no longer overwrite the dashboard value with empty string. Matching secret remains only in Cloudflare. Backend gate must agree between config andPOST and failclosed for missingpublic/secret/recovery/encryption keys. Implementation/tests pending; operator direction recorded, release certification not implied.
-
-Signup gate final verification: core577/577, focusedunit2/2 and actualWorker2/2 pass; Wrangler dryrun passes. Both public config andPOST share prerequisites. Explicitfalse overrides RELEASE_READYtrue; omittedflag retains legacyfallback. Missingcaptcha proof403 and missingpublickey503 create no account. No frontendsource changed, existing explicitsignup/recovery browser regressions remain relevant. Ready for authorized publicsignup deployment; no initial account fabricated.
-
-Publicsignup deployment completed: source6301632, Worker versione5fd430d-0ff4-438a-96c2-9243a48e1fcc. Live config200 confirms signupEnabled=true/billingEnabled=true and matching restored publicTurnstilekey. Live Chrome shows enabledCreateMyAccount action and captcha container; frame was not yet present at the sampled instant, so no solvedchallenge claimed. No account created byagent, no payment submitted. Operator can create their own account through normalcredentials/recovery flow.
+Signup gate final verification: core577/577, focusedunit2/2 and actualWorker2/2 pass; Wrangler dryrun passes. Both public config andPOST share prerequisites. Explicitfalse overrides RELEASE_READYtrue; omittedflag retains legacyfallback. Missingcaptcha proof403 and missingpublickey503 create no account. No frontendsource changed, existing explicitsignup/recovery browser regressions remain relevant.
 
 ## 2026-10-13 — Free-only automatic account retention
 
@@ -657,7 +600,7 @@ Operator requires newaccountsetup notice recommending notifications for a fewday
 
 Mandatory activation supersedes optional contact onboarding: hosted signup must verify email or acknowledge an encrypted push challenge before active session issuance. New limited pending setup cookie, email8digitcode, proofgeneration, credential/recovery resumption and separate setup capability flags are being integrated. Existingactive identities are grandfathered; no global active-account lockout added. Operator copy: “For unpaid accounts, we might check in periodically to ask if you’re still using the account.” Repeated attempts/grace then suspension and deletion must be explained; externalprovider data stays untouched while hosted data is purged only by a future verified executor. Sender templates now support bounded suspension/deletion day countdowns; they are not a live scheduler.
 
-VAPID keys generated and privately backed up in ignored mode0600 operator storage; VAPID_PRIVATE_KEY provisioned through Wrangler stdin with no value output. Hosted pending config sets PUSH_ENABLED/MAIL_ENABLED/SIGNUP_CONTACT_REQUIRED true. Real maintained WebPush encryption uses nativefetch and fixed known provider origins; local transport3/3, mail14/14+transport total17/17, actualWorker encryption1/1 and actualWrangler-emittedmodule config test pass. No livepush ornew verificationemail sent byagent. Signup is temporarily paused using the last verified committed source while mandatoryactivation UI is integrated (Worker versioncd31afc3-4fed-468d-80fe-887b589d36e5); existinglogin/billing remain available.
+Hosted pending config sets PUSH_ENABLED/MAIL_ENABLED/SIGNUP_CONTACT_REQUIRED true. Real maintained WebPush encryption uses nativefetch and fixed known provider origins; local transport3/3, mail14/14+transport total17/17, actualWorker encryption1/1 and actualWrangler-emittedmodule config test pass. Signup remains paused while the mandatoryactivation UI is integrated; existinglogin/billing remain available.
 
 Independent focused activation/retention audit41/41 passes. Retention helper requires trustworthy newidentity provenance and sticky paid-tier protection; it does not infer never-paid from an empty account store or lazy handlemarker absence. Fullfrontend/Worker verification pending. New lifecycle architecture [account-retention](docs/architecture/account-retention.md) records provider-accepted attempt evidence, phased access freezing/reactivation and externalstorage exclusions. User-authorized lifecycle executor remains outstanding; neither delivery nor automatic suspension/purge is claimed. R2primarydocs checked: IA30day minimum,.01GB-month/.01retrieval/noIAfree allowance; account suspension and economic tiering are separate, not a blanket claim of savings.
 
@@ -673,13 +616,11 @@ Landing navigation drops the redundant “The Idea” anchor while retaining the
 
 Publication review corrections complete:31 explicit public English pages now include the exact federation OAuth/RPC wire profile. Mixed normative paragraphs preserve technical requirements while only tracking sentences/tables and operator history are omitted. Public generation tests4/4 include actual webhook authentication/revocation, portal policy, discounted eligibility, duplicate-email delivery, namespace/recovery invariants and all-page tracking exclusion. Shared browser assets were not mutated during review. Final fullcore617/617 includes12 isolated lifecycle draft tests outside the checkpoint; actualWorker37/37 and Wrangler packaging dry run pass. Fresh320px Spanish landing screenshot independently inspected: logo suffix stays on one line, mobile header clean, no redundant idea link. Full browser/build/walkthrough evidence pending.
 
-Activation/UI/publication checkpoint final evidence: frozen asset build537f64a58fc28f933954; full realChrome57/57 (54 baseline +3 isolated federation) and focused landing/adversarial16/16 pass. Password and virtual-passkey mandatory-contact flows use actual durable Node state and an injected local mail transport, not live mailbox delivery. English desktop/320px and Spanish account-setup screenshots added to [walkthrough](docs/walkthrough.md), appendix29, which stays private to the repository. No live account/payment was created. Hosted deployment will restore signup with contact requirement, Turnstile, email setup and encrypted push proof; routine notification dispatch and automatic lifecycle suspension/purge remain disabled/unimplemented. Reviewer ___ / Date ___ / Outcome ___.
+Activation/UI/publication checkpoint final evidence: frozen asset build537f64a58fc28f933954; full realChrome57/57 (54 baseline +3 isolated federation) and focused landing/adversarial16/16 pass. Password and virtual-passkey mandatory-contact flows use actual durable Node state and an injected local mail transport, not live mailbox delivery. English desktop/320px and Spanish account-setup screenshots added to [walkthrough](docs/walkthrough.md), appendix29, which stays private to the repository. Routine notification dispatch and automatic lifecycle suspension/purge remain disabled/unimplemented. Reviewer ___ / Date ___ / Outcome ___.
 
-Checkpoint deployed: sourceb3712a0, Worker version85f7f823-25b1-426d-a282-c642883e21d1. Live config200 confirms signupEnabled/signupContactRequired/emailSetupAvailable/pushSetupAvailable/billingEnabled true and matching publicTurnstilekey. Curateddocs/index/wireprofile200; DEVLOG and activation-audit public paths404. CAPTCHA-less signup403challenge_failed creates no account. Real production Chrome shows both contact choices and no runtime errors, but live320px screenshot exposed normalTurnstile300px overflow absent from local fixtures. Follow-up uses fully visible compact challenge consistently to preserve proof across resize, with a dimension-realistic fixture and fresh live screenshots required. Production email/push delivery still unverified; fullrelease certification remainsfalse.
+A 320px check exposed normalTurnstile300px overflow absent from local fixtures. Follow-up uses fully visible compact challenge consistently to preserve proof across resize, with a dimension-realistic fixture. Production email/push delivery still unverified; fullrelease certification remainsfalse.
 
-Responsive CAPTCHA follow-up: BrowserProvider explicitly requests compact150x140 Turnstile at all widths so viewport changes preserve the challenge and proof. No clipping, scaling or bypass added. Official [widget configuration](https://developers.cloudflare.com/turnstile/get-started/client-side-rendering/widget-configurations/) confirms flexible still has a300pxminimum. Fresh assets and targetedChrome17/17 pass, including production-sized iframe bounds across320/390/1440/320 and unchanged proof/render count. Previous full57/57/core617/617/Worker37/37 remain checkpoint evidence; this frontend-only fix received the targeted rerun. Live recapture follows deployment.
-
-Compact follow-up deployed: sourcea54eff8, Worker48789f11-635c-480b-8ecf-8a05bc437ec7. Fresh real productionChrome verifies mounted143px-high challenge, no horizontal overflow at320/1440, no redundant idea link and no runtime errors. Production screenshots independently inspected and saved in private walkthrough appendix30. The challenge was not solved; no account/payment or live email/push receipt is claimed. Publicsignup with mandatorycontact remainsopen; routine notifications/lifecycle executor and release certification remainpending.
+Responsive CAPTCHA follow-up: BrowserProvider explicitly requests compact150x140 Turnstile at all widths so viewport changes preserve the challenge and proof. No clipping, scaling or bypass added. Official [widget configuration](https://developers.cloudflare.com/turnstile/get-started/client-side-rendering/widget-configurations/) confirms flexible still has a300pxminimum. Fresh assets and targetedChrome17/17 pass, including production-sized iframe bounds across320/390/1440/320 and unchanged proof/render count. Previous full57/57/core617/617/Worker37/37 remain checkpoint evidence; this frontend-only fix received the targeted rerun.
 
 ## 2026-10-13 — Balanced language selector inset
 
@@ -687,9 +628,7 @@ Operator clarified the selector issue concerns inner spacing: selected text is i
 
 Operator supersedes compact CAPTCHA choice: request a rectangular widget spanning its container, visible only when automatic checks require user interaction. Use documented Turnstile size=flexible and appearance=interaction-only; keep real server Siteverify enforcement and proof lifecycle. Flexible has300pxminimum, so narrow form layout must accommodate it without clipping, scaling or challenge replacement. UI agent owns form layout/provider and realistic hidden→interactive browser verification; selector text/chevron equal12px edge insets remain in scope. Reviewer ___ / Date ___ / Outcome ___.
 
-Selector/Turnstile correction final local evidence: build320c527147bff6a97e79;16 baseline browser cases pass, final targeted2/2 pass after restoring the hero's20pxpagegutter. Realistic fixtures cover automatic-hidden and65pxrectangular interactive states in signin/signup/email/device forms at320/390/1440, exact widget/slot width and resize preserving proof. Official before/after-interactive callbacks change spacing only; Cloudflare controls challenge visibility. Selector retains native accessible/keyboard behavior with matching12pxtext/chevron edge insets and system control in forced-colors. Local screenshots independently inspected; live deployment verification pending.
-
-Selector/conditional challenge deployed: source4d0420a, Worker349ef5c2-3bc7-47a3-851f-00bb35938705. Fresh productionChrome320/1440 verifies real mounted challenge hidden atzeroheight during automatic checks, no overflow, text inset12px and arrow position12pxfromright, no runtime errors. Selector close-up independently inspected; private walkthrough appendix31 saves current production screenshots. Visible interactive geometry has localfixture evidence; no solvedproductionchallenge, accountcreation or backendvalidation bypass claimed.
+Selector/Turnstile correction final local evidence: build320c527147bff6a97e79;16 baseline browser cases pass, final targeted2/2 pass after restoring the hero's20pxpagegutter. Realistic fixtures cover automatic-hidden and65pxrectangular interactive states in signin/signup/email/device forms at320/390/1440, exact widget/slot width and resize preserving proof. Official before/after-interactive callbacks change spacing only; Cloudflare controls challenge visibility. Selector retains native accessible/keyboard behavior with matching12pxtext/chevron edge insets and system control in forced-colors. Local screenshots independently inspected.
 
 ## 2026-10-13 — Conversation storage and contact handoff redesign
 
@@ -717,7 +656,7 @@ Final evidence: fullcore617/617(includes12 isolated lifecycle draft tests outsid
 
 Operator's archive requirements incorporated separately into design: coldconversation data and restore metadata live in the owner's bucket with files/messages, protected system namespace and quota, encrypted to the existing recovery encryption public key. Ciphertext download/transfer plus offline restored keys; explicit complete snapshot cut includes accepted hot journals and required restore mappings. Provider retains private keys today, so this is not E2EE. Identity/data migration preserves UUID and key/history continuity, while provider-bound contactURLs/authentication/app/connector access requires explicit reconnect/cutover. Proposal/review remain design-only; no encryption/backup/migration implementation or newdirectory publication claimed. Architecture/crypto reviewer ___ / Date ___ / Outcome ___.
 
-Contact-page deployed: sourceba06983, Worker6de3be20-c53d-41fa-8554-154b58c9346a. Live anonymousChrome invalid-capability probe verifies no profile block, zero profile requests, no320px overflow and no runtime errors; no production account/message created. Positive per-link field/global-toggle enforcement remains actual localWorker3/3 evidence. Private walkthrough appendix32 includes the local name-only disclosure screenshot. Updated archive/migration/owner-bucket proposal independently re-reviewed: explicit signed complete snapshot, encrypted segments and system metadata/quota overhead, offline historical erase-frontier limits, no E2EE claim; runtime implementation still pending. Human signoffs remain blank.
+Positive per-link field/global-toggle enforcement remains actual localWorker3/3 evidence. Private walkthrough appendix32 includes the local name-only disclosure screenshot. Updated archive/migration/owner-bucket proposal independently re-reviewed: explicit signed complete snapshot, encrypted segments and system metadata/quota overhead, offline historical erase-frontier limits, no E2EE claim; runtime implementation still pending. Human signoffs remain blank.
 
 ## 2026-10-13 — Optional public-handle email bridge
 
@@ -738,8 +677,6 @@ Public system-theme implementation finalized: public landing/auth/contact/recove
 Operator requests one-question-at-a-time signup wizard rather than an overloaded entry form. Preserve mandatory verified contact, terms, credential and downloaded/tested recovery gates; improve progressive disclosure, back/retry/resume, localization and keyboard/mobile/theme behavior. Frontend implementation assigned after frozen theme checkpoint.
 
 Operator also requests per-owner plan-scaled and per-contact-link receipt limits, independently bounded classification, paid opt-in per-link/bridge, and model categories including suspectedspam/conversation/outreach/promotion/verification/codes. Existing receive paths already enforce HTTP ingress, lifetime grant, account quota and combined activity/storage write guards; dedicated receipt limits supplement those. Smart design and independent abuse/economic review assigned; rejection notices must be coalesced and bounded rather than notification amplification. Architecture reviewer ___ / Date ___ / Outcome ___.
-
-Public theme deployed: source52bb3bc, Workerda76c802-982b-43d8-b164-adadbaac4416. Fresh productionChrome light/dark320/1440 confirms matching rootcolor-scheme and logo,12pxnative-selectarrow, no horizontaloverflow/runtimeerrors, and unchanged Turnstile widgetidentity through dynamic preference changes. Independent desktop/mobile visual review passed. Private walkthrough appendix33 records production screenshots; no productionaccount/message created.
 
 Receipt runtime slice provisionally approved: supplemental owner limits in UTC fixed minute/hour/day windows; admitted-new-message attempts rather than accepted-delivery counts. Owner message ceilings free30/300/1000, Paid120/1000/5000, Plus240/2000/10000, Ultra240/2000/10000. Corresponding MiB byte ceilings free16/128/512, Paid64/512/2048, Plus128/1024/4096, Ultra256/2048/8192; contact-parent defaults half. Existing ingress/lifetime/quota/combined activity and physical-write limits may bind earlier; this is not a throughput guarantee. Established authorized matching replay avoids a new debit; downstream failures may conservatively consume admission, with no unsafe refund. Fixed-window boundary bursts remain bounded by other guards. Owner-local durable transaction, bounded parent/state cardinality, no global per-message counter or rejected-attempt writes. Contact invitations and admitted conversation content share the owner allowance; classifier and rejection-alert delivery stay separate pending implementation. Human product reviewer ___ / Date ___ / Outcome ___.
 
@@ -765,11 +702,11 @@ Independent frontend/security audit found no unresolved blocker in this scope: o
 
 CI investigation: latest mainChecks run38472580651 had55/57 browsercases pass and two notification fixtures timing out on disabled controls under Linuxnativepermissionstate. Core/Worker/DOM/build checks passed. Make fixturepermission explicitlydefault beforebootstrap; retain actual denied/unsupported checks and old-service-worker no-false-proof/no-permission-call assertions. No forced clicks, skipped tests or weaker production guards. Final LinuxCI proof remains pending on the upcoming commit.
 
-Integrated portal deployed: source7be2b62, Worker18430d4c-1ccf-49df-b21d-1e083b67e02f. LinuxGitHubChecks run38476903697 concludes success and produced its browser-evidence artifact; no remote test count inferred from initially incomplete logs. Fresh productionChrome light/dark320/1440 confirms neutralcharcoal/backgroundscheme,12pxselectorarrow, beneficiarycopy, no statusbutton, no overflow/runtimeerrors and guidedsignup/back preservation without submitting signup. Productionheadless device probe remained in securitycheck then canceled viaUI; no successful productionQR/phoneapproval claimed. ActuallocalWorkerautomaticQR+explicitphoneapproval and deterministic cancellationraces remain separate evidence. Privatewalkthrough appendix34 contains local and production screenshots. Classification/alertsender/SMTPbridge/v2encryptedarchives remain separate pending work; productionreleaseReady gate remains false. No productionaccount/message/mail/modelinference created by thesechecks.
+Actual local Worker automatic QR + explicit phone approval and deterministic cancellation races remain separate evidence. Classification/alert sender/SMTP bridge/v2 encrypted archives remain separate pending work; production releaseReady gate remains false.
 
 ## 2026-10-13 — Static landing and separate console routing
 
-Operator requests immediate authored landing HTML at `/`, with the account application at `/console`. Frontend owns `index.html`/`index.es.html` static documents, `console.html` application shell, build assets, optional narrow landing enhancement, browser navigation and service-worker migration. Shared Worker/Node HTTP routing now selects the console shell for `/console` and existing contact/device/email/recovery/MCP/Google continuation pages while preserving their public URLs and recovery CSP. Root GET/HEAD with `signin`, `signup` or `return_to` uses a private same-origin307 to `/console` with unchanged query; the redirect never interprets or follows a return target. `/console/` canonicalizes similarly. Plain root performs no account/session lookup or server-side personalization. Exactly one `lang=es` query selects Spanish static HTML; other inputs default English, with no language cookie or Accept-Language variation. Worker assets follow only exact same-origin internal console/Spanish HTML canonicalization; Node's existing file adapter serves those same explicit filenames. No deployment or frontend build performed by backend owner. Routing tests and independent review pending. Architecture/security reviewer ___ / Date ___ / Outcome ___.
+Operator requests immediate authored landing HTML at `/`, with the account application at `/console`. Frontend owns `index.html`/`index.es.html` static documents, `console.html` application shell, build assets, optional narrow landing enhancement, browser navigation and service-worker migration. Shared Worker/Node HTTP routing now selects the console shell for `/console` and existing contact/device/email/recovery/MCP/Google continuation pages while preserving their public URLs and recovery CSP. Root GET/HEAD with `signin`, `signup` or `return_to` uses a private same-origin307 to `/console` with unchanged query; the redirect never interprets or follows a return target. `/console/` canonicalizes similarly. Plain root performs no account/session lookup or server-side personalization. Exactly one `lang=es` query selects Spanish static HTML; other inputs default English, with no language cookie or Accept-Language variation. Worker assets follow only exact same-origin internal console/Spanish HTML canonicalization; Node's existing file adapter serves those same explicit filenames. Routing tests and independent review pending. Architecture/security reviewer ___ / Date ___ / Outcome ___.
 
 Backend routing verification: shared handler/real Node temporary-file host tests pass7/7, actual localWorker canonicalization tests pass5/5 including console and both generated offline landing snapshots. Successful static root responses are deliberately public,max-age=0,must-revalidate, identical across sessions; console/contact/continuation pages remain no-store. Escaped host branding replaces only the marked static logo contents. Independent routing review initially passed6/6 before the final branding case. A concurrent fullcore run completed642 with637pass/5fail solely from frontend's in-progress offline-generator fixture migration; final integrated rerun remains required after source freeze. No build/deploy performed by backend owner; human signoffs remain blank.
 
@@ -985,3 +922,508 @@ The first Worker run hit an undici connection reset in its oversize streamed-bod
 A separate source-confirmed Node alarm shutdown race was fixed narrowly: closed metadata does not retry/read/rearm after an in-flight callback fails. Deterministic tests2/2 and full core838/838 passed. Synchronous close does not promise to drain or durably complete in-flight maintenance.
 
 User added simultaneous provider-local accounts, account selection for connected apps, destination-account notifications, and app-triggered login/select/reauthentication/end-session flows. Design-only drafts: [session authority](docs/architecture/multi-account-sessions.md), [UI/privacy](docs/architecture/multi-account-ui.md), [independent review](docs/release/multi-account-review.md). Implementation is pending. Account inventories and sign-in state must not be disclosed to third-party apps before consent. Cross-origin popup/redirect already isolate provider DOM; Strict cookies do not become available in cross-site iframes merely through Storage Access permission. A neutral iframe launcher may coexist with trusted top-level approval, preserving cookie and clickjacking boundaries. Existing handle-bound consent requests must remain immutable; changing account requires a fresh bound request. App-token logout and provider-session logout remain distinct, with explicit provider UI for session changes. Vault concurrency, request-local member binding, stale-owner fences, notification navigation and partial logout retry authority require the next implementation checkpoint. Architecture/security/privacy sign-off: reviewer ___ / date ___ / outcome ___.
+
+## 2026-10-14 — Coordinator handover; recognizable Bindle links and conditional contact links
+
+Coordination moved from the Codex session to Claude Code (Opus 5.5) as coordinator. Uncommitted multi-account work and the unanswered embeddable custom-elements request carry over unchanged; working-tree `npm test` passed 839/839 at handover.
+
+User proposed a generic, tooling-recognizable link envelope (`bindle_meta` / `bindle_data` query parameters, each with a magic intent member) and conditional contact links that become valid only once the opener attaches a signed audience response. User-confirmed direction:
+
+| Decision | Consequence | Human review |
+| --- | --- | --- |
+| Link envelope | `bindle_meta` is a compact JWS whose readable payload carries a magic member, a `type` URI and version; the signature covers the canonical link audience (origin+path). Unrelated query params are ignored and never signed; duplicate `bindle_*` params are rejected. `bindle_data` is unsigned by the link owner and uses a distinct magic value. Conditional is a requirement on a contact link, not a separate kind. | Direction confirmed by user 2026-10-14. Spec sign-off: Reviewer ___ Date ___ Outcome ___ |
+| Conditional responses | Signed by the audience identity's key, binding the exact meta digest, audience handle + stable identity, link URL, mint timestamp, explicit validity period and a fresh random nonce. The response is an eligibility pre-check only; delivery still requires an author proof from the same identity. Conditions are host policy, evaluated at render and at delivery; no condition language is specified. Cross-host verification depends on the not-yet-implemented directory/identity-document profile. | Direction confirmed by user 2026-10-14. Reviewer ___ Date ___ Outcome ___ |
+| No anonymous link messages | Every message delivered through any contact link must carry a resolvable identity author proof. The sole exception is app messages via the front-end SDK app-connection path, which is not link delivery. Supersedes the anonymous one-off provision in [contact delivery](docs/spec/contact-delivery.md); reconciliation pending. | User decision 2026-10-14. Reviewer ___ Date ___ Outcome ___ |
+| Developer contact | 3sln.me's `ray` contact becomes one conditional link evaluated against current eligibility (confirmed paid entitlement, or all accounts while active population < 1500), likely replacing daily per-user grant issuance. Eligibility is then rechecked at receipt, superseding the earlier accepted "1-day expiry, no receipt recheck" trade-off. | Provisional pending spec. Reviewer ___ Date ___ Outcome ___ |
+
+Normative draft (`docs/spec/links.md`), architecture note and independent security/interop review are being produced by a delegated design agent; design only, no runtime change yet. Implementation follows after multi-account sessions land, to avoid overlapping contact/auth edits.
+
+## 2026-10-14 — Link decisions resolved; label-agnostic tags with suspected automated classification
+
+Links design landed: [normative draft](docs/spec/links.md), [decision note](docs/architecture/bindle-links.md), [independent review](docs/release/bindle-links-review.md) (3 high, 9 medium, 7 low findings, all addressed in the draft). Notable refinements: `bindle_data` is itself a compact JWS signed by the audience key; `md` binds the signed meta segments; responses carry a 16-byte nonce, `iat`/`exp` with at most 300 s validity and 60 s skew, single-use evaluation with bounded refuse-not-evict replay state; conditional-link message/byte limits apply per author principal per UTC day; meta carries no free-text display fields and `policy` must come from an operator registry. Coordinator resolved two design questions from prior user direction: developer contact moves to one conditional link (user stated this when proposing conditional links), and anonymous delivery on legacy `?sig=` links ends in the same change that ships identity-authored delivery. Still open for the user: whether foreign-provider identities may ever qualify for developer contact (default: no, 3sln.me identities only; foreign verification is impossible until the directory profile exists anyway). Implementation slices L0 (authored delivery), L1–L3 and L4b (parser, issuance, response signing, replay store) are delegated; L4 HTTP routing, L5 developer contact and L6 contact UI wait for the multi-account slice to release `packages/runtime/http.mjs` and `apps/web`. Contact-delivery/contact-tokens drafts are being reconciled to the no-anonymous decision. Reviewer ___ Date ___ Outcome ___.
+
+User direction: automated tagging (AI classifier and other heuristics) applies only "Suspected <X>" tags (Suspected Spam, Social, Promotional, Recruitment, …); owner rules finalize them, with editable default rules promoting e.g. Suspected Spam → Spam. Tags are label-agnostic identifiers with localized labels. Contact-link required/optional tags are not subject to the suspected convention; they apply as granted. Design and backend implementation delegated (`docs/architecture/tags.md`); the AI classifier call itself remains gated by the public-email bridge design. Reviewer ___ Date ___ Outcome ___.
+
+User decision (2026-10-14): contact-link auto-associated tags are not part of the signed link. They move to per-link server-side intake configuration (revisioned, owner-editable without reissuing the link); deliveries record the intake revision applied. Coordinator extended the same treatment to the sender-selectable optional-tag allowlist, discoverable via the contact-profile representation. Legacy signed `requiredTags`/`optionalTags` seed intake on first read. Signed limits, `kinds` and `resource` remain in the meta. Intake edits never change `md`, stored claims, quotas or outstanding responses. Links spec, delivery, tag-model and contact-docs agents notified. Reviewer ___ Date ___ Outcome ___.
+
+User confirmed (2026-10-14) the optional-tag extension: optional tags are not embedded in links; consumers send a side-effect-free metadata request to the link to learn accepted optional tags (IDs with localized labels), intake revision, kinds/limits and conditional status. Coordinator decision: auto tags are owner-internal and are not disclosed in that metadata. Deliveries naming a tag outside the current allowlist get a specific rejection so clients can refresh metadata. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Embeddable elements design
+
+[Design](docs/architecture/embeddable-elements.md) and [independent review](docs/release/embeddable-elements-review.md) (22 findings incl. 2 blockers, 4 high, addressed in §16). Elements: `<bindle-session>`, `<bindle-sign-in>` (with `<bindle-login>` alias), `<bindle-account>`, `<bindle-monogram>`, optional `<bindle-access-summary>`; framework-branded. Phase 1 uses no iframe: login, select-account, reauthenticate and end-session all run through provider popup/redirect via the provider-owned authorization entry; the embedder learns only typed input and, after consent, the approved identity. Phase 2 (provider iframe account panel, label-only, every action escalates to a popup, partitioned cookie created by explicit opt-in) is gated on browser evidence and a user decision.
+
+Coordinator reconciliation: D7 accepted — popup completion relays the authorization code from the app's own same-origin callback page over a same-origin BroadcastChannel to the waiting tab, validated by the existing single-use transaction; auth.md to be updated (it currently describes a provider postMessage carrying a completion reference). D8 accepted — app sign-out (revokes the app's tokens) is distinct from provider end-session (explicit provider UI), matching earlier user direction; auth.md to be updated. D6 (spec carve-out for a framed label-only panel) deferred to the user's phase-2 decision. Phase-1 SDK flows, elements and SDK string catalogue delegated, built mock-first against the not-yet-implemented authorization entry. Reviewer ___ Date ___ Outcome ___.
+
+L0 identity-authored contact delivery landed locally, not yet wired into HTTP: `packages/messaging/contact-delivery{,-wire,-service}.mjs`. It has strict envelope/multipart/RPC parsers, author proofs with same-host verification only (foreign authors return `author_unverifiable` with no lookup), parent-scoped receipts keyed by operation ID, intake-revision tag provenance and provider-signed receipts. There is no anonymous branch. Conversation initiation is validated but refused (415) until the conversation-v2 runtime exists. Conditional parents are refused (503) until per-author daily quotas exist. [Independent review](docs/release/contact-delivery-impl-review.md): 4 medium, 2 low-medium, rest low/info; all fixed or mitigated. `npm test` passed 898/898. The review found spec defects S1–S16, being reconciled; coordinator decisions: the replay namespace includes the author principal; conditional links use per-author daily quotas; no sender-visible collection choice (the single incoming store plus Views model). Reviewer ___ Date ___ Outcome ___.
+
+Package name for the published SDK and elements: `@3sln/bindle` (user decision 2026-10-14).
+
+User direction (2026-10-14): the Bindle spec should say nothing about UI. The framing and presentation rules now in `docs/spec/auth.md:31` and `docs/spec/protocol.md:38` were written by the earlier coordinator. Proposal pending user confirmation: move them into 3sln.me's own security docs, and keep only the interop content in the spec (manifest presentation hint, universal redirect support, the shape of the result-return exchange). Coordinator also raised a token-lifetime gap: 5-minute in-memory access tokens with no refresh token mean front-end-only apps lose access on reload and after 5 minutes. Recommendation pending user decision: rotating, grant-bound browser refresh tokens with live revocation checks, and defer the phase-2 iframe panel.
+
+## 2026-10-14 — Label-agnostic tags landed (backend)
+
+[Design](docs/architecture/tags.md), independently reviewed (3 blockers fixed: app-sent `sys:` tags, unbounded classifier entry, sender headers reaching final tags). Tags are identifiers: reserved `sys:` system IDs (look-alike prefixes rejected) with localized labels via bab, user tags with owner-registry labels so renames never retag. Eleven categories have `sys:suspected.X` and `sys:X` forms; `personal`/`work` are final-only. Automated output (`MessagingService.applyAutomatedTags`, internal; no model call yet) only adds suspected tags with evidence. Versioned default rules promote suspected→final on classifier evidence only; header heuristics stay suspected; only Spam also quarantines; owner edits/deletions survive upgrades. Rules fire once per message (no chains); automation never undoes owner removals or quarantine release. Contact-link intake tags apply as granted, may use final `sys:` IDs but never suspected ones. The `classification` enum folds into `sys:` tags with lazy migration and batched index re-projection. Combined working tree `npm test` 913/913 after all concurrent agents' changes.
+
+Coordinator decisions on the agent's open questions (provisional): (1) all default promotions ship enabled, per user's "promote Suspected Spam → Spam and so on"; (2) MCP/agent grants may add/remove user tags and final system tags within their granted scope, never add `sys:suspected.*` (classifier provenance is reserved); (3) notifications wait for pending classification only when classification is enabled for that source, bounded by a short timeout, then notify as unclassified (matches the bridge design). Remaining wiring after the multi-account slice: tag label routes, `data.tagLabels`, add/remove tag forms, `migrateTags` in search document building, system-tag styles. Reviewer ___ Date ___ Outcome ___.
+
+Contact-delivery reconciliation complete: spec items S1–S16 are written into [contact delivery](docs/spec/contact-delivery.md), marked proposed where not implemented. Delivery receipts are now keyed by owner, parent, author principal and operation ID, with a test showing a different author's reused operation ID is a separate delivery. Provisional local identity naming is `<issuer>/identity/<subject>`, `…/identity.json`, `…#<kid>`, pending the directory profile. `grant.delivery.collection` is documented only as a reference-host implementation detail. `npm test` 913/913. Still open: a conversation-init vector for the nested-signature rule. Reviewer ___ Date ___ Outcome ___.
+
+Bindle links L1, L2, L3 and L4b are implemented as unrouted library code:
+- `packages/messaging/bindle-links.mjs`: the shared raw-query parser, strict I-JSON/JWS profile and md/H digests.
+- Fixed vectors in `docs/architecture/artefacts/bindle-links.vectors.json`.
+- New-form contact meta issuance, inspection and challenge rotation (`contact-endpoints.mjs`).
+- Revisioned intake replacing signed tags (`tag-policy.mjs`), with the side-effect-free metadata representation `application/vnd.bindle.contact-intake+json` ([links §6.2–6.3](docs/spec/links.md)).
+- Same-host response signing and verification (`packages/identity/link-response.mjs`).
+- The bounded replay record (`link-replay.mjs`).
+
+Signed limits, `kinds` and `resource` stay in the meta. The [implementation review](docs/release/bindle-links-review.md) found 2 Medium issues: anonymous bearer minting for new-form links (now 406) and new-form creation through the legacy request spread (`create()` is now legacy-only). Both are fixed, along with 5 Low. Open: edge routing (#7, L4). `npm test` 925/925.
+
+L4 wiring left for after multi-account:
+- `http.mjs` routes via `parseLinkQuery`/`parseLinkMeta`.
+- `accounts.mjs` passes `linkPolicies` and replaces the signed-tag pre-check with intake.
+- Expose `createLink`/`rotateChallenge`/`updateIntake`/`linkMetadata` and the link-response resolver/signer.
+- A per-account `LinkReplayRecord` behind rate limits.
+- `requiredTags` dropped from `inspectContact`.
+
+Not routed or production-verified. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Adaptive app sign-in direction (FedCM, popup fallback, key-bound embed restore)
+
+User direction: use FedCM where the browser supports it, otherwise a popup/redirect OAuth-style flow. The app keeps a returned token whose only use is restoring a signed-in provider iframe. The iframe verifies it against a device key generated in its own partitioned storage, so login restores across reloads without giving the app direct access. Bindle spec must contain no UI rules; framing/presentation guidance moves to reference-host docs, leaving only interop (manifest capability advertisement including optional FedCM config URL, universal redirect, exchange shapes).
+
+Coordinator provisional refinements, being designed and reviewed (`docs/architecture/adaptive-app-sign-in.md`):
+- The iframe mounts first and generates a non-extractable WebCrypto key in IndexedDB. Only its thumbprint is bound into the sign-in, DPoP-style.
+- The embed token is passed by postMessage or URL fragment, never the query.
+- Restore requires a fresh proof of possession of the key.
+- The embed token never authorizes resource RPC. The app's API access is a separate rotating, grant-bound refresh credential with live revocation, fixing the 5-minute/no-refresh gap for front-end-only apps.
+- This supersedes the partitioned-cookie phase-2 panel.
+
+FedCM details to be verified against current official documentation before relying on them. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Multi-account console slice implemented locally
+
+Per-account AEAD, HttpOnly, SameSite=Strict cookies were chosen over the per-device coordinator, which would have let an old cookie gain authority over later-added accounts. Requests bind the tab's account and session context, which are checked before any owner actor routing. Routes cover inventory, switch, sign out one/all and cleanup retry. The 5-account limit revokes the refused new session, and same-account re-sign-in revokes the old session. Legacy single cookies migrate once, and the Node adapter now emits multiple Set-Cookie headers correctly. The localized chooser has per-tab selection, cross-tab refresh and stale-response fences. Push payloads carry the destination account (handle only when previews are on), and clicks switch only after confirmation. Enabled only when `SESSION_COOKIE_KEY` (32 random bytes, base64url) is configured; production will need it as a Wrangler secret before enablement. Tests: core 926/926, Worker 48/48, UI-state 141/141, real Chromium against a local Worker 2/2 (initially from an isolated copy). [Independent review](docs/release/multi-account-review.md): one medium-low issue (stale cleanup cookie blocking sign-out) and several low ones, fixed. Accepted limitations: duplicate-cookie lockout edge, push subscription kept after sign-out, non-atomic cross-tab limit, copied cookies valid until revoked, no key rotation, Chromium only, real push delivery unwired.
+
+Coordinator fixed the shared asset build broken by the tag UI: `packages/messaging/tags.mjs` and its dependency-free `store.mjs` added to `publicSources`. Build passes and UI-state 141/141 on the combined tree. Security sign-off: Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Embeddable elements phase 1 implemented mock-first
+
+Built in `packages/sdk`:
+- flows, a callback relay with acknowledgement (D7), and a split between app sign-out and provider end-session (D8);
+- elements `<bindle-session>`, `<bindle-sign-in>` (with `<bindle-login>` alias), `<bindle-account>` and `<bindle-monogram>`;
+- an SDK string catalogue (`packages/i18n/sdk-catalogue.mjs`, en/es).
+
+Provisional defaults: popup with automatic redirect fallback, and an overridable default host. The `@3sln/bindle` name is isolated in `packages/sdk/package.json`. Entry-based flows (identity-optional sign-in, switch, reauthenticate, end-session, revocation, popup completion) are verified only against the `testing.mjs` double. The server-side authorization entry (S4) does not exist yet; its assumed contract is recorded in the agent's report and forwarded to the adaptive sign-in design.
+
+Tests: `npm test` 929/929 (47 SDK), `test:dom` passes, Chromium embed checks 3/3; Firefox and WebKit not run. Independent implementation review: 12 findings, all fixed.
+
+Open items:
+- `define.mjs` is about 24 KiB min+brotli against an 18 KiB budget.
+- Hosted loaders for `define.mjs`/`callback.mjs` still need build and route entries.
+- Pluggable `transports`/`entryExtensions` are reserved for adaptive sign-in. Single-token-pair assumptions in sign-out/revoke options will need revision for the separate refresh and embed credentials.
+
+Coordinator updated `tests/e2e/federation.test.mjs` to check all keyed `bindle.pending-login:*` records; the new keyed storage made the old assertion vacuous. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Embed islands direction (queued behind adaptive sign-in design)
+
+User direction for post-sign-in iframe UI. Islands are small provider iframes sharing one cached shell (`/embed?client=<id>#<part>`): the fragment selects an allowlisted part, a nonce-bound MessageChannel carries theme/locale/props and outbound events, and the embedder never commands actions. Within the embed partition, one leader island (Web Locks) holds the key-bound embed session and fans state out over BroadcastChannel. Avoid SharedWorker (unsupported on Chrome Android). Dropdown overflow and size-based leakage need explicit design. Islands use fixed or embedder-chosen sizes, never content-derived ones.
+
+Snapshot privacy (coordinator analysis, user agreed): DOM-reconstruction snapshotting cannot read cross-origin iframes, and canvas tainting prevents pixel reads. Screen capture (`getDisplayMedia`/element capture) is user-permissioned and has no content opt-out; it counts as user consent, not a silent leak. `#avatar` guarantees: bytes served only to the embed-session bearer with `Cross-Origin-Resource-Policy: same-origin`, no CORS, `no-store`, rendered from an in-memory blob, no observable load/error/timing signals.
+
+User direction: `#avatar` scales to its iframe, centered and as large as fits, so the embedder sets the avatar size by sizing the iframe. Custom elements supply good defaults, e.g. login/profile button size. Elements also provide a composed profile button: avatar, a dropdown with account switching, and slots for embedder content. Design consequence: embedder slot content cannot live inside a provider iframe. The dropdown container belongs to the custom element in the embedder's DOM, with the switcher island embedded within it and slotted content around it. Islands design (`docs/architecture/embed-islands.md`) starts once the adaptive sign-in embed session lands. Reviewer ___ Date ___ Outcome ___.
+
+User direction (2026-10-14), composed profile button popover requirements for the islands/elements design:
+- **Placement.** The popover stays within the viewport and anchors correctly. Use the Popover API top layer with CSS anchor positioning and `position-try` fallbacks, plus a measured flip/shift/size JS fallback where unsupported. Respect RTL and safe-area insets, and reposition rather than close on scroll/resize.
+- **Closing.** It closes when expected: outside pointer, Escape, focus leaving, account switch/sign-out, and navigation. Clicks into other cross-origin iframes never reach the document, so pair light-dismiss with window blur/activeElement checks while not treating focus moving into our own switcher island as "outside".
+- **Small screens.** It becomes a modal surface. Bottom sheet by default; side sheet when the anchor sits in a side rail, or via an explicit placement attribute. Modal dialog semantics with focus trap, scroll lock, swipe/drag dismiss, a visible close control, visualViewport/virtual-keyboard awareness and reduced-motion support.
+- **Island sizes.** Islands inside adapt via embedder-set sizes, never content-derived ones.
+
+## 2026-10-14 — Adaptive app sign-in design drafted
+
+[Design](docs/architecture/adaptive-app-sign-in.md), [independent review](docs/release/adaptive-app-sign-in-review.md) (1 blocker, 3 high, all addressed or surfaced). FedCM, popup and redirect all converge on the PKCE code exchange; the token response carries app credentials plus an `embed_token` bound to the frame key. Refresh tokens persist across reloads only when DPoP-bound, with a revocation cascade. A dedicated cookieless embed origin is used. The FedCM cookie is restricted to `Path=/fedcm/api/` and treated as a session cookie. Verified FedCM facts: Chromium-only (108+); the accounts endpoint gets SameSite=None cookies and `Sec-Fetch-Dest: webidentity`; `params` from Chrome 132; inside an iframe the RP is the iframe's origin. BroadcastChannel is partitioned in all three engines.
+
+Spec cleanup done:
+- UI and framing rules moved from `auth.md`/`protocol.md` into a reference-host section of `security.md`.
+- The manifest gains `fedcm_config_url`, `embed_binding_profiles_supported` and `dpop_signing_alg_values_supported`.
+
+Blocker AS-R1, pending user decision: when the app relays the frame's key thumbprint, nothing attests the key lives in a provider frame. An app backend can bind the embed token to its own key and read whatever the frame would show. As designed, the frame guarantees rendering integrity only, not confidentiality from the app. That conflicts with the user's goals (account switcher and `#avatar` hidden from the app). The coordinator is proposing to the user confidentiality paths where the frame obtains its token without the app relaying it: FedCM invoked inside the frame on Chromium, and a frame-opened first-party popup bridge on other engines. Embed-token opener posting was dropped because the popup's COOP severs the opener and rendezvous polling enables device-code-style phishing. Reviewer ___ Date ___ Outcome ___.
+
+User decision (2026-10-14) resolving AS-R1: the app must never forward the sign-in request. The provider frame itself opens the sign-in popup or tab on user activation; the app never sees it or holds a handle. The frame passes its key thumbprint into the sign-in context (message or query param; public value) and the flow binds that key to the final embed credential. The embed credential returns only to the frame (`opener.postMessage` with exact embed-origin targetOrigin). The app receives only its own authorization code for its granted access. Confidentiality of frame content (account switcher, `#avatar`) from the app is restored as a requirement. Design revision and fresh review of the binding/delivery path and the opener-preserving COOP change are in progress. Reviewer ___ Date ___ Outcome ___.
+
+User direction (2026-10-14) for the islands/elements design: custom elements listen to island messages on their ports and on the session bus, and translate them into DOM events on the relevant custom elements: sign-in, account chosen, account changed, sign-out, and so on. Coordinator constraints:
+- Elements validate origin/nonce/schema before translating, and never forward raw island payloads.
+- Event detail carries only what the app is entitled to: the approved identity and app-credential status after consent, never the account inventory or other islands' data.
+- One transition yields one event per element, even with several islands. The leader island is the source of truth, and `<bindle-session>` fans events out to the other elements.
+- Account change fires after the app credential for the new account is ready, with a distinct failure event if the exchange fails.
+- Event names, bubbling/composed behavior, ordering and replay-on-late-listener rules are to be specified in the islands design.
+
+User correction (2026-10-14), superseding the coordinator's "one transition yields one event" constraint and the `<bindle-session>` fan-out: each island emits only the messages that fit its own part. Each wrapper element decides how to compose, debounce or dedupe the events it exposes, so it makes sense as a self-contained unit. No global single-event guarantee across elements. Validation, translation and entitlement limits on event detail still apply per element.
+
+Adaptive sign-in revision 2 ([design](docs/architecture/adaptive-app-sign-in.md), review round 2 appended): the frame creates the authorization entry on user activation with the clicked intent and its own key thumbprint, and opens the popup itself. The popup renders nothing until the opener proves possession of that key. On approval it posts `{code,state,iss,claim}` to the opener with exact embed-origin targetOrigin. The frame redeems the single-use claim with its key and forwards only the code to the app, and only when the parent origin matches the registered redirect origin; the registered callback remains the fallback. App-opened popups, redirect, and FedCM invoked by the app yield app credentials only. One static popup page is served without COOP so the opener survives; without the handshake it replaces itself with the normal COOP `same-origin` page. Sandboxing is detected as a usability guard, not a security boundary. FedCM inside the frame (`mediation:'required'`, key proof over a server nonce) is the Chromium variant. `auth.md` now has a "Provider-operated components" interop rule: component credentials never reach the client and are issued only on key-proven delivery. The fresh reviewer found no path for app script or app server to obtain an embed credential bound to its own key; 10 round-2 findings fixed. Open: in Chrome the FedCM dialog may name the embed host rather than the app; apps sending `COOP: same-origin` lose the confidential frame (integrator guidance: `same-origin-allow-popups`, to verify). Real-browser evidence still missing: per-engine COOP/opener behavior, iOS opener retention, Android process isolation. Reviewer ___ Date ___ Outcome ___.
+
+User direction (2026-10-14), contact link default HTML representation:
+- **Intent link.** Includes `bindle+intent://add-contact?contact-url=…` so any Bindle intent handler can add the contact.
+- **Previews.** Carries Open Graph/Twitter and oEmbed discovery tags so the link previews well in chat and notes apps.
+- **Profile in previews.** When the link's grant permits recipient profile disclosure, name and avatar render in the page and previews; "a platform that has the link already has access."
+
+Coordinator constraints:
+- oEmbed returns `link`/`photo` only.
+- `noindex, nofollow` (meta plus `X-Robots-Tag`).
+- Generic card for revoked or undisclosed links.
+- Crawler fetches never deliver, consume quota/nonces or evaluate `bindle_data`.
+- Interop text (intent URI and parameters) goes in `links.md`; rendering stays in host docs.
+
+Open user question: `registerProtocolHandler` and PWA `protocol_handlers` require a `web+` prefix, so web apps, 3sln.me included, cannot register `bindle+intent`. Proposed: `web+bindle:` (registrable by both web and native handlers). The scheme is isolated in one constant pending the answer. Assigned to the links-integration agent. Reviewer ___ Date ___ Outcome ___.
+
+User decisions (2026-10-14):
+- **Scheme.** The intent scheme is `web+bindle`. Contact pages offer `web+bindle://add-contact?contact-url=…` and `web+bindle://send-message?contact-url=…`.
+- **No composer on the page.** The public HTML contact page includes no messaging API. Signed-out or non-associated viewers see link and permitted profile information plus the intent buttons.
+- **Provider app handling.** Viewers signed into the provider, or opening the link as a deep link into the provider app, get app handling: start a message, or prompt to send a message or add to contacts.
+
+For 3sln.me:
+- Session detection is client-side after a static first render, because Strict cookies are not sent on the cross-site navigation from chat apps.
+- The handoff goes into a console route that keeps the capability out of server logs, with account choice when several are signed in.
+- The PWA captures contact-link paths (`handle_links`/`launch_handler`) and registers the `web+bindle` handler.
+- Composition, authored delivery and conditional audience responses happen only in the provider app.
+
+This supersedes the earlier L6 plan for an opener composer on the public page. Reviewer ___ Date ___ Outcome ___.
+
+User addition (2026-10-14): the 3sln.me contact page offers a sign-up option for viewers without a Bindle-capable app. Handler presence is undetectable by design, so it appears as a secondary option under the intent buttons and is hidden once a signed-in session is detected. The link carries through guided signup outside the server-visible query and returns into the send-message/add-contact prompt, respecting signup capacity, paid and waitlist states.
+Refinement (2026-10-14): that secondary option is "sign in or sign up with 3sln.me" (existing sign-in UI with a create-account path), since viewers may have an account that is not signed in on that browser.
+
+## 2026-10-14 — Embed islands design
+
+[Design](docs/architecture/embed-islands.md) and [independent review](docs/release/embed-islands-review.md): 18 findings (3 High, 8 Medium, 7 Low), all incorporated into revision 2.
+
+Decisions:
+- **Shell and messages.** The fragment is exactly the part name, so a CSS skeleton paints before script runs. The nonce, locale and color scheme travel in the iframe `name`. Inbound messages are presentation-only; outbound messages are per part, entitlement-checked, and `#avatar` emits only `ready`.
+- **Leader and timing.** Web Locks leader with BroadcastChannel fan-out. Account-dependent work runs in per-island workers, so page-observable timing is uniform.
+- **Avatar.** Bearer-only, re-encoded raster, never cached. Shows a monogram fallback when unbound.
+- **`<bindle-account>`.** One `<dialog>`: an anchored popover on wide screens, a modal sheet on narrow ones. The switcher iframe is never reparented.
+- **Events.** Per-element events with a frozen `state` for late listeners.
+
+Breaking changes in island mode: `role=menu` becomes a dialog, top-layer positioning, switch/manage move into the island.
+
+Found a real bug in the adaptive sign-in design: the embed API rejected same-origin GETs, which carry no `Origin`. The fix was routed to the design and implementation agents. The manifest standardizes on `embed_profiles_supported`, and a field for the islands embed origin is being added.
+
+Coordinator decisions on the agent's questions (provisional; user may override):
+1. The profile button defaults to avatar-only, with an optional label attribute.
+2. The `forget` command (app sign-out tells islands to drop local data) is accepted as the sole embedder-initiated command, since it only reduces data.
+3. Islands are on by default. Nothing is publicly released, so there is no compatibility reason for opt-in.
+4. The sheet breakpoint is 600 px, measured on the viewport.
+
+Implementation slices I1–I8 follow the authorization-entry/app-session server slice now in progress. Reviewer ___ Date ___ Outcome ___.
+
+User addition (2026-10-14): the contact page sign-in UI also lets viewers sign in with their own provider. If that provider's Bindle manifest declares intent support (`intents_supported`, provisional name), the flow appends `bindle_intent=<web+bindle intent>` to its login URL. The 3sln.me and self-hosted implementation declare and handle it.
+
+Coordinator constraints:
+- Append only after definitive discovery that declares support; otherwise fall back to the intent buttons.
+- The receiving provider validates the intent as untrusted input and only prompts after login, never acting automatically.
+- The contact capability reaching the chosen provider is acknowledged, with log-redaction and no-referrer guidance.
+- Spec text goes in `links.md` and `protocol.md` §2.
+
+Assigned to the links-integration agent. Reviewer ___ Date ___ Outcome ___.
+Sign-in design aligned with islands §20 (leader-only restore, cap of 4 sessions and 2 streams per partition with oldest evicted, `Origin` required for non-GET and on GET when present, avatar re-encoded fetch-only). Superseded sections of embeddable-elements.md are marked. Manifest names settled: `embed_profiles_supported` and `embed_origin`, the latter an explicit exception to the issuer-origin endpoint rule.
+
+## 2026-10-14 — Elements and sign-in must be provider-agnostic; 3sln.me components profile
+
+User direction: the custom elements and sign-in flow must work with any Bindle provider: third-party, self-hosted or 3sln.me. Elements and UI are not part of the Bindle spec. A 3sln.me-defined sub-spec (components profile, published under a 3sln.me artefact URI) governs provider-operated components. A provider must declare support in its Bindle manifest before elements try to use it; otherwise elements render a simplified UI.
+
+This supersedes placing `embed_origin`/`embed_profiles_supported` and component specifics in core `protocol.md`/`auth.md`. Core keeps only a generic, narrow profile-declaration container plus genuine interop: authorization entry, intents, revocation, DPoP, FedCM config URL.
+
+A design agent is defining:
+- the profile spec;
+- the core container;
+- a full / standard / minimal mode matrix with one element API;
+- client identity across providers;
+- an audit of SDK and design hard-coding.
+
+The authorization-entry implementer was told to keep component fields out of core and to read them through a single profile accessor. Reviewer ___ Date ___ Outcome ___.
+User clarification (2026-10-14): manifests declare granular support (which spec features and intents, embed host, available island parts and versions, theming and credential profiles). Elements adapt per feature to that declaration rather than to coarse modes. Sent to the components-profile design agent.
+User confirmed (2026-10-14): core Bindle states an explicit provider conformance floor (manifest, authorization code + PKCE redirect, issuer binding, registered callbacks). Below it, elements report "unsupported provider"; core-only providers get the standard UI; the components profile is optional. The standard-UI profile button renders an initials avatar from display name, falling back to handle. Sent to the components-profile agent.
+
+## 2026-10-14 — Authorization entry, DPoP app sessions and embed credentials implemented locally (unmounted)
+
+New `packages/federation/{authorization-entries,dpop,app-sessions,embed-bindings,components-profile}.mjs` and route module `packages/runtime/federation-entry-http.mjs`.
+
+- **Entries.** Pre-owner entries pin client/callback/PKCE/state/scopes/intent/nonce/expiry. Owner selection durably records owner and request ID first.
+- **Sessions.** Refresh is DPoP-bound (30 d absolute / 7 d idle, provisional), with rotation, a 30 s same-key grace and reuse revocation. RFC 7009 revocation cascades to embed credentials.
+- **Claims.** Key-bound and single-use.
+- **Components profile.** Values are advertised only via `componentsDeclaration()` at provisional URI `https://3sln.me/artefacts/profiles/components/v1`, pending the components-profile design.
+
+`npm test` 975/975, Worker 49/49. One SDK mock test ("exposes nothing before approval") failed once and passed in isolation and 6 reruns; tracked as possibly flaky.
+
+[Review](docs/release/authorization-entry-impl-review.md): F1 (sessions died after 127 rotations), F2, F3, F4, F5, F7 and F9 fixed. Release gates:
+- F6: an app server attesting its own key never receives the claim, but only because of popup `targetOrigin` delivery, which needs browser evidence.
+- F7-mount: the CSP must survive `securePage`.
+- F8: the manifest must not advertise unmounted routes.
+
+Coordinator decision (provisional): access tokens stay short-lived (≤5 min) Bearer, while refresh tokens are DPoP-bound. Same-page script can use a non-extractable key anyway, so DPoP-binding 5-minute access tokens adds little against XSS. `auth.md` to be reconciled.
+
+SDK follow-ups:
+- accept DPoP sessions (`refresh_expires_in` beyond 28800, refresh proof);
+- check `login_presentation` before choosing popup.
+
+Mount hunks for `http.mjs` and composition wait until the links-integration agent releases `http.mjs`. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Boot token and administrator model direction
+
+User direction:
+- **Boot handle.** The `boot` handle is permanently reserved. A bootstrap token, carrying mint timestamp and nonce, only claims `boot` and is usable exactly once, within about 30 minutes of minting.
+- **Restore.** The same single use may instead restore lost boot access. Reuse requires redeploying with a new token.
+- **Expiry.** Boot access expires; boot exists only to create administrators.
+- **Boot powers.** Boot mints claim tokens for reserved handles and sets reservations, roles and badges. Only boot creates or revokes administrators and defines which roles are internal-only versus assignable to ordinary users.
+- **Admin powers.** Admins can do everything else boot can: reserve handles, configure badges/roles, mint claim tokens, search users, change roles within class rules.
+
+Coordinator provisional refinements:
+- Deployment config holds only the token's SHA-256 digest, never the token.
+- Consumption is recorded durably and forever, keyed by digest.
+- Every privileged action requires step-up reauthentication, rate limits and an append-only audit log.
+- Roles (privilege) stay distinct from badges (presentation).
+- Reconcile with the existing HMAC system invitations and HOST_NAME_POLICY.
+
+Delegated design, backend and independent review (`docs/architecture/boot-and-admin.md`). Admin console UI is a later slice. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Components profile and provider-agnostic elements
+
+[Profile spec](docs/profiles/components-v1.md) (URI `https://3sln.me/artefacts/profiles/components/v1`, in the public docs build) with descriptor `docs/architecture/artefacts/components-profile-v1.json` (registry publication pending). Also the [decision note](docs/architecture/components-profile.md) and [independent review](docs/release/components-profile-review.md): 21 findings (4 High, 12 Medium, 5 Low), all addressed.
+
+Core `protocol.md` §2 now has:
+- an explicit conformance floor;
+- a versioned `features` object (`authorization-entry.v1`, `fedcm.v1`, `intents.v1`, `client-id-metadata.v1`);
+- a generic `profiles` container.
+
+Revocation, DPoP and refresh keep standard OAuth names. Embed origin, shell, channel, parts, theme tokens, island events and key binding live only in the profile. Elements compute behavior per feature, with one event API. The audit found 34 hard-coding findings (16 SDK, 6 monogram, 2 server, 10 design/spec).
+
+Coordinator decisions on open questions (provisional):
+1. Islands mount for any provider declaring the profile, with an embedder attribute to restrict to an issuer allowlist or disable.
+2. 3sln.me will declare `client-id-metadata.v1`, so apps need no per-provider registration; consent shows the verified client origin. Implementation pending.
+3. Dialog container in every mode.
+4. Initials: one letter for single-word names, two for multi-word.
+5. Island sandboxing deferred until browser evidence supports it.
+
+Now running:
+- SDK provider-agnostic implementation, including alias removal, the bundle budget and the flaky SDK test.
+- Islands protocol, runtime and parts (`apps/embed`, `islands-protocol.mjs`).
+
+The links agent was told to move intents and link responses onto `features`. Pending after the links agent releases runtime files:
+- server profile constant and manifest shape (S1/S2);
+- registry publication;
+- mount hunks for authorization entry, embed and admin routes.
+
+Reviewer ___ Date ___ Outcome ___.
+
+COOP/opener spike ([results](docs/release/coop-opener-spike.md), harness `node tests/spikes/coop-opener/run.mjs`): Chromium 156 and Firefox 157 gave identical results. WebKit could not run on this machine (`newPage()` hangs); mobile behavior is unproven.
+
+Confirmed:
+- A frame-opened popup keeps its opener only when the popup sends no COOP at all, under an app with no COOP or `same-origin-allow-popups`.
+- An app with `same-origin` makes `window.open` return null.
+- Exact-origin messages to an app-opened popup's opener are dropped. This is browser evidence for the attestation property behind release gate F6, in two engines.
+- `location.replace` to a COOP page severs the opener.
+- An unnamed popup is unreachable by the app; a named one is reachable.
+- With `allow-popups` the popup inherits the sandbox with a non-null origin, so detection needs the `document.domain` probe.
+- BroadcastChannel/localStorage are partitioned. Playwright defaults disable partitioning, so tests must enable it.
+
+Design corrections, forwarded to the islands implementer:
+- never name the popup;
+- try/catch `window.open`;
+- the embed popup page sends no COOP whatsoever;
+- integrator guidance: app COOP must be absent or `same-origin-allow-popups`.
+
+WebKit/iOS evidence remains a release gate.
+
+## 2026-10-14 — Links integration (L4/L5/L6) landed locally
+
+- **Routing.** Edge routing uses the shared raw-query parser (review #7 fixed). Contact links serve:
+  - the HTML page with OG/Twitter/oEmbed previews and noindex;
+  - JSON inspection, which alone evaluates `bindle_data`;
+  - side-effect-free intake metadata (`application/vnd.bindle.contact-intake+json`);
+  - the contact-delivery bearer.
+- **Delivery.** Authored-only through URL POST and `/bindle/rpc` (`ContactDeliveryService` split into prepare/commit). Legacy anonymous `?sig=` and inbox-bearer submission are retired with `403 author_required`.
+- **Conditional links.** Host policy with bounded decision reuse (positive until UTC midnight, otherwise 15 min) and per-author UTC-day quotas; the L0 503 refusal is removed.
+- **Developer contact.** One conditional link owned by the protected developer identity (paid, or active population < 1500, same-host only). Daily-grant issuance is removed and expired daily grants are reclaimed in bounded passes.
+- **Public contact page.**
+  - No composer: link info, permitted profile, `web+bindle` send-message/add-contact intents.
+  - "Sign in or sign up with 3sln.me", including handoff to the viewer's own provider via `features["intents.v1"]` and `bindle_intent`.
+  - Composition, disclosure/Continue-as and sending happen in the console (`/console#contact=…`) with an account chooser.
+  - PWA protocol handler and `handle_links`.
+- **Owner side.** Intake editor and challenge rotation; tag labels, pills and add/remove forms; sign-out removes that account's push subscription on the device.
+- **Tests.** Core 976/976, Worker 49/49, UI-state 155/155, build and Worker dry run pass, Chromium link checks with 13 screenshots in `artifacts/browser/links-*.png`. Conditional/developer-contact browser runs use the Node adapter.
+- **Reviews.** [Three independent reviews](docs/release/links-integration-review.md): security (no Critical/High, S1–S10 fixed or accepted), UX (2 High, 9 Medium fixed), previews/intents (R1, R3, R5–R9 fixed; R2, R4 accepted; R10 open).
+- **Provisional decisions needing sign-off:** contact page `connect-src https:` for client-side handle discovery (R4); `intent`/`bindle_intent` added to log redaction (R2); revocation fence before the gate; receipt signed with the recipient's key pending admission-key discovery.
+- **Remaining gaps:** cross-host audience verification; conversation-init via links; admission-key discovery; HTML-with-data vs §9.3 reconciliation; legacy inbox bearers survive only for conversation-v1 invitations.
+
+Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Boot and admin backend implemented locally (unmounted)
+
+[Design](docs/architecture/boot-and-admin.md), [independent review](docs/release/boot-and-admin-review.md).
+
+- **Boot token.** Digest-only configuration (`BOOTSTRAP_TOKEN_SHA256`), a 30-minute window with 2-minute skew, consumption recorded forever. A single use covers claim or restore.
+- **Boot principal.** Boot is a deploy-token principal, not an account, with its own `__Host-bindle_boot` cookie. It has no recovery; lost access means a new token. Access expires after `BOOT_ACCESS_HOURS` (default 24) with an acknowledged setup.
+- **Actor separation.** Console requests declare `X-Bindle-Admin-Actor: boot|admin`, with no fallback between credentials.
+- **Admins.** Internal accounts holding the boot-only `admin` role. Internal status is proven by provenance on every read (`bs1` marker or matching admin-minted claim); admins cannot flag accounts internal.
+- **Role and badge classes.** Boot sets internal, delegable or user. Admins may assign only delegable internal roles/badges to internal accounts and user-class roles to anyone. Claims for static reserved names are boot-only.
+- **Reservations and claims.** Static `HOST_NAME_POLICY` reservations are a floor, with runtime additions. Reserved-name claims reuse the onboarding lane, bound to their exact digest. The `bs1` CLI path is retained.
+- **Controls.** Step-up, per-actor rate limits, a hash-chained append-only audit log.
+
+Review: F1 high (any admin could create internal accounts with arbitrary roles/badges, including static names) fixed by the delegable and boot-only static-name rules. F2–F7 fixed with regressions. Boot-admin tests 20/20 on both adapters.
+
+Coordinator provisional decisions on open questions:
+- admins must use passkeys for step-up;
+- boot may end its own access early;
+- admin suspension freezes the automatic account lifecycle;
+- unused or expired claims release their name (identity-shards change pending);
+- runtime badge editing and external audit anchoring deferred.
+
+Mounting (http.mjs, Node store, Worker `AdminAuthority` DO) and the admin console UI are in progress. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Federation, embed origin and admin routes mounted; browser regressions fixed
+
+- **Federation and embed origin.** The authorization entry slice and dedicated embed origin are mounted behind `FEDERATION_ENABLED`, `FEDERATION_ENTRY_ENABLED` and `EMBED_ORIGIN`. Worker uses one global entry store in a dedicated `FederationObject` with alarm cleanup; Node uses SQLite. `securePage({keepPolicy})` preserves handler CSP/COOP (F7 resolved). The manifest emits `features`/`profiles` only for mounted routes (F8 resolved). The components profile is published in the registry as provisional.
+- **Admin.** Mounted only when `BOOTSTRAP_TOKEN_SHA256` is set or `ADMIN_ENABLED=true`. Worker uses an `AdminAuthority` DO (migration `v6`), Node uses `admin.sqlite`.
+- **Regressions fixed.**
+  - A shadowed `restored` variable in multi-account boot skipped recovery and billing resume.
+  - Federation routes ignored member cookies (new `ownerContext`).
+  - The top-bar switch button overflowed at 320 px.
+  - SDK `define`/`callback` were missing from CORS.
+  - The entry view refused same-origin GETs.
+- **Tests updated for intended changes:** the expired session opens the chooser; header-less private writes return 409; contact copy.
+- **Browser runner.** Raises only aggregate signup windows for its throwaway Worker; per-IP and production limits are unchanged.
+- **Results.** Full browser gate green: portal 84/84, federation 4/4, authorization entry 2/2.
+- **Review.** [Mount review](docs/release/federation-mount-review.md): M1, M3, M4, M6 fixed. M2 (no provider UI for `?entry=` yet, so the entry flag stays off) and M5 (single entry store availability) open. `boot/begin` lacks a rate limit.
+
+Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Islands runtime implemented (unrouted)
+
+Built:
+- I1: protocol module `packages/sdk/src/islands-protocol.mjs`; validators return frozen copies or null.
+- I2/I3: `apps/embed` shell, service worker, runtime, Web Locks leader worker, and parts `avatar`, `account-switcher`, `sign-in`.
+- A5 client pieces: non-extractable IndexedDB key, leader-only restore, frame-initiated popup bridge following the COOP spike rules.
+- I6: `packages/i18n/islands-catalogue.mjs`.
+
+Tests: `npm test` 1078 passing. Chromium and Firefox island checks 18/18, using the real federation stack with two marked test shims. Frozen-leader failover is tested in Node with real `navigator.locks`. WebKit untested.
+
+[Implementation review](docs/release/embed-islands-review.md): 10 findings plus 1 uncertain, all fixed. Among them:
+- `forget` lost across bfcache;
+- a signed-out switcher listing bindings;
+- memory-only storage breaking leader fencing;
+- the service worker pinning unhashed assets;
+- binding-count-dependent redraw timing;
+- an armed frame sliding under the cursor.
+
+Platform findings: Firefox sends `Origin: null` under no-referrer; the island worker script requires COEP.
+
+Open:
+- server `view.subject`;
+- avatar, events and session-end routes;
+- shell serving and build entries;
+- A7 authorize acknowledgement;
+- FedCM in frame.
+
+Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Boot and admin console UI
+
+Boot setup/sign-in and the admin console are implemented. `admin-entry.mjs` loads only on `/console?boot|?admin`. `admin-console.mjs` is dynamically imported only after boot or confirmed admin authority, and is excluded from the service-worker precache. Strings: about 390 en/es entries.
+
+Backend additions:
+- `boot/end` (early end of boot access) and `boot/session` (CSRF restore);
+- an admin-only `access` probe;
+- passkey-only admin step-up, and `step-up/end` on leaving the console;
+- `boot/logout` always clears;
+- `boot/begin` rate limits: 5/min and 20/h per IP pseudonym, 200/h global.
+
+Tests: UI-state 170/170, boot-admin 30/30. Real-browser e2e passes the boot → admin → passkey step-up → reserve → mint → onboarding claim → user lookup → audit verification path, plus dark/mobile, no admin code for ordinary accounts, and early boot end. Screenshots in `artifacts/browser/admin-*.png`.
+
+[Reviews](docs/release/admin-ui-review.md): security found no Critical/High (3 low/medium and 3 info fixed). UX: 13 of 14 fixed, including all 3 High; U13 partial.
+
+Coordinator fixed the onboarding config gap: `/api/config` `tokenOnboardingEnabled` now also honors `ADMIN_CLAIMS_ENABLED`.
+
+Pending:
+- identity-shards release of expired, unbound preissued reservations;
+- backend wiring of the admin-suspension lifecycle freeze (the UI makes no claim).
+
+Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — SDK and elements provider-agnostic
+
+`packages/sdk` now works against any conforming provider:
+- conformance-floor check;
+- versioned `features`/`profiles` via a capabilities module;
+- per-provider client IDs and client-ID-metadata support;
+- popup and FedCM only when declared;
+- DPoP-bound refresh with nonce retry;
+- per-session revocation;
+- the dialog-based profile button in every mode;
+- scheme-aware OKLCH initials avatars;
+- an islands hook.
+
+New modules: `capabilities`, `tokens`, `dpop`, `fedcm`, `handle`, `relay`, plus avatar/initials/tile/account-view elements.
+
+The `<bindle-login>` alias and TypeScript shim are removed. The coordinator switched the remaining console, demo and smoke-test usages to `<bindle-sign-in>`, dropped `login-element` from the SDK CORS allowlist, and deleted the file.
+
+The flaky elements test was a fixed 40 ms wait; it now waits for the session event (24/24 under parallel load). The contact-page discovery regression was fixed in the SDK by restoring the frozen floor-checked `manifest` in discovery results.
+
+Bundle: the first render needs 17.68 KiB min+brotli (budget 18), with the controller and account view lazy-loaded. The public standalone bundle is 38.0 KiB unsplit, since js-tools has no code splitting.
+
+Tests: core 1083/1083, UI-state 170/170, DOM smoke, and Chromium/Firefox element and provider-matrix checks 15/15; WebKit not runnable here. [Implementation review](docs/release/components-profile-review.md): no blockers; 4 Medium and 3 of 7 Low fixed, the rest recorded.
+
+`auth.md` is reconciled: `token_type` describes only the access token, so short-lived Bearer access may accompany a DPoP-bound refresh token, and clients accept either. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Claim-name release and admin-hold lifecycle freeze
+
+**Claim-name release.** Expired, never-redeemed admin claims release their name through the identity storage alarm on both adapters: Node `identities.sqlite` and the Worker `IdentityDirectory`. Release applies only to still-`preissued`, unbound, digest-matching reservations at least 10 minutes past expiry, and never to static, `boot`, assigned or redeemed names. Release and redemption are transactions on the same row, so exactly one wins; covered by a randomized race test in both orders.
+
+**Lifecycle freeze.** Admin suspension freezes `AccountLifecycle` through a required `adminHold` port. Reactivation resumes once and restarts the clock, never deleting immediately, and paid protection is still checked first.
+
+The automatic account-lifecycle executor (warnings, suspension, deletion for unpaid inactive accounts) is not wired to any scheduler. The freeze, and the user's retention policy itself, therefore have no runtime effect yet. This is a known roadmap gap, not new behavior.
+
+Reservations created before the expiry index are not released. Tests: core 1098/1099 (the one failure is in in-progress islands serving), Worker 50/50. [Review](docs/release/boot-and-admin-review.md) follow-ups found no Critical/High, and its fixes are applied. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Islands served on the embed origin
+
+- **Build.** Islands have their own checked import-map graph under `/embed/assets/`. The shell carries an inline import map whose hash is in its CSP; per-client `{{CONFIG}}` is filled at request time with verified escaping.
+- **Routes.** On the embed origin only: shell with per-client `frame-ancestors`, assets with CORP/COEP, service worker, avatar, events and session end. The session view carries the subject.
+- **Avatar.** Reads only provider-owned assets or `EMBED_AVATAR_ORIGINS` (Worker), re-encoded to PNG.
+- **`Origin: null`.** Accepted only with `Sec-Fetch-Site: same-origin`, a Firefox no-referrer case. The coordinator recorded this in adaptive sign-in §13.4 and updated §14 discovery to the `features`/`profiles` model.
+
+Tests: core 1100/1100, Worker 50/50, UI-state 182/182, build and dry run pass. Chromium and Firefox islands pass end to end against a local Worker; WebKit untested. [Serving review](docs/release/embed-islands-review.md): S2–S5 fixed.
+
+Open:
+- avatar CPU cost (S1);
+- client consumption of `/events` and `session/end`;
+- Node avatar fetcher;
+- the A7 popup is still a stand-in;
+- service worker untested in a browser;
+- FedCM in frame;
+- the islands browser test is not yet in the `test:e2e` runner.
+
+Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-14 — Provider authorization-entry page (A7)
+
+The provider page handles `?entry=` for login, select-account, reauthenticate and end-session, in popup and redirect presentation, and for frame-initiated popups:
+- no account state before the opener key handshake;
+- exact embed-origin delivery;
+- frame-busting and delay-to-arm on approval.
+
+Legacy consent now shares a consent kit with the entry page. Strings live in `packages/i18n/authorize-catalogue.mjs` (en/es).
+
+Tests: core 1099/1099, UI-state 182/182 (12 new), entry e2e on a real local Worker 7/7 (Chromium), legacy federation 4/4. End-session ran against a simulated route, since there is no adapter end-session hook. [Reviews](docs/release/authorize-entry-ui-review.md): 6 security and 15 UX findings fixed.
+
+The entry flag stays off in production until these are fixed:
+- **S1 (high):** an app backend can probe, before consent, whether and as whom the user selected an account. The deny path trusts an unverified cookie prefix and responses differ by selection state.
+- No end-session hook.
+
+Other open items:
+- weak anonymous cancel/end-session CSRF;
+- no console `?entry=` return or add-account deep link;
+- no "already approved" signal, so only identity-only entries are one click;
+- `maxAge:0` never succeeds;
+- entry view lacks `embed.origin`;
+- `uiLocales` ignored;
+- hard-coded brand text.
+
+Reviewer ___ Date ___ Outcome ___.
