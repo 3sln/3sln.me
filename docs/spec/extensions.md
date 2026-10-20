@@ -2,7 +2,7 @@
 
 Status: **provisional draft, 2026-10-20, revision 2.** Revision 1 was wargamed by two independent reviewers (24 security and 22 interop findings). Revision 2 answers every finding; see the [extensibility review](../release/extensibility-review.md). Rationale, rejected alternatives and migration: [extensibility design](../architecture/extensibility-design.md). Human sign-off: reviewer ___ / date ___ / outcome ___. Track the decision in [DEVLOG](../../DEVLOG.md). Nothing here is implemented or production-verified.
 
-This document extends [protocol §2–§4](protocol.md). It defines interoperability rules only: no user interface beyond the security disclosures it lists, and no SDK behavior. Identifiers under `https://spec.bindle.example/` are placeholders, not live authorities. MUST/SHOULD/MAY express draft requirements. §12 lists the amendments this draft needs in existing core documents. Those amendments are proposed and are not yet applied there.
+This document extends [protocol §2–§4](protocol.md). It defines interoperability rules only: no user interface beyond the security disclosures it lists, and no SDK behavior. Identifiers under `https://spec.bindle.example/` are placeholders, not live authorities. MUST/SHOULD/MAY express draft requirements. §12 lists the amendments this draft needs in existing core documents. Those amendments are proposed (approved provisionally 2026-10-20) and applied to the core drafts; runtime work remains deferred to [EXT-X1](../architecture/implementation-roadmap.md#ext-x1-deferred-code-from-wave-0).
 
 ## 1. Model
 
@@ -341,7 +341,7 @@ Tests MUST cover:
 - **Lifecycle:** slot manifest disappearance and digest change; same-origin superseded-slot migration without grant copying; blocked slots.
 - **Requests and support:** `unavailable` reported only from public facts; optional versus required unsupported slot requests; provider-only slots refused for applications; a provider without `extensions.v1` processing a slot fragment as an ordinary fragment.
 
-## 12. Required core amendments (proposed, not yet applied)
+## 12. Core amendments — proposed (approved provisionally 2026-10-20)
 
 | ID | Document | Amendment |
 | --- | --- | --- |

@@ -2,7 +2,7 @@
 
 Status: **provisional draft, 2026-10-20, revision 2.** Revision 1 was wargamed by two independent reviewers; revision 2 answers every finding. See the [extensibility review](../release/extensibility-review.md). Rationale and migration: [extensibility design](../architecture/extensibility-design.md). Human sign-off: reviewer ___ / date ___ / outcome ___. Track the decision in [DEVLOG](../../DEVLOG.md). Nothing here is implemented or production-verified.
 
-This document extends [protocol](protocol.md), [auth](auth.md), [contracts](contracts.md), [resource contributions](resource-contributions.md) and [extensions](extensions.md). It defines interoperability rules only: no user interface beyond the security disclosures it lists, and no SDK behavior. Identifiers under `https://spec.bindle.example/` are placeholders. §14 lists the amendments this draft needs in existing core documents. They are proposed, not applied.
+This document extends [protocol](protocol.md), [auth](auth.md), [contracts](contracts.md), [resource contributions](resource-contributions.md) and [extensions](extensions.md). It defines interoperability rules only: no user interface beyond the security disclosures it lists, and no SDK behavior. Identifiers under `https://spec.bindle.example/` are placeholders. §14 lists the amendments this draft needs in existing core documents. They are proposed (approved provisionally 2026-10-20) and applied to the core drafts; runtime work remains deferred to [EXT-X1](../architecture/implementation-roadmap.md#ext-x1-deferred-code-from-wave-0).
 
 ## 1. Model
 
@@ -47,7 +47,7 @@ An integration MUST be a **confidential client** if it declares any of:
 
 A confidential client declares `token_endpoint_auth_method: "private_key_jwt"` and a `jwks_uri` on the `client_id` origin ([RFC 7523](https://www.rfc-editor.org/rfc/rfc7523.html)). A public client may still declare `setup` and `consumer` extensions.
 
-A provider that does not declare `integrations.v1` may refuse a confidential client document outright. Today's client-metadata validation does so (§14, amendment C7). Before authorization, an integration MUST therefore check the provider's `integrations.v1` and `token_endpoint_auth_methods_supported`. If either is missing, the integration either uses a separate public-client `client_id` document without these members, or does not connect.
+A provider that does not declare `integrations.v1` MUST refuse a confidential client document outright (AMD-C7 — proposed (approved provisionally 2026-10-20)). Today's client-metadata validation does so (§14, amendment C7). Before authorization, an integration MUST therefore check the provider's `integrations.v1` and `token_endpoint_auth_methods_supported`. If either is missing, the integration either uses a separate public-client `client_id` document without these members, or does not connect.
 
 **Path prefix.** Every URL in the manifest MUST be HTTPS on the `client_id` origin, without userinfo, query or fragment. It MUST also share the `client_id`'s path prefix: the `client_id` path up to and including its last `/`. This applies to `jwks_uri` and `redirect_uris` too. A provider SHOULD refuse `bindle_integration` from a `client_id` origin it classifies as multi-tenant hosting, unless an operator registered the client. The issuer origin itself MUST NOT host an external integration's endpoints.
 
@@ -431,7 +431,7 @@ A provider MAY declare `introspection_endpoint` in `brokered-resources.v1` ([RFC
 - the token's `aud` is one of the calling integration's endpoints;
 - the token's connection belongs to that integration.
 
-A contract, never a slot, MAY mark a method `"introspect": true` in its pinned `x-methods` entry. The provider then MUST declare `introspection_endpoint` before it registers a brokered record for that contract. The integration MUST introspect before executing such a method, and MAY cache results for at most 30 seconds, which reduces the revocation delay for that method to 30 seconds. A contract MAY instead declare `"x-bindle-brokerable": false`, and providers then MUST NOT register brokered records for it.
+A contract, never a slot, MAY mark a method `"introspect": true` in its pinned `x-methods` entry. The provider then MUST declare `introspection_endpoint` before it registers a brokered record for that contract. The integration MUST introspect before executing such a method, and MAY cache results for at most 30 seconds, which reduces the revocation delay for that method to 30 seconds. **AMD-C8/C10 — proposed (approved provisionally 2026-10-20):** the 360 s bound is permitted for read-only brokered contracts. Write-capable brokered contracts MUST require live introspection before execution without cached authorization; unavailable introspection fails closed. A contract MAY instead declare `"x-bindle-brokerable": false`, and providers then MUST NOT register brokered records for it.
 
 ## 6. Events
 
@@ -606,7 +606,7 @@ Integrations SHOULD log `jti`, `client_id`, `connection` and `tx` for every brok
 
 | Feature | Members | Meaning | When absent |
 | --- | --- | --- | --- |
-| `integrations.v1` | `hint_endpoint` (issuer origin) | The provider accepts confidential integration clients, processes `bindle_integration`, returns `bindle_connection`, issues connection-bound refresh tokens, delivers events, performs discovery and accepts hints. It also declares `token_endpoint_auth_methods_supported`, including `private_key_jwt` ([RFC 8414](https://www.rfc-editor.org/rfc/rfc8414.html)). | Clients are plain public applications. Confidential integration documents may be refused (§2.1). |
+| `integrations.v1` | `hint_endpoint` (issuer origin) | The provider accepts confidential integration clients, processes `bindle_integration`, returns `bindle_connection`, issues connection-bound refresh tokens, delivers events, performs discovery and accepts hints. It also declares `token_endpoint_auth_methods_supported`, including `private_key_jwt` ([RFC 8414](https://www.rfc-editor.org/rfc/rfc8414.html)). | Clients are plain public applications. Confidential integration documents are refused (§2.1). |
 | `brokered-resources.v1` | `jwks_uri` (issuer origin, brokering key set), `preferences_contract` (the v2 URL), optional `introspection_endpoint` (issuer origin) | The provider registers brokered records, projects them through preferences v2 with minted tokens, and performs §7 severance. Requires `integrations.v1`. | Only issuer-hosted resources exist. |
 
 ## 13. Conformance tests
@@ -625,7 +625,7 @@ Tests MUST cover:
 - **Introspection:** scope limits.
 - **Audit:** records for each operation.
 
-## 14. Required core amendments (proposed, not yet applied)
+## 14. Core amendments — proposed (approved provisionally 2026-10-20)
 
 | ID | Document | Amendment |
 | --- | --- | --- |

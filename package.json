@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "npm run dev:worker",
-    "test": "node --test tests/*.test.mjs packages/sdk/test/*.test.mjs",
+    "test": "node --test tests/*.test.mjs tests/bindlebox/*.test.mjs packages/sdk/test/*.test.mjs",
     "test:worker": "node --test --test-concurrency=4 tests/worker/*.test.mjs",
     "test:dom": "node --experimental-loader ./tests/browser/loader.mjs tests/browser/smoke.mjs",
     "dev:demo": "node apps/server/server.mjs",

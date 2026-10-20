@@ -12,6 +12,12 @@ import {objectKey,StorageError} from '../../storage/policy.mjs';
 import {UUID_V4} from '../../core/primitives.mjs';
 import {archiveDigest} from './support.mjs';
 
+// Append-only: add one contract handler per slice. Handlers receive (controller,owner,context)
+// and own method validation, live authorization and replay checks before effects or cached results.
+export const RESOURCE_METHOD_HANDLERS=Object.freeze({
+  [APP_NOTIFICATIONS]:createAppNotification,
+});
+
 export const methods={
   async ensureBuiltinStorage(owner){
     const pointerKey='builtin/hosted-resource-v1',contract='https://3sln.me/artefacts/contracts/object-storage/v1',uuid=UUID_V4;
@@ -53,7 +59,7 @@ export const methods={
   async deleteResource(owner,id){const builtin=await this.metadata.get('builtin/hosted-resource-v1');if(builtin?.owner===owner&&builtin.id===id)throw new StorageError('builtin_resource','Account storage is always available and cannot be disconnected.',409);const app=await this.metadata.get(`resource/${id}`);if(app?.kind==='app-connection')return this.apps.disconnect(owner,id);const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner)throw new Error('Resource not found');if(resource.builtin===true)throw new StorageError('builtin_resource','Account storage is always available and cannot be disconnected.',409);if(resource.provider==='google-drive')return this.googleDrive.disconnect(owner,id);if(resource.provider==='hosted'&&(await this.metadata.list({prefix:`hosted/${id}/`,limit:1})).size)throw new StorageError('resource_not_empty','Delete the files in this hosted resource before removing it.',409);await this.metadata.delete(`resource/${id}`);return {deleted:true};},
   async federationRPC(context){
     const owner=/\/entities\/([a-f0-9-]{36})$/.exec(context.subject)?.[1];if(!owner||context.subject!==`${this.config.APP_ORIGIN}/entities/${owner}`)throw new StorageError('forbidden','Resource access denied.',403);
-    if(context.contract===APP_NOTIFICATIONS)return createAppNotification(this,owner,context);
+    if(Object.hasOwn(RESOURCE_METHOD_HANDLERS,context.contract))return RESOURCE_METHOD_HANDLERS[context.contract](this,owner,context);
     if(context.method==='list')throw new StorageError('unsupported_method','Object storage has no listing operation; use application-managed directory objects.');
     await this.warm(owner);
     if(context.authority==='bindle'&&(!context.epoch||!context.connection||!this.config.FEDERATION_IDENTITY_CHECK||await this.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true))throw new StorageError('unauthorized','Application authorization is no longer active.',401);

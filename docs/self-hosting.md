@@ -124,6 +124,19 @@ Every setting the code reads. "Hosted" is the value in this repository's `wrangl
 | `MESSAGE_RECEIPT_LIMITS` | built-in per-plan defaults | JSON per-plan receipt budgets; invalid values refuse to start. |
 | `MESSAGE_FORMS_OUTPUT`, `PUBLIC_DOCS_OUTPUT` | build-time | Output directory overrides for build scripts. |
 
+### Roadmap feature flags
+
+These reserved switches default to `"false"` in both Worker configurations and Node. Node forwards environment values and permits explicit `createNodeServer({config})` overrides. Wave 0 only wires configuration; setting a switch does not implement a feature, mount routes or establish production readiness. Later slices must gate their declarations and behavior on these flags.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `EXTENSIONS_ENABLED` (N) | `false` (off) | Slots and extension declarations. |
+| `INTEGRATIONS_ENABLED` (N) | `false` (off) | Integration manifests and connection lifecycle. |
+| `BROKERING_ENABLED` (N) | `false` (off) | Brokered resource discovery, credentials and severance. |
+| `DEVICE_AUTHORIZATION_ENABLED` (N) | `false` (off) | App device authorization grant; separate from existing owner device sign-in. |
+| `ACTIVITY_V2_ENABLED` (N) | `false` (off) | Activity center v2. |
+| `BINDLEBOX_ENABLED` (N) | `false` (off) | BindleBox extraction and app cutover. |
+
 ### Onboarding, administration and identities
 
 | Variable | Default | Purpose |

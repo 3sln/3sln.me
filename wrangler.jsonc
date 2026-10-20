@@ -136,6 +136,12 @@
     }
   ],
   "vars": {
+    "EXTENSIONS_ENABLED": "false",
+    "INTEGRATIONS_ENABLED": "false",
+    "BROKERING_ENABLED": "false",
+    "DEVICE_AUTHORIZATION_ENABLED": "false",
+    "ACTIVITY_V2_ENABLED": "false",
+    "BINDLEBOX_ENABLED": "false",
     "LIFECYCLE_ENABLED": "false",
     "LIFECYCLE_DRY_RUN": "true",
     "LIFECYCLE_PURGE_ENABLED": "false",

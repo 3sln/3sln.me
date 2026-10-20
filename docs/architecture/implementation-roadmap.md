@@ -20,6 +20,7 @@ Status: working plan, 2026-10-20. It merges the slice plans of [extensibility](e
 - **Engine-first:** all new logic is ngin Actions/Queries over providers. Messaging domains are built engine-first inside BindleBox, never migrated into core (ENG-2/3/4/5 are cancelled).
 - **Append-only registries** (integrator-owned; slices append their own lines only):
   - `packages/runtime/routes/index.mjs`, `packages/runtime/account/index.mjs`;
+  - `RESOURCE_METHOD_HANDLERS` in `packages/runtime/account/storage.mjs` (one contract handler per slice; handlers own method validation and authorization);
   - the `PROVIDERS` rows in `packages/app/providers.mjs` and `ACCOUNT_OPERATIONS` in `operations.mjs`;
   - `package.json` scripts;
   - `packages/i18n/catalogues.mjs`;
@@ -36,6 +37,25 @@ Status: working plan, 2026-10-20. It merges the slice plans of [extensibility](e
 - add a resource-method dispatch registry seam in `account/storage.mjs`;
 - apply AMD-C1–C11 to the specs;
 - set the linked-approval app credential cap to 30 d / 7 d idle, with fresh sign-in only.
+
+### EXT-X1 deferred code from Wave 0
+
+AMD-C1–C11 are applied to the core drafts as **proposed (approved provisionally 2026-10-20)**. Wave 0 changes configuration and the account dispatch seam only; amendment runtime changes and publication artifacts are deferred. EXT-X1 must track and reconcile these gaps before claiming conformance, retaining the later slice ownership below. No independent reviewer sign-off or production verification is implied. DEVLOG.md is unchanged at the user's request.
+
+| Amendment | Code work deferred to EXT-X1 tracking | Implementation slice |
+| --- | --- | --- |
+| AMD-C1 | `packages/federation/schema.mjs` currently rejects unknown fragment members. Accept unknown top-level members (including `slot`) without displaying them as fields, retain them in digest pinning, and add slot/extension validation and regression tests. | EXT-X1 |
+| AMD-C2 | Accept and validate optional request `digest` in federation/entry/SDK request paths; reject mismatches with pinned/fetched canonical document digests. | EXT-X1 |
+| AMD-C3 | Change preferences projection to retain approved resources in owner order while omitting unapproved additions and reporting the field in `requiresConsent`; add mixed-approval regression coverage. | EXT-X8 |
+| AMD-C4 | Audit resource handlers/adapters and replay errors for no-effect codes; return `indeterminate` for uncertain effects and test failover boundaries. | EXT-X1, EXT-X9 |
+| AMD-C5 | Add per-fragment `fragment_outcomes` in token responses and client grant listings, including declined/unsupported/unavailable requests; missing outcomes mean declined. | EXT-X1 |
+| AMD-C6, AMD-C11 | Parse and emit bounded extension declarations and the three negotiated features only when their implementations are enabled and mounted; extend consumer capability processing. Flags alone do not advertise support. | EXT-X1, EXT-X2 |
+| AMD-C7 | Accept confidential `private_key_jwt` clients only with `integrations.v1`; validate origin/path-bound JWKS, key continuity and approval snapshots. | EXT-X3 |
+| AMD-C8 | Implement validated integration endpoints, separate audiences, severance/outbox and bounded read-only revocation; enforce live introspection without cached authorization for write-capable brokered contracts and contract opt-out. | EXT-X3–EXT-X9 |
+| AMD-C9 | Publish the preferences v2 artifact and implement uniform resource projection, broker credentials and integration-only `seq`; keep v1 free of brokered values and retain its existing shape. | EXT-X8 |
+| AMD-C10 | Validate pinned method `effect`/`introspect` and contract `x-bindle-brokerable` metadata; enforce failover and brokering eligibility, treating unknown effects conservatively. | EXT-X1, EXT-X7–EXT-X9 |
+
+The linked-approval decisions are recorded in [§15](linked-approval.md#15-open-questions--accepted-decisions-2026-10-20). Their implementation remains LA1/LA2/LA4/LA7 work: fresh sign-in for app approval, 30 d absolute / 7 d idle app expiry, provisional lineage retention past natural owner-session expiry for app revocation, ordinary sign-out cascade with warning, reviewed-client eligibility and kind-specific defaults. No linked-approval runtime change is included in Wave 0.
 
 **Wave 1, parallel foundations:**
 - LA1 identity core [S]: `packages/identity/{service,device-login,linked-approval,index}.mjs`, the deviceRequests adapter hunks in `apps/worker/index.mjs` and `apps/node/*`.
