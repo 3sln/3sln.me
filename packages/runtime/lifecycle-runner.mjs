@@ -20,9 +20,8 @@ const KNOWN=new Set(['active','warning',...BLOCKED]);
 // reactivation, billing reconciliation/payment (paid protection lifts the
 // suspension), public key lookup for previously signed material, and email
 // unsubscribe. Every other account API, app RPC, ingress and mutation is denied.
-const SUSPENDED_ALLOWED=new Set(['lifecycleStatus','lifecycleReactivate','lifecycleTick','billingRefresh','billingStatus','billingCheckout','billingChangePlan','billingCancelChange','billingWebhookVerified','lifecycleEverPaid','setupBillingStatus','paidHandleEligibility','identitySigningKey','identityKeychain','unsubscribe']);
-const PURGING_ALLOWED=new Set(['lifecycleStatus','lifecycleTick','billingRefresh','billingStatus','billingWebhookVerified','lifecycleEverPaid','identitySigningKey']);
-const ACTIVITY={touch:'owner-return',federationRPC:'resource-use',mcpOperation:'resource-use'};
+// Each one declares its level as `lifecycle: 'suspended' | 'purging'` in its slice's `rpc`
+// (packages/runtime/account/*.mjs), and qualifying activity as `activity`; `invoke` passes it as `policy`.
 
 // Infrequent Access pays only for objects large enough to recover its costs (checked 2026-10-14):
 // saving 0.005 USD/GB-month (0.015 Standard - 0.010 IA, 30-day minimum) must exceed one IA
@@ -66,16 +65,19 @@ function lifecycleOf(c){
 const fault=(code,message,status)=>({code,message,status});
 
 /** Request-path enforcement, before any account method runs. Live mode only. */
-export async function lifecycleBlocked(c,method){
+/** `policy` is the declared lifecycle level of an engine operation (`Operation.lifecycle`) or of a named RPC method
+ * (its slice's `rpc`): 'active' (default), 'suspended' (also while suspended) or 'purging' (also while purging). */
+export async function lifecycleBlocked(c,method,policy={}){
+ const suspendedOk=policy.lifecycle==='suspended'||policy.lifecycle==='purging',purgingOk=policy.lifecycle==='purging';
  // A deletion tombstone is final in every mode, including after the flag is turned off.
  if(await c.metadata.get(TOMBSTONE_KEY)!==undefined)return method==='lifecycleStatus'||method==='lifecycleTick'?null:fault('account_deleted','This account was deleted after its final notice period.',410);
  if(lifecycleMode(c.config)!=='live')return null;
  let state=await c.metadata.get(STATE_KEY);if(state===undefined)return null;
  // Payment lifts suspension immediately rather than at the next scheduled tick.
- if(state&&['suspended','purge-review'].includes(state.phase)&&!SUSPENDED_ALLOWED.has(method)&&state.owner&&(await c.metadata.transaction(tx=>accountRemovalProtection(tx,state.owner,{config:c.config,now:clockOf(c)()}))).status==='paid-protected'){await lifecycleOf(c).step(state.owner);state=await c.metadata.get(STATE_KEY);}
- if(!state||!KNOWN.has(state.phase))return SUSPENDED_ALLOWED.has(method)?null:fault('lifecycle_unavailable','Account status requires review.',503);
- if(state.phase==='purging')return PURGING_ALLOWED.has(method)?null:fault('account_deleting','Account deletion has begun.',410);
- if(BLOCKED.has(state.phase)&&!SUSPENDED_ALLOWED.has(method))return fault('account_suspended','This account is suspended. Sign in and confirm you are still using it to reactivate.',423);
+ if(state&&['suspended','purge-review'].includes(state.phase)&&!suspendedOk&&state.owner&&(await c.metadata.transaction(tx=>accountRemovalProtection(tx,state.owner,{config:c.config,now:clockOf(c)()}))).status==='paid-protected'){await lifecycleOf(c).step(state.owner);state=await c.metadata.get(STATE_KEY);}
+ if(!state||!KNOWN.has(state.phase))return suspendedOk?null:fault('lifecycle_unavailable','Account status requires review.',503);
+ if(state.phase==='purging')return purgingOk?null:fault('account_deleting','Account deletion has begun.',410);
+ if(BLOCKED.has(state.phase)&&!suspendedOk)return fault('account_suspended','This account is suspended. Sign in and confirm you are still using it to reactivate.',423);
  return null;
 }
 
@@ -89,9 +91,9 @@ async function armIfNeeded(c,lifecycle,owner,identity){
 }
 
 /** Records qualifying owner/app activity after a successful account operation, outside the account gate. */
-export async function lifecycleActivity(c,method,args=[]){
+export async function lifecycleActivity(c,method,args=[],policy={}){
  if(method==='billingWebhookVerified'&&lifecycleMode(c.config)==='live'){try{await c.scheduleAlarm(Date.now()+1000);}catch{}return;}
- const source=ACTIVITY[method];if(!source||lifecycleMode(c.config)==='off')return;
+ const source=policy.activity;if(!source||lifecycleMode(c.config)==='off')return;
  // App RPC counts as resource use; an app sending a notification into the account is inbound, not use.
  if(method==='federationRPC'&&(args[0]?.contract===APP_NOTIFICATIONS||typeof args[0]?.subject!=='string'))return;
  const owner=method==='federationRPC'?/\/entities\/([a-f0-9-]{36})$/.exec(args[0].subject)?.[1]:args[0];if(typeof owner!=='string')return;

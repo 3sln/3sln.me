@@ -5,10 +5,10 @@
 // stuck, no other owner's data, honest outcomes. Real-browser coverage lives in tests/e2e/ui-chaos*.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {within,waitFor} from '../helpers/async.mjs';
 import {Window} from 'happy-dom';
 const window=new Window({url:'https://space.example/console'}),names=['document','HTMLElement','CustomEvent','Event','EventTarget','Node','Element','FormData','HTMLInputElement','MouseEvent'];
 const previous=Object.fromEntries(names.map(n=>[n,globalThis[n]]));for(const n of names)globalThis[n]=window[n];
-test.after(async()=>{await window.happyDOM.close();for(const n of names)globalThis[n]=previous[n];});
 const {Engine,Provider,dodo}=await import('../../apps/web/src/shared/stack.mjs');
 const {compilePortalModules}=await import('../../packages/portal/index.mjs');
 const {default:StateProvider}=await import('../../apps/web/src/providers/browser-state.mjs');
@@ -23,18 +23,20 @@ const ops=await import('../../apps/web/src/bl/admin-console.mjs');
 const {accessView}=await import('../../apps/web/src/ui/admin-access.mjs');
 const {consoleView}=await import('../../apps/web/src/ui/admin-console.mjs');
 const {startEntryPage}=await import('../../apps/web/src/bl/authorize-entry-page.mjs');
+// Register lifecycle hooks after imports, so a slow import cannot trigger early global restoration.
+test.after(async()=>{await window.happyDOM.close();for(const n of names)globalThis[n]=previous[n];});
 
 function seeded(seed){let a=seed>>>0;const next=()=>{a=a+0x6D2B79F5>>>0;let t=a;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return ((t^t>>>14)>>>0)/4294967296;};return {next,pick:list=>list[Math.floor(next()*list.length)],int:n=>Math.floor(next()*n)};}
 const turn=()=>new Promise(resolve=>setImmediate(resolve));
 /** Waits for a condition across event-loop turns (bounded; never a fixed sleep). */
-async function until(check,turns=500){for(let n=0;n<turns;n++){if(check())return;await turn();}throw new Error('Condition not reached');}
+const until=(check,what='the expected chaos request')=>waitFor(check,what);
 const json=(value,status=200,headers={})=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json',...headers}});
 const A='550e8400-e29b-41d4-a716-446655440001',B='550e8400-e29b-41d4-a716-446655440002',handles={[A]:'n.alpha',[B]:'n.bravo'};
 const allView={id:'all',name:'All messages',builtin:true,revision:1,filter:{version:1},sort:'activity-desc'};
 
 /** A scripted service. Every fetch is parked until the seeded scheduler answers it (in any order). */
 function service(random,{faults=true}={}){
- const signedIn=new Set([A,B]),parked=[],calls=[];let active=A,created=0,saved=0;
+ const signedIn=new Set([A,B]),parked=[],calls=[];let active=A,created=0,saved=0,closed=false;
  const owner=headers=>headers['X-Bindle-Account']??active;
  const reply=({path,method,headers,body})=>{const who=owner(headers),url=new URL(path,'https://space.example');
   if(url.pathname==='/api/session')return signedIn.has(active)?json({authenticated:true,account:{id:active,handle:handles[active]},csrfToken:'csrf-'+active,sessionContext:'ctx-'+active}):json({authenticated:false});
@@ -46,7 +48,7 @@ function service(random,{faults=true}={}){
   if(url.pathname==='/api/views'&&method==='POST'){created++;return json({view:{id:'v'+created,name:body.name,revision:1}});}
   if(url.pathname==='/api/incoming')return json({items:[{id:'item-'+who,type:'message',mimeType:'text/plain',receivedAt:1,subject:handles[who]+'-private-item',organizationRevision:1}],cursor:null});
   return json({error:'not_found',message:'Not found.'},404);};
- const fetch=(path,options={})=>{const request={path,method:options.method??'GET',headers:options.headers??{},body:options.body?JSON.parse(options.body):undefined};calls.push(request);
+ const fetch=(path,options={})=>{if(closed)return Promise.reject(new Error('Chaos fixture closed.'));const request={path,method:options.method??'GET',headers:options.headers??{},body:options.body?JSON.parse(options.body):undefined};calls.push(request);
   return new Promise((resolve,reject)=>{const entry={request,resolve,reject,settled:false};parked.push(entry);options.signal?.addEventListener('abort',()=>{if(entry.settled)return;entry.settled=true;parked.splice(parked.indexOf(entry),1);reject(options.signal.reason);},{once:true});});};
  /** Answer one parked request, chosen by the seed, with the real reply or a seeded fault. */
  const answer=()=>{const entry=parked.splice(random.int(parked.length),1)[0];entry.settled=true;const roll=faults?random.next():1;
@@ -55,7 +57,7 @@ function service(random,{faults=true}={}){
   if(roll<0.15)return entry.resolve(json({error:'rate_limited',message:'Please wait before trying again.'},429,{'Retry-After':'30'}));
   if(roll<0.18)return entry.resolve(new Response('{"account":{"id":"',{status:200,headers:{'content-type':'application/json'}}));
   if(entry.request.method==='POST'&&entry.request.path==='/api/views')saved++;entry.resolve(reply(entry.request));};
- return {fetch,parked,calls,answer,signedIn,get active(){return active;},get saved(){return saved;},expire(id){signedIn.delete(id);}};
+ return {fetch,parked,calls,answer,signedIn,close(){closed=true;for(const entry of parked.splice(0)){entry.settled=true;entry.reject(new Error('Chaos fixture closed.'));}},get active(){return active;},get saved(){return saved;},expire(id){signedIn.delete(id);}};
 }
 function consoleFixture(seed,options,apiOptions={}){
  const random=seeded(seed),server=service(random,options),secrets={accountPickerIssuedAt:Date.now()};let ids=0;
@@ -65,11 +67,24 @@ function consoleFixture(seed,options,apiOptions={}){
  const registry=compilePortalModules([{id:'chaos',contributions:{}}]);
  const engine=new Engine({providers:{portalContributions:Provider.fromSingleton(registry),state:StateProvider,api:Provider.fromSingleton(api),browser:Provider.fromSingleton(browser),recoveryFile:Provider.fromSingleton({})}});
  const root=document.createElement('main'),app=createApp();let latest;const subscription=engine.query(new release.BrowserState()).subscribe({next:state=>{latest=state;}});
- const pending=new Set(),act=action=>{const run=engine.dispatch(action).next('complete').catch(()=>{});pending.add(run);run.finally(()=>pending.delete(run));return run;};
+ const pending=new Set(),failures=[],act=action=>{
+  const completion=engine.dispatch(action).next('complete');
+  pending.add(completion);completion.then(()=>pending.delete(completion),()=>pending.delete(completion));
+  const run=within(completion,`${action.constructor.name} dispatch`);
+  run.catch(error=>failures.push(error));return run;
+ };
  const render=()=>{dodo.reconcile(root,[app(latest)]);return root;};
  /** Answer requests in seeded order until no Action is running and nothing is parked. */
- const drain=async()=>{for(let guard=0;guard<500;guard++){await turn();if(server.parked.length){server.answer();continue;}if(!pending.size)return;await Promise.race([...pending,turn()]);}throw new Error('Chaos run did not settle');};
- return {engine,api,server,random,secrets,act,drain,render,state:()=>latest,async close(){subscription.unsubscribe();await engine.dispose();globalThis.fetch=fetchBefore;}};
+ const drain=async()=>{await until(()=>{
+  if(failures.length)throw new AggregateError(failures,'Chaos dispatch failed');
+  if(server.parked.length){server.answer();return false;}return !pending.size;
+ },'chaos actions and scripted requests to settle');};
+ return {engine,api,server,random,secrets,act,drain,render,state:()=>latest,async close(){
+  // Requests and queued dispatches must finish while their DOM realm and fetch are installed.
+  server.close();
+  try{await within(Promise.allSettled([...pending]),'chaos dispatches during teardown');await engine.dispose();subscription.unsubscribe();}
+  finally{globalThis.fetch=fetchBefore;}
+ }};
 }
 const STUCK=root=>[...root.querySelectorAll('button')].filter(button=>button.textContent.trim()==='Please wait…').length+root.querySelectorAll('.boot-screen,[aria-busy=true]').length;
 
@@ -166,14 +181,18 @@ test('duplicate device-poll events and a duplicate session check apply one autho
 }finally{await f.close();}
 });
 
-test('recovery unlock: a lost reply keeps the decrypted file for an explicit retry and never navigates on failure',async()=>{
+test('recovery unlock: a lost reply keeps the decrypted file for an explicit retry and never navigates on failure',{timeout:10000},async()=>{
  const f=consoleFixture(11,{faults:false});try{
   const browser=await f.engine.container.use(['browser'],({browser})=>browser),navigations=[];Object.assign(browser,{recoveryChallenge:()=>'local-browser-test-token',clearRecoveryChallenge(){},navigate:url=>navigations.push(url)});
-  const recoveryFile=await f.engine.container.use(['recoveryFile'],({recoveryFile})=>recoveryFile);recoveryFile.decrypt=async()=>({version:1,recoveryToken:'opaque-recovery-token'});
+  const recoveryFile=await f.engine.container.use(['recoveryFile'],({recoveryFile})=>recoveryFile);// This is a UI scheduling test; real Argon2 is covered by the recovery crypto suites.
+  recoveryFile.decrypt=async()=>({version:1,recoveryToken:'opaque-recovery-token'});
   await f.engine.container.use({state:{write:true}},({state})=>state.transition(s=>Object.assign(s,{loading:false,route:{kind:'recovery-restore'},unlockQuestions:[{id:'q',prompt:'Passphrase'}],config:{origin:'https://space.example'}})));
   f.secrets.restoreFile='encrypted-file-text';
   const first=f.act(new release.RecoverAccount({values:{'unlock:q':'answer'}}));const second=f.act(new release.RecoverAccount({values:{'unlock:q':'answer'}}));
-  const recovers=()=>f.server.calls.filter(call=>call.path==='/api/auth/recover');await until(()=>recovers().length>=1);for(let i=0;i<5;i++)await turn();assert.equal(recovers().length,1,'double submit sends one recovery');
+  const recovers=()=>f.server.calls.filter(call=>call.path==='/api/auth/recover');await until(()=>recovers().length>=1,'the first recovery request');
+  // The second dispatch uses a timer. Event-loop turns do not prove it ran:
+  // keep the first request parked until the duplicate has completed while busy.
+  await second;assert.equal(recovers().length,1,'double submit sends one recovery');
   const entry=f.server.parked.find(item=>item.request.path==='/api/auth/recover');f.server.parked.splice(f.server.parked.indexOf(entry),1);entry.settled=true;entry.reject(new TypeError('Failed to fetch'));await Promise.all([first,second]);
   assert.equal(f.secrets.restoreFile,'encrypted-file-text','file kept for an explicit retry');assert.deepEqual(navigations,[]);assert.match(f.state().error,/request went through/);assert.equal(f.state().busy,false);
   const retry=f.act(new release.RecoverAccount({values:{'unlock:q':'answer'}}));await until(()=>recovers().length>=2);const again=f.server.parked.find(item=>item.request.path==='/api/auth/recover');f.server.parked.splice(f.server.parked.indexOf(again),1);again.settled=true;again.resolve(json({pendingToken:'pending',credentialRequired:true}));await retry;
@@ -204,7 +223,7 @@ test('admin step-up: double confirm sends one credential; a reset or 5xx keeps t
   const root=document.createElement('main');dodo.reconcile(root,[consoleView(f.read())]);assert.equal(STUCK(root),0);
   stepFault=429;await f.act(new ops.StepUpConfirm({method:'passkey'}));assert.equal(f.read().modal?.kind,'step-up');assert.equal(f.read().modal.error.code,'rate_limited');assert.equal(f.events.length,0);
   stepFault=null;await f.act(new ops.StepUpConfirm({method:'passkey'}));assert.equal(f.read().modal,null);assert.deepEqual(f.events,[{kind:'reload-overview'}],'exactly one retry after success');
- }finally{f.close();}
+ }finally{await f.close();}
 });
 
 test('admin: a transient 503 during step-up wipes privileged data and leaves a visible way back',async()=>{
@@ -218,7 +237,7 @@ test('admin: a transient 503 during step-up wipes privileged data and leaves a v
   // Reported limitation: a transient 503 closes the console honestly ("not available right now"); the way back is a link to the space, not an in-place retry.
   const controls=[...root.querySelectorAll('button:not([disabled]),a[href]')].map(node=>node.textContent.trim());
   assert.ok(controls.some(text=>/Try again|Retry|Reload|Check again|Back to your space/.test(text)),`a way back is offered in phase ${state.phase}: ${JSON.stringify(controls)}`);
- }finally{f.close();}
+ }finally{await f.close();}
 });
 
 // ---- Authorization entry page under faults --------------------------------------------------------------

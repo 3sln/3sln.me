@@ -1,11 +1,11 @@
-// Engine-level contact delivery: boundaries, races and contention asserted as
-// invariants on observable state. Seeded: rerun a failure with CHAOS_SEED=<seed>.
+// Service-level contact delivery (not yet engine-migrated: direct ContactDeliveryService
+// calls, see docs/architecture/app-engine.md slice 4): boundaries, races and contention
+// asserted as invariants on observable state. Seeded: rerun a failure with CHAOS_SEED=<seed>.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { key } from '../packages/messaging/store.mjs';
 import { DELIVERY_LIMITS } from '../packages/messaging/contact-delivery.mjs';
-import { createScheduler, forEachSeed } from './helpers/chaos.mjs';
-import { domainEngine, tally } from './helpers/engine.mjs';
+import { createScheduler, forEachSeed, concurrently, tally } from './helpers/chaos.mjs';
 import { messagingFixture as fixture, OWNER, GRANT, SENDER, KID, SENDER_JWK, DAY, START, pair } from './helpers/messaging-fixture.mjs';
 
 const BASE = Number(process.env.CHAOS_SEED ?? 1);
@@ -60,21 +60,18 @@ test('concurrent deliveries contend for one parent quota: exactly the limit is a
   t.diagnostic(`CHAOS_SEED base ${BASE}`);
   await forEachSeed(5, async random => {
     const scheduler = createScheduler(random), f = await fixture({ maxMessages: 7, wrap: store => scheduler.wrap(store, 'store') });
-    const e = domainEngine({ service: f.service });
     const inputs = await Promise.all(Array.from({ length: 20 }, (_, i) => f.authored({ text: `m${i}` })));
-    try {
-      const results = await scheduler.run(inputs.map(input => () => e.run(({ service }) => service.deliver(GRANT, input))));
-      assert.deepEqual(tally(results, value => value.replayed ? 'replayed' : 'accepted'), { accepted: 7, quota_exceeded: 13 });
-      assert.equal((await f.conserved()).list.length, 7);
-    } finally { await e.dispose(); }
+    const results = await scheduler.run(inputs.map(input => () => f.service.deliver(GRANT, input)));
+    assert.deepEqual(tally(results, value => value.replayed ? 'replayed' : 'accepted'), { accepted: 7, quota_exceeded: 13 });
+    assert.equal((await f.conserved()).list.length, 7);
   }, { base: BASE });
 });
 
 test('duplicate operation IDs: concurrent copies and re-signed retries admit once; changed claims conflict', async () => {
-  const f = await fixture(), e = domainEngine({ service: f.service });
-  try {
+  const f = await fixture();
+  {
     const { envelope, body } = await f.authored({ text: 'once' });
-    const results = await e.all(Array.from({ length: 12 }, () => ({ service }) => service.deliver(GRANT, { envelope, body })));
+    const results = await concurrently(Array.from({ length: 12 }, () => () => f.service.deliver(GRANT, { envelope, body })));
     assert.deepEqual(tally(results, value => value.replayed ? 'replayed' : 'accepted'), { accepted: 1, replayed: 11 });
     const receipts = new Set(results.map(r => JSON.stringify(r.value.receipt))); assert.equal(receipts.size, 1);
     // ECDSA signatures are randomized: re-signing the same claims is the same operation.
@@ -83,7 +80,7 @@ test('duplicate operation IDs: concurrent copies and re-signed retries admit onc
     assert.equal((await f.service.deliver(GRANT, resigned)).replayed, true);
     for (const over of [{ text: 'changed' }, { subject: 'Other' }, { optionalTags: ['bug'] }]) await assert.rejects(f.deliver({ operationId: envelope.payload.operationId, createdAt: envelope.payload.createdAt, ...over }), { code: 'operation_conflict' });
     assert.equal((await f.conserved()).list.length, 1);
-  } finally { await e.dispose(); }
+  }
 });
 
 test('intake revisions racing deliveries: every message carries exactly the tags of the revision it records', async t => {
@@ -152,15 +149,14 @@ test('conditional per-author daily quota: resets exactly at UTC midnight and a b
 
 test('bounded scaling: 120 concurrent deliveries keep state linear in admitted messages and refuse past the account cap', async () => {
   const f = await fixture({ maxMessages: 1000, maxBytes: 1 << 20, maxStoredMessages: 100 });
-  const e = domainEngine({ service: f.service });
-  try {
+  {
     const inputs = await Promise.all(Array.from({ length: 120 }, (_, i) => f.authored({ text: `message ${i}` })));
-    const results = await e.all(inputs.map(input => ({ service }) => service.deliver(GRANT, input)));
+    const results = await concurrently(inputs.map(input => () => f.service.deliver(GRANT, input)));
     assert.deepEqual(tally(results, () => 'accepted'), { accepted: 100, account_quota_exceeded: 20 });
     const s = await f.conserved();
     // Rows per admitted message: message, receipt, notification event; plus fixed per-account rows.
     const rows = await f.raw.transaction(async tx => (await tx.list('')).length);
     assert.equal(rows, 3 * 100 + 5, 'collection, grant, usage, rules and rule defaults are the only other rows');
     assert.equal(s.list.length, 100);
-  } finally { await e.dispose(); }
+  }
 });

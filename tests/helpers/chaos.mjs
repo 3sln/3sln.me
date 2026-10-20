@@ -30,28 +30,13 @@
 //                                            'timeout'   reject with { code: 'timeout' } without running
 //                                    Rules are matched in order; the first match wins.
 //   fakeClock(start)              -> { now(), advance(ms), set(ms) }; pass `clock.now` as a `clock`.
+//   concurrently(fns)             -> starts each `fn` on its own macrotask (as independent requests
+//                                    would arrive) and resolves with Promise.allSettled-style results.
+//   tally(results, ok)            -> counts settled outcomes by value or fault code: {accepted: 3, quota_exceeded: 2}.
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-export function createRandom(seed = 1) {
-  let state = seed >>> 0;
-  const next = () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  const int = n => Math.floor(next() * n);
-  return {
-    seed,
-    next,
-    int,
-    pick: list => list[int(list.length)],
-    shuffle: list => { const copy = [...list]; for (let i = copy.length - 1; i > 0; i--) { const j = int(i + 1); [copy[i], copy[j]] = [copy[j], copy[i]]; } return copy; },
-    chance: p => next() < p,
-  };
-}
-
+export {createRandom,fakeClock} from '../../packages/app/memory-providers.mjs';
+import {createRandom} from '../../packages/app/memory-providers.mjs';
 export async function forEachSeed(count, fn, { base = Number(process.env.CHAOS_SEED ?? 1) } = {}) {
   for (let seed = base; seed < base + count; seed++) {
     try { await fn(createRandom(seed)); }
@@ -157,7 +142,8 @@ export function injectFaults(object, rules, { random } = {}) {
   });
 }
 
-export function fakeClock(start = Date.UTC(2026, 9, 14, 12)) {
-  let current = start;
-  return { now: () => current, advance: ms => { current += ms; return current; }, set: ms => { current = ms; return current; } };
-}
+export const concurrently = fns => Promise.all(fns.map(fn => new Promise(resolve => setTimeout(resolve)).then(fn).then(value => ({ status: 'fulfilled', value }), reason => ({ status: 'rejected', reason }))));
+export const tally = (results, ok = () => 'fulfilled') => results.reduce((counts, r) => {
+  const name = r.status === 'fulfilled' ? ok(r.value) : r.reason?.code ?? String(r.reason);
+  counts[name] = (counts[name] ?? 0) + 1; return counts;
+}, {});

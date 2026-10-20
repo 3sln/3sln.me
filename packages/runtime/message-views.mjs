@@ -36,7 +36,8 @@ const receiptsPath=owner=>'message-view-operations/v1/'+owner,RECEIPTS=64;
 // Views saved before the tag registry may hold unregistered `sys:` strings; they match escaped legacy tags.
 function storedFilter(filter){try{return normalizeIncomingFilter(filter);}catch(e){if(!Array.isArray(filter?.tagsAll))throw e;return normalizeIncomingFilter({...filter,tagsAll:[...new Set(filter.tagsAll.map(t=>validTagList([t])?t:escapeLegacyTag(t)))]});}}
 export class MessageViews{
- constructor(metadata){this.metadata=metadata;}
+ // `uuid` is the injected randomness (the app engine's `random` provider); seeded in engine tests.
+ constructor(metadata,{uuid=()=>crypto.randomUUID()}={}){this.metadata=metadata;this.uuid=uuid;}
  async list(owner){const stored=await this.metadata.get(path(owner));return structuredClone(stored??defaultMessageViews());}
  async mutate(owner,operation,id,input){
   const data=operation==='delete'?null:definition(input,operation==='update');
@@ -47,7 +48,7 @@ export class MessageViews{
    if(operation==='create'){
     const operationId=input.operationId,fingerprint=canonical(data),receipts=operationId?await tx.get(receiptsPath(owner))??[]:null,prior=receipts?.find(r=>r.operationId===operationId);
     if(prior){if(prior.fingerprint!==fingerprint)throw new StorageError('view_operation_conflict','This request ID was already used for a different View.',409);return structuredClone(prior.view);}
-    if(rows.length>=64)throw new StorageError('view_limit','You can keep up to 64 Views.',409);const view={version:1,id:crypto.randomUUID(),revision:1,...data};rows.push(view);await tx.put(path(owner),rows);
+    if(rows.length>=64)throw new StorageError('view_limit','You can keep up to 64 Views.',409);const view={version:1,id:this.uuid(),revision:1,...data};rows.push(view);await tx.put(path(owner),rows);
     if(receipts)await tx.put(receiptsPath(owner),[...receipts,{operationId,fingerprint,view}].slice(-RECEIPTS));
     return view;
    }

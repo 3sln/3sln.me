@@ -1,4 +1,5 @@
-// Engine-level link parsing, audience validity and replay-record invariants.
+// Service-level link parsing, audience validity and replay-record invariants (not yet
+// engine-migrated: direct parser and LinkReplayRecord calls, see docs/architecture/app-engine.md slice 4).
 // Seeded: rerun a failure with CHAOS_SEED=<seed>.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,8 +10,7 @@ import { fromBase64url, strictText } from '../packages/messaging/store.mjs';
 import { LinkReplayRecord } from '../packages/messaging/link-replay.mjs';
 import { prepareLinkResponse, signLinkResponse, verifyLinkResponse } from '../packages/identity/link-response.mjs';
 import { SqliteMetadata } from '../apps/node/resources.mjs';
-import { createRandom, forEachSeed, injectFaults, fakeClock } from './helpers/chaos.mjs';
-import { domainEngine, tally } from './helpers/engine.mjs';
+import { createRandom, forEachSeed, injectFaults, fakeClock, concurrently, tally } from './helpers/chaos.mjs';
 
 const BASE = Number(process.env.CHAOS_SEED ?? 1);
 const B64 = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'];
@@ -156,26 +156,25 @@ const hash = i => String(i).padStart(43, 'A'), user = i => `55555555-5555-4555-8
 test('replay record under a storm: exact principal and parent caps, single use, bounded rows, expiry reopens in purge batches', async () => {
   const clock = fakeClock(1800000000000), metadata = new SqliteMetadata(':memory:');
   const replay = new LinkReplayRecord({ metadata, clock: clock.now, principalCap: 3, parentCap: 420, evaluationRate: 1, purgeBatch: 64 });
-  const e = domainEngine({ replay });
-  const consume = (i, sub, ttl = 420000) => ({ replay }) => replay.consume({ parent: 'parent', iss: ORIGIN, sub, key: hash(i), expiresAt: clock.now() + ttl });
+  const consume = (i, sub, ttl = 420000) => () => replay.consume({ parent: 'parent', iss: ORIGIN, sub, key: hash(i), expiresAt: clock.now() + ttl });
   try {
     // 50 concurrent copies of one response: exactly one is admitted.
-    assert.deepEqual(tally(await e.all(Array.from({ length: 50 }, () => consume(0, user(0)))), () => 'consumed'), { consumed: 1, audience_stale: 49 });
+    assert.deepEqual(tally(await concurrently(Array.from({ length: 50 }, () => consume(0, user(0)))), () => 'consumed'), { consumed: 1, audience_stale: 49 });
     // 4 concurrent distinct responses from one principal: the live-row cap is exact.
-    assert.deepEqual(tally(await e.all([1, 2, 3, 4].map(i => consume(i, user(0)))), () => 'consumed'), { consumed: 2, audience_unavailable: 2 });
+    assert.deepEqual(tally(await concurrently([1, 2, 3, 4].map(i => consume(i, user(0)))), () => 'consumed'), { consumed: 2, audience_unavailable: 2 });
     // 500 distinct principals: exactly the parent cap is admitted, never evicting a live row.
-    const storm = tally(await e.all(Array.from({ length: 500 }, (_, i) => consume(1000 + i, user(1000 + i)))), () => 'consumed');
+    const storm = tally(await concurrently(Array.from({ length: 500 }, (_, i) => consume(1000 + i, user(1000 + i)))), () => 'consumed');
     assert.deepEqual(storm, { consumed: 420 - 3, audience_unavailable: 500 - 417 });
     const rows = async () => (await metadata.list({ prefix: 'link-replay/' })).size;
     assert.equal(await rows(), 3 * 420 + 1, 'three rows per live response plus one counter');
-    await assert.rejects(e.run(consume(0, user(0))), { code: 'audience_stale' });
+    await assert.rejects(consume(0, user(0))(), { code: 'audience_stale' });
     // One millisecond early nothing has expired; at expiry each admission purges at most one batch.
-    clock.advance(420000 - 1); await assert.rejects(e.run(consume(9999, user(9999))), { code: 'audience_unavailable' });
-    clock.advance(1); assert.equal((await e.run(consume(9999, user(9999)))).consumed, true);
+    clock.advance(420000 - 1); await assert.rejects(consume(9999, user(9999))(), { code: 'audience_unavailable' });
+    clock.advance(1); assert.equal((await consume(9999, user(9999))()).consumed, true);
     assert.equal(await rows(), 3 * (420 - 64 + 1) + 1);
     assert.equal(await replay.purge('parent', 1000), 420 - 64);
     assert.equal(await rows(), 3 * 1 + 1);
-  } finally { await e.dispose(); metadata.close(); }
+  } finally { metadata.close(); }
 });
 
 test('replay record chaos: a commit whose acknowledgement is lost never admits the response twice', async t => {

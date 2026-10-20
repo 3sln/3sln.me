@@ -1629,3 +1629,90 @@ Reported: View creation lacks an idempotency key, so a retry after a lost reply 
 - **Gate.** `embed-elements` and `provider-matrix` added to the browser gate.
 
 Tests: core 1283/1283, Worker 51/51, UI-state 200/200, DOM smoke, build and dry run pass. Browser gate: 175 of 179 passed, 4 WebKit cases skipped (WebKit unavailable here). Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-15 — Engine-first application architecture (user direction)
+
+Coordinator review found that the server app is mostly not an ngin Engine. Only identity, with a few Actions/Queries, and portal use ngin. Messaging, contact links/delivery, tags, conversations, storage, billing, search, lifecycle, federation and admin are plain service classes called directly from `packages/runtime/http.mjs`. The earlier description of services as ngin actions/queries (D020) was only partly true. The recent `tests/helpers/engine.mjs` wrapped plain service calls in a generic Action, so those tests were service-level tests; the helper is being removed and the suites relabeled.
+
+User direction: the entire app logic, front end and back end, must be drivable through an ngin Engine regardless of environment, so agents and tests can explore and verify behavior against the engine before building or changing UI.
+- Server domain operations become Actions/Queries composed into one application Engine.
+- Storage, clocks, network, mail, push, billing and platform adapters (R2, Durable Objects, SQLite) become providers.
+- Worker/Node HTTP layers become thin dispatch adapters.
+- Client `bl/*` Actions get engine-level tests against fake providers, without rendering.
+
+Plan: architecture design and pilot domain first, then a domain-by-domain migration behind existing tests. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-15 — Engine-first pilot
+
+Added the application engine:
+- `createAppEngine` in `packages/app`, which refuses providers outside the catalogue, requires clock, random and audit, and installs a read-only audit interceptor;
+- the provider catalogue (platform stores, effects, domain stores);
+- operation conventions: `{actor,id,input}`, one change event per mutation, at most one transaction per single writer, no nested dispatch, declared operation policy;
+- owner-scoped providers that refuse a mismatched actor or bound store at lease time.
+
+The engine runs inside each account's single writer (Durable Object or Node controller) through the shared `AccountController`. Views, incoming and tags now run end to end as 12 engine operations through one account `dispatch` RPC; the controller methods remain as facades. `DELETE /api/rules/:id` is now a single transaction, and a seeded test shows the old two-transaction shape lost updates.
+
+Tooling:
+- harness `createTestEngine` in `tests/helpers/app-engine.mjs` (faults, scheduler, fake clock, seeded IDs);
+- engine CLI `npm run engine -- script.json` with `--db`, `--seed`, `--list`, `--repl`;
+- client engine harness, with `tests/browser/engine-accounts.mjs` dispatching the real multi-account Actions against fake providers.
+
+`tests/helpers/engine.mjs` was removed; delivery, billing and links suites are relabeled service-level until migrated. [Design](docs/architecture/app-engine.md), [review](docs/release/app-engine-review.md): 3 major findings fixed (method-name policy, test composition diverging from production, missing owner binding); `faultOf` adoption and a workerd rollback test deferred. Gates: core 1299, Worker 52, UI-state 205, DOM smoke, build, dry run and browser gate pass.
+
+Coordinator decisions (provisional):
+1. Owner-scoped providers are the authorization house style.
+2. One generic `dispatch` RPC per single writer.
+3. The request-tier engine is per isolate, with per-request actor/context passed explicitly as input.
+4. Accepted behavior changes: `PUT /api/rules` without `rules` returns 400; rules/labels operations warm the account first; deleting a rule no longer revalidates the others; incoming updates warm before validation.
+5. Audit: security-relevant operations are audited durably in the account's own store; other audit events go to logs.
+6. MCP and automation tools become dispatches with an app actor.
+7. The memory provider set moves into `packages/app`, so the CLI does not import test code.
+
+Known flakes under heavy load: `ui-chaos` "recovery unlock" and `islands-runtime`. Being investigated. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-20 — Scope reduction: messaging leaves core; manifest extensions; activity stays
+
+User direction:
+- **Messaging leaves core.** Peer-to-peer messaging is removed from the core Bindle spec and from 3sln.me. It becomes its own app with its own interop spec (name TBD, e.g. "Bindle Inbox"), built adjacently in this repo as monorepo packages for now and split out later.
+- **Manifest extensions.** The Bindle manifest gains an extension mechanism, probably an `extensions` array of objects pairing a role/slot manifest URL with metadata, so several apps can participate in one slot. The slot definition may decide selection policy, or the consumer may. This needs a robust, wargamed design covering edge cases.
+- **Email bridge.** The public-handle email auto-reply (valuable as marketing) reconciles with this. When the user has a messaging app whose extension accepts public messages, that app handles bridged email, via the messaging extension or an intent mechanism.
+- **Activity stays in core.** Notifications and app-originated alerts, as distinct from peer-to-peer communication, are presented in an activity UI with fine-grained push control. Each item is tagged with its app (an implicit filter facet), and apps can add their own tags.
+- **Classification as a slot.** The messaging app consumes the host's classification/decision model through a preferences slot when available, and omits AI auto-classification otherwise.
+
+NOTES.md adds near-term design work:
+- **Apps and integrations under one umbrella.** Built-in integrations (e.g. Google Drive) and third-party apps share setup/config UI driven by config fragments. Manifests declare a webhook for preference updates.
+- **Resource discovery and brokering.** Providers expose resources through a search/filter/browse endpoint by protocol or query. The Bindle provider brokers the introduction and owns the coupling credential, so it can sever access on demand. Consumers talk to resource providers directly via the returned RPC endpoint.
+- **Messaging robustness** (now the messaging app's concern): participant limits, per-recipient delivery status with resend, a DO-queued send path with SSE progress, an optional host-level multicast receiving endpoint, and a scaling/edge-case research spike.
+
+Later:
+- a zero-KYC subscription/invoice registry;
+- AI model resources and intelligence profiles via contracts.
+
+Engine-first migration of messaging domains pauses until extraction boundaries are designed. Phase 0 (per-domain route/controller split) was interrupted mid-way by a usage limit and is being completed.
+
+User direction (2026-10-20): generalize the QR device sign-in into a link plus correlation-code approval flow for other uses, e.g. console/CLI apps signing in. The approver opens the link in a signed-in browser (or signs in first) and confirms. The resulting session or token has the same or a shorter time limit than the approving session. Coordinator framing: align with the OAuth 2.0 Device Authorization Grant (RFC 8628) for app clients, while keeping provider session extension as the existing device sign-in. Phishing-resistant code display and consent copy are required, since device-code phishing is a known attack class. Design delegated (`docs/architecture/linked-approval.md`). Reviewer ___ Date ___ Outcome ___.
+Phase 0 completed (Codex; coordinator-verified): `packages/runtime/http.mjs` is now a 75-line router delegating to per-domain `packages/runtime/routes/*`; account controller methods are split into `packages/runtime/account/*`; the in-memory provider set moved to `packages/app/memory-providers.mjs`; the per-slice file ownership map is in app-engine §12. Behavior unchanged: core 1299/1299, Worker 52/52 with real sockets (the Codex sandbox could not bind localhost).
+
+## 2026-10-20 — Load-sensitive flakes fixed; messaging scaling spike; activity design
+
+**Flakes (Codex).** Root causes, none fixed by raising timeouts:
+- Islands tests used fixed sleeps that could precede message delivery, and failed assertions leaked ports and popup polling. Now observed-delivery waits, guaranteed cleanup and labeled fail-fast deadlines.
+- The UI chaos "recovery unlock" case could start its duplicate dispatch after the first completed, leaving an unanswered request. The test now holds the first request open.
+- Beaming tests registered late dynamic imports, so teardown restored `Event` before the final test. Imports now load before registration, with pending work drained.
+
+Each suite passed 10 consecutive runs under 12 busy-loop children plus 4 concurrent processes, and lost-message injection now fails in about 2 s. Scratch probe files deleted. Coordinator-verified: core 1299/1299, UI-state 205/205.
+
+**Messaging scaling spike (Codex).** [Spike](docs/release/messaging-scaling-spike.md): lessons from SMTP, XMPP, Matrix, ActivityPub, Signal/MLS and AT Protocol with primary sources, plus a P0/P1 checklist for the messaging app. P0 covers:
+- app/core boundary;
+- immutable event and audience identity;
+- atomic acceptance with durable fan-out and honest per-recipient states;
+- retry budgets and host breakers;
+- key continuity;
+- published bounds;
+- retention without resurrection;
+- metadata custody;
+- SMTP provenance without backscatter.
+
+**Activity (Codex).** [Core interop draft](docs/spec/activity.md), [host activity center](docs/architecture/activity-center.md) and [adversarial review](docs/release/activity-design-review.md). Signed app activity with required app attribution and namespaced app tags; lifecycle and limits; per-app opt-in push routing; multi-account safety; an exact migration list.
+
+Open questions: push/digest limits; whether updates mark read items unread; expiry/history caps. Reviewer ___ Date ___ Outcome ___.

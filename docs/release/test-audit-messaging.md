@@ -8,7 +8,8 @@ by a test agent. It is not a release sign-off.
 
 ## Levels
 
-- **Engine**: the test calls domain services directly (`ContactDeliveryService`,
+- **Engine** (renamed **service-level** on 2026-10-15; see the correction
+  below): the test calls domain services directly (`ContactDeliveryService`,
   `MessagingService`, `BillingService`, `SearchService`, `AccountLifecycle`,
   `AccountItemIndex`, `StorageQuota`, or `AccountController` as the account
   engine). Resources are injected in-memory fakes: `MemoryMessagingStore`,
@@ -104,11 +105,50 @@ move to public status APIs:
 
 All are seeded through `tests/helpers/chaos.mjs`. Rerun a failure with
 `CHAOS_SEED=<seed>`. Every seeded test logs its base seed as a diagnostic.
-Operations run as ngin Actions through `tests/helpers/engine.mjs`, which wraps
-injected resources as singleton Providers. `tests/helpers/messaging-fixture.mjs`
-holds the shared delivery fixture.
+`tests/helpers/messaging-fixture.mjs` holds the shared delivery fixture.
 
-- `engine-links.test.mjs`:
+Correction (2026-10-15, docs/architecture/app-engine.md). The former
+`tests/helpers/engine.mjs` wrapped plain service calls in a generic ngin Action.
+Suites that used it were service-level tests, not engine-level ones, so the
+helper has been deleted. Only suites that dispatch the production Actions and
+Queries through `tests/helpers/app-engine.mjs` are now called **engine-level**.
+Every other `engine-*` suite below is **service-level**: it calls the domain
+service directly with injected fakes. Each one moves to the harness when its
+migration slice lands.
+
+- Engine-level: `engine-views.test.mjs` (Views and incoming),
+  `engine-tag-rules.test.mjs` (tag rules and labels) and `engine-cli.test.mjs`.
+- Service-level: `engine-links`, `engine-delivery`, `engine-billing`,
+  `engine-tags`, `engine-storage-chaos`, `engine-search`, `engine-lifecycle` and
+  `engine-item-index`. These suites need no running engine. Concurrent cases use
+  `concurrently` from chaos.mjs, which starts each call on its own macrotask, as
+  the deleted helper did.
+
+- `engine-views.test.mjs` (engine-level; replaces the earlier MessageViews
+  service test):
+  - Retry after a lost reply.
+  - A commit whose acknowledgement is lost, injected as the `after` fault on
+    `accountStore.transaction`, is recovered by the same operation ID. The audit
+    trail records error, then ok.
+  - Concurrent duplicate operation IDs, fingerprint conflicts, and bounded
+    receipts at the View limit.
+  - Seeded View IDs.
+  - Refusal of non-owner actors during the lease, with no facts announced and no
+    dependency smuggling.
+  - One fact per mutation, and a live query refetches only for its owner.
+  - Incoming pages through saved Views on the co-transactional item index, and
+    two concurrent organizations of one conversation, where exactly one commits.
+  - A 503 from an index that is still upgrading.
+- `engine-tag-rules.test.mjs` (engine-level):
+  - Default seeding and server re-stamping.
+  - Delete and restore of default rules.
+  - Concurrent rule deletions under 12 seeded schedules. Both always persist,
+    while the former read-then-replace shape is shown to lose one.
+  - Tag labels: strict input, conflicts, seeded IDs and facts.
+- `engine-cli.test.mjs` (engine-level): scripted dispatch, expectations, exit
+  codes, `--db` persistence and `--list`.
+
+- `engine-links.test.mjs` (service-level):
   - A raw-query parser fuzz checked differentially against WHATWG
     `URLSearchParams`.
   - A strict-JSON fuzz for both parsers, checked differentially against
@@ -119,7 +159,7 @@ holds the shared delivery fixture.
   - A replay storm: 50 copies of one response, an exact principal cap, an exact
     parent cap with 500 principals, and purge batches at expiry.
   - Lost commit acknowledgements.
-- `engine-delivery.test.mjs`:
+- `engine-delivery.test.mjs` (service-level):
   - Inclusive operation-age edges.
   - Receipt retention outlives admissibility.
   - Exact grant, byte and account quotas.
@@ -129,14 +169,14 @@ holds the shared delivery fixture.
   - Intake or key changes between prepare and commit.
   - Per-author UTC-day quotas with a backward clock jump.
   - Bounded state for 120 deliveries.
-- `engine-tags.test.mjs`:
+- `engine-tags.test.mjs` (service-level):
   - Promotion idempotence.
   - Owner overrides and quarantine release.
   - Suppression before promotion.
   - No rule cascades.
   - Exact tag limits and automated overflow.
   - A seeded owner/automation interleaving model with bounded history.
-- `engine-billing.test.mjs`:
+- `engine-billing.test.mjs` (service-level):
   - A webhook replay storm through the account gate.
   - Body-hash conflicts.
   - An out-of-order, delayed and duplicated timeline that follows provider
@@ -144,24 +184,24 @@ holds the shared delivery fixture.
   - Monotonic paid protection.
   - Exact event-history capacity and expiry.
   - A provider outage mid-storm.
-- `engine-storage-chaos.test.mjs`:
+- `engine-storage-chaos.test.mjs` (service-level):
   - `AccountController` receive under blob put/delete faults, metadata row write
     faults and lost commit acknowledgements. It checks byte-exact content,
     conserved accounting and no untracked blobs.
   - Conversation inbox history under the same faults.
   - A lost blob after commit.
   - Exact storage quota, pending-upload cap and TTL boundaries.
-- `engine-search.test.mjs`:
+- `engine-search.test.mjs` (service-level):
   - Seeded create/update/delete/quarantine with partial drains and stale
     redeliveries, on both the memory and SQLite indexes. It checks for no leaks
     before drain and for index-level consistency after deletes.
   - Outbox coalescing and queue bounds.
-- `engine-lifecycle.test.mjs`:
+- `engine-lifecycle.test.mjs` (service-level):
   - Seeded clock jumps forward and backward never shortcut inactivity, warning
     or suspension periods, and a clock behind recorded time fails closed.
   - Sweeps overlapping reactivation under seeded interleavings, covering both
     outcomes.
-- `engine-item-index.test.mjs`:
+- `engine-item-index.test.mjs` (service-level):
   - The incoming catalog equals a model of its members after seeded
     upserts, moves and removals, with paging that has no gaps or repeats.
   - Stale and forged cursors are refused.

@@ -55,6 +55,16 @@ export class MessagingService {
     });
   }
   async rules(owner) { return this.store.transaction(tx => ownerRules(tx, owner)); }
+  /** Removes one rule in a single transaction and returns the remaining list. The former read-then-replace
+   * pair was atomic only behind the account gate; one transaction keeps it atomic without relying on that. */
+  async deleteRule(owner, id) {
+    if (typeof id !== 'string') fail('invalid_rules');
+    return this.store.transaction(async tx => {
+      const rules = await ownerRules(tx, owner), remaining = rules.filter(rule => rule.id !== id);
+      if (remaining.length !== rules.length) await tx.set(key('rules', owner), remaining);
+      return remaining;
+    });
+  }
   /** Restores a deleted or edited default rule to its current shipped definition (keeps the enabled choice). */
   async restoreDefaultRule(owner, id) {
     const fresh = seedDefaultRules([], null).rules.find(rule => rule.id === id); if (!fresh) fail('not_found');

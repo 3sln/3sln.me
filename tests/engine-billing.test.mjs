@@ -1,4 +1,5 @@
-// Engine-level billing webhooks: BillingService behind the account gate with a
+// Service-level billing webhooks (not yet engine-migrated: direct BillingService calls,
+// see docs/architecture/app-engine.md slice 7): BillingService behind the account gate with a
 // fake Polar client and fake clock. Order, duplicates and replay storms must
 // never change what the provider's current state entitles, and paid history is
 // monotonic. Seeded: rerun a failure with CHAOS_SEED=<seed>.
@@ -7,8 +8,7 @@ import assert from 'node:assert/strict';
 import { BillingService, BILLING_PLANS } from '../packages/billing/index.mjs';
 import { accountRemovalProtection } from '../packages/identity/lifecycle-protection.mjs';
 import { SerialGate } from '../apps/node/resources.mjs';
-import { forEachSeed, fakeClock } from './helpers/chaos.mjs';
-import { domainEngine, tally } from './helpers/engine.mjs';
+import { forEachSeed, fakeClock, concurrently, tally } from './helpers/chaos.mjs';
 
 const BASE = Number(process.env.CHAOS_SEED ?? 1), DAY = 86400000;
 const OWNER = 'aa111111-1111-4111-8111-111111111111';
@@ -28,7 +28,7 @@ function fixture() {
   const subscription = { id: 'subscription', customer_id: customer.id, customer: { ...customer }, product_id: config.POLAR_PRODUCT_ID_PLUS, amount: BILLING_PLANS.plus.annualAmount, currency: 'usd', recurring_interval: 'year', recurring_interval_count: 1, status: 'active', current_period_start: new Date(now - 1000).toISOString(), current_period_end: new Date(now + 365 * DAY).toISOString(), cancel_at_period_end: false, ended_at: null, ends_at: null };
   const client = { products: { get: async id => { calls.push('product'); return structuredClone(products[id]); } }, customers: { getStateExternal: async () => { calls.push('customer'); return structuredClone(customer); } }, subscriptions: { get: async () => { calls.push('subscription'); return structuredClone(subscription); } } };
   const gate = new SerialGate(), service = new BillingService({ config, metadata, client, now: clock.now });
-  // The account controller serializes every billing method with its gate; so does this engine resource.
+  // The account controller serializes every billing method with its gate; so does this fixture.
   const account = { webhook: event => gate.run(() => service.applyWebhook(event)), reconcile: () => gate.run(() => service.reconcile(OWNER)), entitlement: () => service.entitlement(OWNER) };
   return { clock, now, metadata, customer, subscription, client, calls, service, account, protection: () => accountRemovalProtection(metadata, OWNER, { config, now: clock.now() }) };
 }
@@ -38,20 +38,20 @@ const event = (id, at, body = id) => ({ id, owner: OWNER, type: 'subscription.up
 test('webhook replay storm: each event id is applied exactly once and duplicates never reach the provider', async () => {
   const f = fixture(); f.customer.active_subscriptions = [{ id: f.subscription.id }];
   await f.metadata.put('owner', OWNER);
-  const e = domainEngine({ account: f.account }), ids = Array.from({ length: 8 }, (_, i) => `evt_${i}`);
-  try {
-    const storm = ids.flatMap(id => Array.from({ length: 6 }, () => ({ account }) => account.webhook(event(id, f.now))));
-    const results = await e.all(storm);
+  const { account } = f, ids = Array.from({ length: 8 }, (_, i) => `evt_${i}`);
+  {
+    const storm = ids.flatMap(id => Array.from({ length: 6 }, () => () => account.webhook(event(id, f.now))));
+    const results = await concurrently(storm);
     assert.deepEqual(tally(results, value => value.duplicate ? 'duplicate' : 'applied'), { applied: 8, duplicate: 40 });
     for (const r of results) assert.equal(r.value.plan, 'plus');
     assert.equal(f.calls.filter(c => c === 'customer').length, 8, 'one provider reconciliation per distinct event');
     assert.equal((await f.metadata.list({ prefix: 'billing/event/' })).size, 8);
     // Same id with a different body: the first recorded body wins and every other is a conflict.
-    const conflicts = await e.all(Array.from({ length: 5 }, (_, i) => ({ account }) => account.webhook(event('evt_0', f.now, `tampered-${i}`))));
+    const conflicts = await concurrently(Array.from({ length: 5 }, (_, i) => () => account.webhook(event('evt_0', f.now, `tampered-${i}`))));
     assert.deepEqual(tally(conflicts), { webhook_id_conflict: 5 });
-    const fresh = await e.all([...Array.from({ length: 3 }, (_, i) => ({ account }) => account.webhook(event('evt_new', f.now, `body-${i}`)))]);
+    const fresh = await concurrently([...Array.from({ length: 3 }, (_, i) => () => account.webhook(event('evt_new', f.now, `body-${i}`)))]);
     assert.deepEqual(tally(fresh, value => value.duplicate ? 'duplicate' : 'applied'), { applied: 1, webhook_id_conflict: 2 });
-  } finally { await e.dispose(); }
+  }
 });
 
 test('out-of-order, delayed and duplicated webhooks across a subscription timeline follow provider state; paid history is monotonic', async t => {
