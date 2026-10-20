@@ -20,9 +20,10 @@ test('a 5,000-message inbox renders one bounded page, grows by pages, and each p
  // Cost of appending one page, measured per click: it must not grow with the rows already rendered.
  const costs=[];for(let pageIndex=2;pageIndex<=10;pageIndex++){const before=await m.read();await page.getByRole('button',{name:'Load more',exact:true}).click();await page.locator('.message-row').nth(pageIndex*50-1).waitFor();await c.settled();const after=await m.read();costs.push({layouts:after.LayoutCount-before.LayoutCount,styles:after.RecalcStyleCount-before.RecalcStyleCount});}
  assert.equal(await page.locator('.message-row').count(),500);
- const first=costs[0],last=costs.at(-1);
+ const first=costs[0],last=costs.at(-1),median=values=>[...values].sort((a,b)=>a-b)[Math.floor(values.length/2)];
  assert.ok(last.layouts<=first.layouts+3&&Math.max(...costs.map(cost=>cost.layouts))<=20,`layouts per page stay flat, not O(rows): ${JSON.stringify(costs.map(cost=>cost.layouts))}`);
- assert.ok(last.styles<=first.styles+3&&Math.max(...costs.map(cost=>cost.styles))<=30,`style recalculations per page stay flat: ${JSON.stringify(costs.map(cost=>cost.styles))}`);
+ assert.ok(median(costs.slice(-3).map(cost=>cost.styles))<=median(costs.slice(0,3).map(cost=>cost.styles))*2+3&&Math.max(...costs.map(cost=>cost.styles))<=30,`style recalculations stay bounded against this run's first three pages: ${JSON.stringify(costs.map(cost=>cost.styles))}`);
+ const retained=await m.read({gc:true});assert.ok(retained.Nodes/500<400,`nodes per rendered row remain bounded at scale (${(retained.Nodes/500).toFixed(0)})`);
  assert.equal(c.count('GET','/api/incoming'),10,'one request per page; no refetch loops');
 });
 

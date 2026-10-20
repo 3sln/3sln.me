@@ -3,11 +3,12 @@
 import {accountSessionRoutes,installAccountSession} from '../account-session-http.mjs';
 import {removedAccountCookies} from '../account-cookies.mjs';
 import {recoveryAuthorityPublic} from '../identity-backup.mjs';
-import {IdentityAction,OwnerQuery,DeviceRequestQuery} from '../../identity/index.mjs';
+import {IdentityAction,OwnerQuery} from '../../identity/index.mjs';
 import QRCode from 'qrcode';
 import {json,body,cookie,signupEnabled,accountHandle} from './shared.mjs';
 
 const authMethods={
+ '/api/auth/step-up/begin':'stepUpBegin','/api/auth/step-up':'stepUp',
  '/api/auth/onboarding/issue':'issueOnboarding','/api/auth/onboarding/inspect':'inspectOnboarding','/api/auth/onboarding/claim':'claimOnboarding',
  '/api/auth/system/bootstrap':'bootstrapSystem',
  '/api/auth/setup/billing/checkout':'setupBillingCheckout','/api/auth/setup/billing/status':'setupBillingStatus','/api/auth/setup/status':'setupStatus','/api/auth/setup/email/start':'setupEmailStart','/api/auth/setup/email/confirm':'setupEmailConfirm','/api/auth/setup/push/start':'setupPushStart','/api/auth/setup/push/confirm':'setupPushConfirm',
@@ -36,9 +37,8 @@ export const stages={
     if(accountPath)return await accountSessionRoutes({request,env,local,engine,context,body,json,legacyCleared:cookie('',local,0)});
     if(['/api/auth/signup','/api/auth/recover','/api/auth/login/password','/api/auth/login/passkey/finish'].includes(path))context.setupBinding=crypto.randomUUID()+crypto.randomUUID();
     if(path==='/api/auth/device/start')context.deviceBinding=crypto.randomUUID()+crypto.randomUUID();
-    if(path==='/api/auth/device/inspect')return json(await engine.query(new DeviceRequestQuery(await body(request),context)).peek());
     if(path==='/api/auth/device/qr'){
-      const input=await body(request);let qr;try{qr=new URL(input.verificationUriComplete);}catch{return json({error:'invalid_request'},400);}if(qr.origin!==env.APP_ORIGIN||qr.pathname!=='/device'||qr.search||!qr.hash.startsWith('#request='))return json({error:'invalid_request'},400);return json({svg:await QRCode.toString(qr.href,{type:'svg',width:320,margin:2})});
+      const input=await body(request);let qr;try{qr=new URL(input.verificationUriComplete);}catch{return json({error:'invalid_request'},400);}if(qr.origin!==env.APP_ORIGIN||qr.pathname!=='/device'||qr.search||!/^#request=[a-f0-9-]{36}$/.test(qr.hash)||qr.username||qr.password)return json({error:'invalid_request'},400);return json({svg:await QRCode.toString(qr.href,{type:'svg',width:320,margin:2})});
     }
     if(authMethods[path]){
       if(request.method!=='POST')return json({error:'method_not_allowed'},405);

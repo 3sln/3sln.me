@@ -1,33 +1,40 @@
 // Headless flow tests. Entry-based flows run against testing.mjs only: the
 // provider-owned authorization entry (D1/S4) is not implemented on any server yet.
-import {test} from 'node:test';
+import {test as nodeTest,afterEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {createSession,flowTimings} from '../src/flows.mjs';
 import {createMockProvider,memoryStorage} from '../src/testing.mjs';
 import {handleCallback,callbackChannelName,parseRelayMessage} from '../src/callback.mjs';
 import {BindleClient} from '../src/identity.mjs';
 
+const test=(name,fn)=>nodeTest(name,{timeout:5000},fn),cleanups=[];
+afterEach(()=>{for(const cleanup of cleanups.splice(0))cleanup();});
+const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return {promise,resolve};};
 const clientId='https://app.example/client',redirectUri='https://app.example/callback';
 function fakeWindow(){const assigned=[];return {assigned,navigator:{language:'en'},location:{href:'https://app.example/',assign:url=>assigned.push(url)},matchMedia:()=>({matches:false})};}
 // Capabilities are discovered first (as <bindle-session> does on connect), so the
 // first click can choose a declared popup synchronously.
 async function setup({provider=createMockProvider({issuer:'https://3sln.example'}),decide,blocked,storage=memoryStorage(),load=true,...options}={}){
-  const win=fakeWindow(),driver=provider.installPopupDriver(win,{decide,blocked});
-  const session=createSession({clientId,redirectUri,fetcher:provider.fetch,storage,history:{replaceState(){}},window:win,defaultHost:'3sln.example',...options});
+  const begun=[],done=[],revocations=new Map(),slot=(list,index)=>list[index]??=deferred();
+  const drive=provider.drivePopup;let count=0;provider.drivePopup=async(...args)=>{const index=count++;try{const result=await drive(...args);slot(done,index).resolve();return result;}catch(error){slot(done,index).resolve();throw error;}};
+  const win=fakeWindow(),driver=provider.installPopupDriver(win,{decide:(entry,popup)=>{slot(begun,count-1).resolve(entry);return decide?.(entry,popup)??{decision:'approve'};},blocked});
+  const fetcher=async(...args)=>{const response=await provider.fetch(...args);if(provider.revoked.size)for(const [token,signal]of revocations)if(provider.revoked.has(token))signal.resolve();return response;};
+  const session=createSession({clientId,redirectUri,fetcher,storage,history:{replaceState(){}},window:win,defaultHost:'3sln.example',...options});
+  cleanups.push(()=>{session.dispose();driver.uninstall();provider.drivePopup=drive;});
   if(load)await session.loadCapabilities();
   const events=[];for(const type of ['change','flow-start','flow-end'])session.addEventListener(type,event=>events.push([type,event.detail]));
-  return {provider,win,driver,session,events,storage};
+  return {provider,win,driver,session,events,storage,started:(index=0)=>slot(begun,index).promise,finished:(index=0)=>slot(done,index).promise,revoked:token=>{if(provider.revoked.has(token))return Promise.resolve();if(!revocations.has(token))revocations.set(token,deferred());return revocations.get(token).promise;}};
 }
 const entryBodies=provider=>[...provider.entries.values()].filter(entry=>!entry.legacy);
 
 test('popup sign-in completes over the same-origin relay and exposes only the approved identity',async()=>{
-  const {provider,session,driver,events}=await setup();
+  const {provider,session,driver,events,finished}=await setup();
   assert.equal(session.state,'signed-out');assert.equal(session.session,null);
   const result=await session.signIn({identity:'alex'});
   assert.deepEqual(result,{outcome:'completed'});
   assert.equal(session.state,'signed-in');assert.equal(session.session.subject,provider.accounts[0].subject);assert.equal(session.session.issuer,'https://3sln.example');
   assert.equal(session.session.profile,undefined);assert.equal(session.client.session.auth_time,undefined);
-  await new Promise(resolve=>setTimeout(resolve,10));const [popup]=driver.opened;assert.equal(popup.url.startsWith('https://3sln.example/oauth/authorize?entry='),true);assert.equal(popup.features,'popup');assert.equal(popup.opener,null);assert.equal(popup.result.mode,'relay');assert.equal(popup.result.acknowledged,true);
+  await finished();const [popup]=driver.opened;assert.equal(popup.url.startsWith('https://3sln.example/oauth/authorize?entry='),true);assert.equal(popup.features,'popup');assert.equal(popup.opener,null);assert.equal(popup.result.mode,'relay');assert.equal(popup.result.acknowledged,true);
   const [entry]=entryBodies(provider);assert.equal(entry.intent,'login');assert.equal(entry.loginHint,'alex@3sln.example');assert.equal(entry.presentation,'popup');assert.equal(entry.subjectConstraint,undefined);assert.equal(entry.challengeMethod,'S256');
   assert.ok(provider.log.every(call=>call.credentials==='omit'));
   assert.deepEqual(events.map(([type])=>type),['flow-start','change','flow-end']);
@@ -67,13 +74,13 @@ test('prompt fallback reports popup-blocked and Continue in this tab starts a fr
 
 test('switching keeps the old session until a new approval completes, then optionally revokes it',async()=>{
   const provider=createMockProvider({issuer:'https://3sln.example',accounts:[{handle:'alex'},{handle:'sam'}]});
-  let choice={decision:'approve'};const {session}=await setup({provider,decide:()=>choice});
+  let choice={decision:'approve'};const {session,revoked}=await setup({provider,decide:()=>choice});
   await session.signIn({identity:'alex'});const first=session.session,firstTokens=session.client.session;
   choice={decision:'deny'};assert.deepEqual(await session.switchAccount(),{outcome:'canceled'});assert.equal(session.session,first);
   choice={decision:'approve',account:provider.accounts[1]};assert.deepEqual(await session.switchAccount({revokePrevious:true}),{outcome:'completed'});
   assert.equal(session.session.subject,provider.accounts[1].subject);
   const entry=[...provider.entries.values()].at(-1);assert.equal(entry.intent,'select-account');assert.equal(entry.subjectConstraint,undefined);
-  await new Promise(resolve=>setTimeout(resolve,5));assert.ok(provider.revoked.has(firstTokens.refresh_token));
+  await revoked(firstTokens.refresh_token);assert.ok(provider.revoked.has(firstTokens.refresh_token));
 });
 
 test('reauthentication requires the same subject and a fresh auth_time, and failures keep the current session',async()=>{
@@ -100,9 +107,9 @@ test('provider end-session always clears app tokens; app sign-out never contacts
 });
 
 test('starting a login does not cancel RPCs or clear the current session (EE-08)',async()=>{
-  const {session,provider}=await setup({decide:()=>new Promise(()=>{})});
+  const {session,provider,started}=await setup({decide:()=>new Promise(()=>{})});
   session.client.session=Object.freeze({issuer:'https://3sln.example',subject:provider.accounts[0].subject,granted_fragments:[],access_token:'a',expiresAt:Date.now()+300000,rpcEndpoint:'https://3sln.example/rpc'});
-  const generation=session.client.generation;session.signIn({identity:'alex'});await new Promise(resolve=>setTimeout(resolve,10));
+  const generation=session.client.generation;session.signIn({identity:'alex'});await started();
   assert.equal(session.client.generation,generation);assert.ok(session.client.session);
   session.cancelFlow();assert.ok(session.client.session);session.dispose();
 });
@@ -117,25 +124,26 @@ test('two controllers on one page keep separate pending transactions',async()=>{
   a.cancelLogin(first.state);assert.ok(!a.hasPending(first.state));assert.ok(a.hasPending(third.state));
 });
 
-test('relay messages are exact-shape, state-bound and single-use',async()=>{
+test('relay messages are exact-shape, state-bound and single-use',async t=>{
   assert.equal(parseRelayMessage({v:1,type:'bindle-callback',state:'s',code:'c',extra:1}),null);
   assert.equal(parseRelayMessage({v:1,type:'bindle-callback',state:'s',code:'c',error:'access_denied'}),null);
   assert.equal(parseRelayMessage(Object.assign(Object.create(null),{v:1,type:'bindle-callback',state:'s',code:'c'})),null);
-  let release;const {session,provider}=await setup({decide:()=>new Promise(resolve=>release=resolve)});
-  const pending=session.signIn({identity:'alex'});await new Promise(resolve=>setTimeout(resolve,10));
-  const entry=[...provider.entries.values()][0],channel=new BroadcastChannel(await callbackChannelName(entry.state));
+  let release;const {session,provider,started}=await setup({decide:()=>new Promise(resolve=>release=resolve)});
+  const pending=session.signIn({identity:'alex'});await started();
+  const entry=[...provider.entries.values()][0],name=await callbackChannelName(entry.state),channel=new BroadcastChannel(name),barrier=new BroadcastChannel(name);t.after(()=>{channel.close();barrier.close();});
+  const delivered=new Promise(resolve=>barrier.addEventListener('message',event=>{if(event.data?.barrier)resolve();}));
   channel.postMessage({v:1,type:'bindle-callback',state:'wrong',code:'c'.repeat(43),iss:'https://3sln.example'});
   channel.postMessage({v:1,type:'bindle-callback',state:entry.state,code:'c'.repeat(43),iss:'https://3sln.example',extra:true});
-  await new Promise(resolve=>setTimeout(resolve,10));assert.equal(session.flow.phase,'waiting');
+  channel.postMessage({barrier:true});await delivered;assert.equal(session.flow.phase,'waiting');
   release({decision:'approve'});assert.deepEqual(await pending,{outcome:'completed'});
-  channel.postMessage({v:1,type:'bindle-callback',state:entry.state,code:'d'.repeat(43),iss:'https://3sln.example'});await new Promise(resolve=>setTimeout(resolve,10));
+  channel.postMessage({v:1,type:'bindle-callback',state:entry.state,code:'d'.repeat(43),iss:'https://3sln.example'});
   channel.close();assert.equal(session.session.subject,provider.accounts[0].subject);
 });
 
 test('waiting state offers recovery after the linger delay and expires as dismissed',async()=>{
   const timers=[];const fake={setTimeout:(fn,ms)=>{timers.push({fn,ms});return timers.length;},clearTimeout:()=>{}};
-  const {session}=await setup({decide:()=>new Promise(()=>{}),timers:fake});
-  const pending=session.signIn({identity:'alex'});await new Promise(resolve=>setTimeout(resolve,10));
+  const {session,started}=await setup({decide:()=>new Promise(()=>{}),timers:fake});
+  const pending=session.signIn({identity:'alex'});await started();
   assert.equal(session.flow.lingering,false);timers.find(timer=>timer.ms===flowTimings.lingerAfter).fn();assert.equal(session.flow.lingering,true);
   session.showWindow();timers.find(timer=>timer.ms===flowTimings.entryLifetime).fn();assert.deepEqual(await pending,{outcome:'dismissed'});assert.equal(session.client.readPending(),null);
 });
@@ -185,14 +193,14 @@ test('callback page: incomplete links are ignored, expired redirect returns are 
 test('end-session clears app tokens even when the provider answers with an error or the window is dismissed',async()=>{
   const provider=createMockProvider({issuer:'https://3sln.example'});
   // Dismissed end-session flow: tokens cleared.
-  const {session:second}=await setup({provider,decide:(entry)=>entry.intent==='end-session'?new Promise(()=>{}):{decision:'approve'}});
-  await second.signIn({identity:'alex'});const pending=second.endProviderSession();await new Promise(resolve=>setTimeout(resolve,10));second.cancelFlow();
+  const {session:second,started}=await setup({provider,decide:(entry)=>entry.intent==='end-session'?new Promise(()=>{}):{decision:'approve'}});
+  await second.signIn({identity:'alex'});const pending=second.endProviderSession();await started(1);second.cancelFlow();
   assert.deepEqual(await pending,{outcome:'dismissed'});assert.equal(second.session,null);assert.equal(second.client.readPending(),null);
 });
 
 test('callback page: a popup holding a copied record for another state still relays (stale opener records)',async()=>{
-  const {session,provider}=await setup({decide:()=>new Promise(()=>{})});
-  const pending=session.signIn({identity:'alex'});await new Promise(resolve=>setTimeout(resolve,10));
+  const {session,provider,started}=await setup({decide:()=>new Promise(()=>{})});
+  const pending=session.signIn({identity:'alex'});await started();
   const entry=[...provider.entries.values()][0],copied=memoryStorage();
   copied.setItem('bindle.pending-login:'+JSON.stringify(['https://app.example/callback','stale-state']),JSON.stringify({state:'stale-state',redirectUri:'https://app.example/callback',expiresAt:Date.now()+60000}));
   const callback=provider.authorize(entry.entryId);

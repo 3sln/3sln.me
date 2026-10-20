@@ -10,7 +10,7 @@ export class ClaimHandle extends OwnerFlow {
     if(typeof handle!=='string'||!/^[a-z0-9][a-z0-9_-]{2,31}$/.test(handle))throw Error('Use 3–32 lowercase letters, digits, underscores or hyphens, starting with a letter or digit.');
     await r.api.request('/api/auth/handles/claim',{handle});
     const data=await r.api.get('/api/account');
-    publish(r,ctx,{data,session:{account:data.account},notice:'Your permanent custom handle is ready. Your identity and recovery file stay the same.',error:''});
+    publish(r,ctx,{data,session:{...snapshot(r).session,account:data.account},notice:'Your permanent custom handle is ready. Your identity and recovery file stay the same.',error:''});
   }
 }
 

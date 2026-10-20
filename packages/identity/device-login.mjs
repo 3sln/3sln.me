@@ -4,7 +4,7 @@ const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 const requestID = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value);
 const codeParts = value => typeof value === 'string' && /^[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}$/.test(value) ? value.split('.') : null;
 const code = value => typeof value === 'string' ? value.toUpperCase().replaceAll('-', '').replaceAll(' ', '') : '';
-const publicRequest = request => ({ requestId: request.id, userCode: request.userCode, label: request.label, status: request.status, expiresAt: request.expiresAt });
+const publicRequest = request => ({ requestId: request.id, label: request.label, status: request.status, expiresAt: request.expiresAt });
 
 export class DeviceLogin {
   constructor(identity, Fault) { this.identity = identity; this.Fault = Fault; }
@@ -24,14 +24,14 @@ export class DeviceLogin {
     for (let attempt = 0; attempt < 3; attempt++) {
       const id = identity.crypto.id(); const deviceCode = `${id}.${identity.crypto.random()}`;
       const userCode = [...identity.crypto.crypto.getRandomValues(new Uint8Array(8))].map(byte => alphabet[byte & 31]).join('');
-      const request = { id, userCode, label: input.label.trim(), revision: 0, status: 'pending',
+      const request = { id, userCodeHash: await identity.crypto.hash('device-user-code', userCode), label: input.label.trim(), revision: 0, status: 'pending',
         createdAt: identity.clock(), expiresAt: identity.clock() + 300000, interval: 5,
         nextPollAt: identity.clock() + 5000, deviceHash: await identity.crypto.hash('device-code', deviceCode),
         bindingHash: context.deviceBinding ? await identity.crypto.hash('device-binding', context.deviceBinding) : null };
       if (!await repository.create(request)) continue;
       const verificationUri = `${identity.config.origin}/device`;
       return { requestId: id, deviceCode, userCode, verificationUri,
-        verificationUriComplete: `${verificationUri}#request=${id}&code=${userCode}`, expiresAt: request.expiresAt, expiresIn: 300, interval: 5 };
+        verificationUriComplete: `${verificationUri}#request=${id}`, expiresAt: request.expiresAt, expiresIn: 300, interval: 5 };
     }
     this.fail('conflict', 'Start device sign-in again.');
   }
@@ -40,21 +40,21 @@ export class DeviceLogin {
     if (!await identity.rateLimiter.check({ operation: 'device-code', remoteIP: context.remoteIP })) this.fail('rate_limited');
     const userCode = code(input.userCode);
     if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/.test(userCode)) this.fail('invalid_device_request', 'Check the code shown on your device.');
-    let request;
+    const userCodeHash=await identity.crypto.hash('device-user-code',userCode);let request;
     if (input.requestId !== undefined) {
       if (!requestID(input.requestId)) this.fail('invalid_device_request');
       request = await this.repository.get(input.requestId);
-    } else request = await this.repository.findByUserCode(userCode);
-    if (!request || !secureEqual(request.userCode, userCode) || request.expiresAt <= identity.clock() || ['consumed', 'cancelled'].includes(request.status)) this.fail('invalid_device_request', 'This code is invalid or expired. Start again on your device.');
+    } else request = await this.repository.findByUserCode(userCodeHash);
+    if (!request || !secureEqual(request.userCodeHash, userCodeHash) || request.expiresAt <= identity.clock() || ['consumed', 'cancelled'].includes(request.status)) this.fail('invalid_device_request', 'This code is invalid or expired. Start again on your device.');
     return request;
   }
-  async inspect(input, context) { return publicRequest(await this.lookup(input, context)); }
+  async inspect(input, context) { await this.identity.authorized(context,true);return publicRequest(await this.lookup(input, context)); }
   async approve(input, context) {
     const identity = this.identity; const { account, session } = await identity.recent(context);
     if (input.approved !== true || input.accountHandle !== account.handle) this.fail('confirmation_required', 'Confirm the account and code shown on the device you are signing in.');
     const request = await this.lookup(input, context); const revision = request.revision;
     if (request.status !== 'pending') this.fail('conflict', 'This device request has already been decided.');
-    request.status = 'approved'; request.owner = account.id; request.approvalSessionHash = session.hash; request.approvedAt = identity.clock();
+    request.status = 'approved'; request.owner = account.id; request.approvalSessionHash = session.hash; request.approvedAt = identity.clock();request.sessionExpiresAt=session.expiresAt;
     if (!await this.save(request, revision)) this.fail('conflict');
     return { approved: true, requestId: request.id };
   }
@@ -99,7 +99,7 @@ export class DeviceLogin {
       const account = await identity.repository.get(request.owner);
       if (!account) return; // A stale CAS cannot recreate a deleted account.
       const revision = account.revision;
-      account.sessions = account.sessions.filter(session => !secureEqual(session.hash, request.issuedSessionHash));
+      await identity.pruneSessions(account,session=>secureEqual(session.hash,request.issuedSessionHash));
       // Even if absent, advance the account revision to fence the poll's sole
       // prepared save. Reload/retry is allowed for cleanup, never for issuance.
       identity.audit(account, 'device-login-cancelled');
@@ -126,8 +126,9 @@ export class DeviceLogin {
     // that revision even when this session has not reached account storage yet.
     const account = await identity.repository.get(request.owner);
     if (!account || account.status !== 'active' || !account.sessions.some(session => secureEqual(session.hash, request.approvalSessionHash) && session.expiresAt > identity.clock())) return { status: 'access_denied' };
+    const parent=account.sessions.find(session=>secureEqual(session.hash,request.approvalSessionHash));
     const accountRevision = account.revision;
-    const result = await identity.session(account, { label: request.label, source: 'device-approval' });
+    const result = await identity.session(account, { label: request.label, source: 'device-approval',parentSessionId:await identity.sessionID(parent),expiresAt:Math.min(parent.expiresAt,request.sessionExpiresAt??parent.expiresAt) });
     const issued = account.sessions.at(-1); issued.deviceRequestId = request.id;
     request.issuedSessionHash = issued.hash; request.issuedSessionId = issued.id;
     request.status = 'consumed'; request.consumedAt = identity.clock();

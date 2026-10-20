@@ -1,3 +1,4 @@
+import {ConfirmOwner,CancelOwnerConfirmation} from './bl/step-up.mjs';
 import * as accountActions from './bl/accounts.mjs';
 import MessageActionsProvider from './providers/message-actions.mjs';
 import * as messageActions from './bl/message-actions.mjs';
@@ -42,6 +43,7 @@ const readModel=await engine.container.use(['state'],({state})=>state.snapshot);
 const messageFrameResource=await engine.container.use(['messageActions'],({messageActions})=>messageActions);
 const prepareBeamDestination=await engine.container.use(['beaming'],({beaming})=>beaming.prepareDestination);
 const constructors={
+ 'confirm-owner':ConfirmOwner,'cancel-owner-confirmation':CancelOwnerConfirmation,
  'open-accounts':accountActions.OpenAccounts,'close-accounts':accountActions.CloseAccounts,'add-account':accountActions.AddAccount,'switch-account':accountActions.SwitchAccount,'logout-account':accountActions.LogoutAccounts,'logout-all-accounts':accountActions.LogoutAccounts,'retry-account-cleanup':accountActions.RetryAccountCleanup,
  'message-submission-unknown':messageActions.MessageSubmissionUnknown,'review-message-action':messageActions.ReviewMessageAction,'submit-message-action':messageActions.SubmitMessageAction,'load-message-revision':messageActions.LoadMessageRevision,
  'load-developer-contact':incomingActions.LoadDeveloperContact,'contact-auth':contactLinkActions.ContactAuth,'contact-handoff':contactLinkActions.ContactHandoff,'discover-provider':contactLinkActions.DiscoverProvider,'continue-with-provider':contactLinkActions.ContinueWithProvider,'choose-handoff':contactLinkActions.ChooseHandoff,'proceed-handoff':contactLinkActions.ProceedHandoff,'cancel-handoff':contactLinkActions.CancelHandoff,'write-another':contactLinkActions.WriteAnother,'reload-contact':contactLinkActions.ReloadContact,'reload-contact-page':contactLinkActions.ReloadContactPage,'continue-as-audience':contactLinkActions.ContinueAsAudience,'send-authored-message':contactLinkActions.SendAuthoredMessage,'open-intake':contactLinksActions.OpenIntake,'save-intake':contactLinksActions.SaveIntake,'rotate-challenge':contactLinksActions.RotateChallenge,'restore-default-rule':contactLinksActions.RestoreDefaultRule,'save-tag-label':contactLinksActions.SaveTagLabel,'create-contact':contactLinksActions.CreateContactLink,'open-developer-contact':incomingActions.OpenDeveloperContact,'copy-developer-contact':incomingActions.CopyDeveloperContact,
@@ -79,7 +81,7 @@ const constructors={
   'add-passkey':actions.AddPasskey,'remove-passkey':actions.RemovePasskey,
   'revoke-device':actions.RevokeDevice,'revoke-other-devices':actions.RevokeOtherDevices,
   'start-device':actions.StartDeviceLogin,'device-proof-ready':actions.PrepareDeviceQR,'cancel-device':actions.CancelDeviceLogin,
-  'inspect-device':actions.InspectDeviceLogin,'approve-device':actions.ApproveDeviceLogin,
+  'approve-device':actions.ApproveDeviceLogin,
   'deny-device':actions.DenyDeviceLogin,'set-language':actions.SetLanguage,'set-message-animations':actions.SetMessageAnimations,
   'save-shortcut':actions.SetShortcut,'reset-shortcut':actions.ResetShortcuts,
   'reset-shortcuts':actions.ResetShortcuts,

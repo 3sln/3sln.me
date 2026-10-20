@@ -39,7 +39,7 @@ const sameClaim = (a, b) => Boolean(a && b && a.owner === b.owner && a.token ===
 const sameLink = (a,b) => a.kind === b.kind && a.value === b.value && sameClaim(a,b);
 const linksFor = (kind, value) => kind === 'account'
   ? [{kind:'handle', value:value.handle}, ...(value.verifiedEmail ? [{kind:'email', value:value.verifiedEmail}] : [])]
-  : [{kind:'device-code', value:value.userCode}];
+  : [{kind:'device-code', value:value.userCodeHash}];
 
 // These short transactions are the only cross-request atomic sections. They
 // never perform RPC, so no distributed lock or global coordinator is required.
@@ -56,7 +56,7 @@ export class IdentityShardStorage {
       if (state.result?.token === token) return state.result.committed ? 'committed' : false;
       if (state.pending || (revision === null ? state.value !== null : state.value?.revision !== revision)) return false;
       if (value.id !== id || value.revision !== (revision === null ? 0 : revision + 1)) return false;
-      if (state.value && (kind === 'account' ? value.handle !== state.value.handle || value.assignmentId !== state.value.assignmentId || !sameSystemIdentity(value.systemIdentity,state.value.systemIdentity)||!sameOnboardingIdentity(value.onboardingIdentity,state.value.onboardingIdentity) : value.userCode !== state.value.userCode || value.expiresAt !== state.value.expiresAt)) return false;
+      if (state.value && (kind === 'account' ? value.handle !== state.value.handle || value.assignmentId !== state.value.assignmentId || !sameSystemIdentity(value.systemIdentity,state.value.systemIdentity)||!sameOnboardingIdentity(value.onboardingIdentity,state.value.onboardingIdentity) : value.userCodeHash !== state.value.userCodeHash || value.expiresAt !== state.value.expiresAt)) return false;
       const links = linksFor(kind,value).map(link => state.links.find(old => old.kind === link.kind && old.value === link.value) || {...link,owner:id,token});
       // The overwhelmingly common session/auth CAS never touches a lookup shard.
       if (state.value && links.length === state.links.length && links.every(link => state.links.includes(link))) {
@@ -325,7 +325,7 @@ export class ShardedIdentityRepository {
   async setSystemCanonical(handle,digest,binding,canonical){return (await this.bucket('namespace',handle)).shardSystemStep(handle,digest,binding,'canonical',canonical);}
   async finishSystemIdentity(handle,digest,binding){const claim=await (await this.bucket('namespace',handle)).shardHandleLookup(handle),account=claim&&await this.get(claim.owner);if(!account||account.assignmentId!==claim.assignmentId||account.handle!==claim.bootstrap?.canonical||!sameSystemIdentity(account.systemIdentity,claim.bootstrap?.marker))return null;return (await this.bucket('namespace',handle)).shardSystemStep(handle,digest,binding,'consumed');}
   findByEmail(email){return this.find('email',email,'account','verifiedEmail');}
-  findDeviceByCode(code){return this.find('device-code',code,'device','userCode');}
+  findDeviceByCode(code){return this.find('device-code',code,'device','userCodeHash');}
   async write(kind,id,revision,value){
     await this.read(kind,id);
     const bucket=await this.bucket(kind,id),token=crypto.randomUUID();

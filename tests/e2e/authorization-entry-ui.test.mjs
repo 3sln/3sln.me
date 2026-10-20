@@ -12,7 +12,9 @@ const password='Authorization entry UI password 2026!',sleep=ms=>new Promise(r=>
 let browser;
 test.before(async()=>{const config=await(await fetch(`${baseURL}/api/config`)).json();assert.equal(config.localDevelopment,true,'local Worker required');browser=await launch();});
 test.after(async()=>{await browser?.close();});
-const ip=()=>`198.51.100.${10+Math.floor(Math.random()*200)}`;
+// Each request family gets its own documentation-range pseudonym, so no two signups in this suite ever share the
+// per-IP signup cooldown (random picks collided by chance). The suite makes well under 245 calls.
+let host=10;const ip=()=>`198.51.100.${host++}`;
 async function signup(context){const headers={Origin:baseURL,'Content-Type':'application/json','CF-Connecting-IP':ip()};const pending=await(await context.request.post(baseURL+'/api/auth/signup',{headers,data:{method:'password',password,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}})).json();assert.ok(pending.pendingToken,JSON.stringify(pending));const file=await(await context.request.post(baseURL+'/api/auth/recovery/download',{headers,data:{pendingToken:pending.pendingToken}})).json();const done=await context.request.post(baseURL+'/api/auth/recovery/confirm',{headers,data:{pendingToken:pending.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true}});assert.equal(done.status(),200);return (await done.json()).account;}
 const login=async(context,handle)=>{const response=await context.request.post(baseURL+'/api/auth/login/password',{headers:{Origin:baseURL,'Content-Type':'application/json','CF-Connecting-IP':ip()},data:{handle,password,turnstileToken:'local-browser-test-token'}});assert.equal(response.status(),200,await response.text());};
 // The fixture app: PKCE entry creation from its own origin (real CORS), an explicit popup button, and a callback

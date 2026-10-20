@@ -73,16 +73,18 @@ export class IdentityService {
   }
   async newPending(account,context) {
     if((this.config.requireReachability===true||account.systemIdentity||account.onboardingIdentity)&&context){if(!context.setupBinding)fail('unauthorized');account.setupBindingHash=await this.crypto.hash('setup-binding',context.setupBinding);}
-    delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupPushVerified;
+    delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupPushVerified;delete account.pendingCredentialAt;
     const value = `${account.id}.${this.crypto.random()}`;
     account.pendingHash = await this.crypto.hash('pending', value); account.pendingExpiresAt = this.clock() + this.config.pendingTtlMs;
     return value;
   }
-  async session(account, { label, credentialId, source = 'credential' } = {}) {
+  async session(account, { label, credentialId, source = 'credential', activationCredentialAt, parentSessionId, expiresAt: cap = Infinity } = {}) {
     const sessionToken = `${account.id}.${this.crypto.random()}`; const csrfToken = this.crypto.random();
-    const expiresAt = this.clock() + this.config.sessionTtlMs;
-    account.sessions = [...account.sessions.filter(s => s.expiresAt > this.clock()).slice(-9), {
-      id: this.crypto.id(), label: safeLabel(label), credentialId, source,
+    const expiresAt = Math.min(this.clock() + this.config.sessionTtlMs, cap);
+    await this.pruneSessions(account, s => s.expiresAt <= this.clock());
+    while(account.sessions.length>=10){const target=account.sessions.find(s=>s.id!==parentSessionId&&!account.sessions.some(child=>child.parentSessionId===s.id))??account.sessions.find(s=>s.id!==parentSessionId);if(!target)fail('conflict');await this.pruneSessions(account,s=>s===target);}
+    account.sessions = [...account.sessions, {
+      id: this.crypto.id(), label: safeLabel(label), credentialId, source, parentSessionId, ...source==='activation'&&Number.isSafeInteger(activationCredentialAt)?{activationCredentialAt}:{},
       hash: await this.crypto.hash('session', sessionToken), csrfToken, expiresAt, createdAt: this.clock(), lastUsedAt: this.clock() }];
     account.lastActiveAt = this.clock(); this.audit(account, 'session-created');
     return { account: await this.projectAccount(account), sessionToken, csrfToken, expiresAt, sessionContext:account.sessions.at(-1).id };
@@ -98,9 +100,15 @@ export class IdentityService {
     if (mutation && !secureEqual(session.csrfToken, context.csrfToken)) fail('csrf', 'Reload the account page and try again.');
     return { account, session };
   }
+  authAt(session){return Math.max(session.source==='activation'&&Number.isSafeInteger(session.activationCredentialAt)&&session.activationCredentialAt<=this.clock()?session.activationCredentialAt:-Infinity,session.source==='credential'&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=this.clock()?session.createdAt:-Infinity,Number.isSafeInteger(session.stepUpAt)&&session.stepUpAt<=this.clock()?session.stepUpAt:-Infinity);}
+  async pruneSessions(account,remove){
+    const removed=new Set();for(const session of account.sessions)if(remove(session))removed.add(await this.sessionID(session));
+    let changed=true;while(changed){changed=false;for(const session of account.sessions)if(session.parentSessionId&&removed.has(session.parentSessionId)){const id=await this.sessionID(session);if(!removed.has(id)){removed.add(id);changed=true;}}}
+    account.sessions=(await Promise.all(account.sessions.map(async session=>({session,id:await this.sessionID(session)})))).filter(item=>!removed.has(item.id)).map(item=>item.session);
+  }
   async recent(context) {
     const result = await this.authorized(context, true);
-    if (result.session.createdAt + 900000 <= this.clock()) fail('reauthentication_required', 'Sign in again before changing account access.');
+    if (this.authAt(result.session) + 900000 <= this.clock()) fail('reauthentication_required', 'Confirm your password or passkey before changing account access.');
     return result;
   }
   async sessionID(session) { return session.id || this.crypto.hash('session-public-id', session.hash); }
@@ -138,7 +146,7 @@ export class IdentityService {
       termsAcceptedAt: this.clock(), credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null, emailLoginEnabled: false,
       passwordHash: selectedPassword ? await this.passwordHasher.hash(selectedPassword) : null };
     if(this.config.requireReachability===true){if(!context.setupBinding)fail('unauthorized','Start setup in the account browser.');account.setupBindingHash=await this.crypto.hash('setup-binding',context.setupBinding);}
-    const pendingToken = await this.newPending(account,context);
+    const pendingToken = await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);
     let registrationOptions;
     if (input.method === 'passkey') {
       registrationOptions = await this.webauthn.registrationOptions({ account, config: this.config });
@@ -158,7 +166,7 @@ export class IdentityService {
     if(previous){if(previous.assignmentId!==item.assignmentId||!sameOnboardingIdentity(previous.onboardingIdentity,marker))fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');await this.onboarding.finish(item,digest,binding);fail('onboarding_invitation_consumed','Setup already started for this name. Sign in with its credential, or ask the host operator for help.');}
     let canonical=prepared.reservation.canonical;if(!canonical){const allocated=await this.repository.allocateFreeHandle(undefined,item.owner,item.assignmentId),reservation=await this.onboarding.canonical(item,digest,binding,allocated);if(!reservation?.canonical)fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');canonical=reservation.canonical;}
     const account={id:item.owner,assignmentId:item.assignmentId,nameAssignmentId:item.assignmentId,revision:0,handle:canonical,status:'pending',onboardingIdentity:marker,badgeIds:[...item.badgeIds],admission:{version:1,kind:'operator',plan:'free'},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:selectedPassword?await this.passwordHasher.hash(selectedPassword):null};
-    const pendingToken=await this.newPending(account,context);let registrationOptions;if(input.method==='passkey'){registrationOptions=await this.webauthn.registrationOptions({account,config:this.config});account.challenges.push({purpose:'register',value:registrationOptions.challenge,expiresAt:this.clock()+this.config.challengeTtlMs});}
+    const pendingToken=await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);let registrationOptions;if(input.method==='passkey'){registrationOptions=await this.webauthn.registrationOptions({account,config:this.config});account.challenges.push({purpose:'register',value:registrationOptions.challenge,expiresAt:this.clock()+this.config.challengeTtlMs});}
     if(claims.expiresAt<=this.clock())fail('invalid_onboarding_invitation','This onboarding invitation expired before account creation.');this.audit(account,'operator-onboarding-pending');if(!await this.repository.create(account))fail('onboarding_conflict','Setup already started for this name. Sign in with its credential or ask the operator to reconcile it.');if(!await this.onboarding.finish(item,digest,binding))fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');return {pendingToken,account:await this.projectAccount(account),registrationOptions,readyForRecovery:input.method==='password',signupPlan:'free',paymentRequired:false};
   }
   async bootstrapSystem(input,context){
@@ -172,7 +180,7 @@ export class IdentityService {
     if(previous){if(previous.assignmentId!==claims.assignmentId||!sameSystemIdentity(previous.systemIdentity,marker))fail('system_bootstrap_conflict','System setup needs operator reconciliation.');await this.systemBootstrap.finish(claims,digest,binding);fail('system_invitation_consumed','This invitation was already used. Sign in with the configured credential, or ask the operator to repair incomplete setup.');}
     let canonical=prepared.reservation.canonical;if(!canonical){const allocated=await this.repository.allocateFreeHandle(undefined,claims.owner,claims.assignmentId),reservation=await this.systemBootstrap.canonical(claims,digest,binding,allocated);if(!reservation?.canonical)fail('system_bootstrap_conflict','System setup needs operator reconciliation.');canonical=reservation.canonical;}
     const account={id:claims.owner,assignmentId:claims.assignmentId,nameAssignmentId:claims.assignmentId,revision:0,handle:canonical,status:'pending',systemIdentity:marker,badgeIds:configuredBadgeIDs(this.config).includes('system')?['system']:[],admission:{version:1,kind:'system',plan:'free',initialSystemActivationRequired:true},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:selectedPassword?await this.passwordHasher.hash(selectedPassword):null};
-    const pendingToken=await this.newPending(account,context);let registrationOptions;if(input.method==='passkey'){registrationOptions=await this.webauthn.registrationOptions({account,config:this.config});account.challenges.push({purpose:'register',value:registrationOptions.challenge,expiresAt:this.clock()+this.config.challengeTtlMs});}
+    const pendingToken=await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);let registrationOptions;if(input.method==='passkey'){registrationOptions=await this.webauthn.registrationOptions({account,config:this.config});account.challenges.push({purpose:'register',value:registrationOptions.challenge,expiresAt:this.clock()+this.config.challengeTtlMs});}
     if(claims.expiresAt<=this.clock())fail('invalid_system_invitation','This system invitation expired before account creation.');
     this.audit(account,'system-bootstrap-pending');if(!await this.repository.create(account))fail('system_bootstrap_conflict','System setup was already started. Sign in with the configured credential or ask the operator to reconcile it.');
     if(!await this.systemBootstrap.finish(claims,digest,binding))fail('system_bootstrap_conflict','System setup needs operator reconciliation.');
@@ -191,12 +199,13 @@ export class IdentityService {
     let credential;
     try { credential = await this.webauthn.verifyRegistration({ response: input.response, challenge: challenge.value, config: this.config }); } catch { fail('invalid_passkey', 'Passkey verification failed.'); }
     if (!credential?.id || !credential.publicKey || account.credentials.length >= 5 || account.credentials.some(c => c.id === credential.id)) fail('invalid_passkey');
-    account.credentials.push({ ...credential, label: safeLabel(input.label, 'Passkey'), createdAt: this.clock() }); account.challenges = []; this.audit(account, 'passkey-registered');
+    account.pendingCredentialAt=this.clock();account.credentials.push({ ...credential, label: safeLabel(input.label, 'Passkey'), createdAt: this.clock() }); account.challenges = []; this.audit(account, 'passkey-registered');
     await this.save(account, revision); return { readyForRecovery: true };
   }
+  async verifyPendingPassword(account,value){if(!await this.passwordHasher.verify(value,account.passwordHash))fail('unauthorized','Password verification failed.');account.pendingCredentialAt=this.clock();}
   async setPendingPassword(input, context) {
     this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
-    account.passwordHash = await this.passwordHasher.hash(password(input.password));
+    account.passwordHash = await this.passwordHasher.hash(password(input.password));await this.verifyPendingPassword(account,input.password);
     this.audit(account, 'password-configured'); await this.save(account, revision); return { readyForRecovery: true };
   }
   async downloadRecovery(input, context) {
@@ -253,12 +262,13 @@ export class IdentityService {
     await this.requireSetupChannel(account);
     if(account.admission?.kind==='paid'&&account.admission.initialPaymentRequired!==false){if(!this.setupBilling)fail('payment_required','Verify your paid subscription before activating this account.');const payment=await this.setupBilling.status(account.id,account.admission);if(payment?.paymentVerified!==true||payment.signupPlan!==account.admission.plan||payment.validUntil<=this.clock())fail('payment_required','Payment is still being verified. Recheck before activating your account.');account.admission.initialPaymentRequired=false;}
     if(account.systemIdentity)account.admission={...account.admission,initialSystemActivationRequired:false};
+    const source=account.status==='recovering'?'recovery':'activation',activationCredentialAt=account.pendingCredentialAt;delete account.pendingCredentialAt;
     account.status = 'active'; account.pendingHash = null; account.pendingExpiresAt = null; account.challenges = [];delete account.setupBindingHash;delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupEmailSends;delete account.setupEmailSentAt;delete account.setupPushSends;delete account.setupPushSentAt;delete account.setupEmailWindowAt;delete account.setupPushWindowAt;
     delete account.recoveryResumeHash; delete account.recoveryResumeBackupVersion;
-    this.audit(account, 'account-activated'); const result = await this.session(account);if(activationDeadline<=this.clock())fail('unauthorized','This setup session expired.');
+    this.audit(account, 'account-activated'); const result = await this.session(account,{source,activationCredentialAt});if(activationDeadline<=this.clock())fail('unauthorized','This setup session expired.');
     await this.save(account, revision); return result;
   }
-  async resumeSetupCredential(account,context,revision=account.revision){const pendingToken=await this.newPending(account,context);account.challenges=[];this.audit(account,'setup-credential-resumed');await this.save(account,revision);return {pendingToken,account:await this.projectAccount(account),readyForRecovery:Boolean(account.passwordHash||account.credentials.length),credentialRequired:false,resumed:true,signupPlan:account.admission?.plan??'free',paymentRequired:account.admission?.kind==='paid'&&account.admission.initialPaymentRequired!==false,setup:this.setupProjection(account)};}
+  async resumeSetupCredential(account,context,revision=account.revision){const pendingToken=await this.newPending(account,context);account.pendingCredentialAt=this.clock();account.challenges=[];this.audit(account,'setup-credential-resumed');await this.save(account,revision);return {pendingToken,account:await this.projectAccount(account),readyForRecovery:Boolean(account.passwordHash||account.credentials.length),credentialRequired:false,resumed:true,signupPlan:account.admission?.plan??'free',paymentRequired:account.admission?.kind==='paid'&&account.admission.initialPaymentRequired!==false,setup:this.setupProjection(account)};}
   async loginPassword(input, context) {
     this.origin(context);input={...input,handle:handle(input.handle)};await this.guard('login', input, context); password(input.password);
     const account = await this.repository.findByHandle(input.handle);
@@ -373,7 +383,7 @@ export class IdentityService {
     if (!account.credentials.some(c => c.id === input.credentialId)) fail('not_found', 'Passkey not found.');
     if (!account.recoveryHash || (account.credentials.length === 1 && !account.passwordHash)) fail('credential_required', 'Keep a working login method and your recovery file before removing this passkey.');
     account.credentials = account.credentials.filter(c => c.id !== input.credentialId);
-    account.sessions = account.sessions.filter(s => s.credentialId !== input.credentialId);
+    await this.pruneSessions(account,s=>s.credentialId===input.credentialId);
     account.challenges = account.challenges.filter(c => c.purpose !== 'credential'); this.audit(account, 'passkey-removed');
     await this.save(account, revision); return { removed: true, currentSessionRevoked: !account.sessions.includes(session), credentials: publicCredentials(account) };
   }
@@ -387,12 +397,12 @@ export class IdentityService {
     const { account, session } = await this.recent(context); const revision = account.revision;
     const target = (await Promise.all(account.sessions.map(async s => ({ session: s, id: await this.sessionID(s) })))).find(s => s.id === input.sessionId)?.session;
     if (!target) fail('not_found', 'Device session not found.');
-    account.sessions = account.sessions.filter(s => s !== target); this.audit(account, 'device-session-revoked');
-    await this.save(account, revision); return { revoked: true, currentSessionRevoked: target === session };
+    await this.pruneSessions(account,s=>s===target); this.audit(account, 'device-session-revoked');
+    await this.save(account, revision); return { revoked: true, currentSessionRevoked: !account.sessions.includes(session) };
   }
   async revokeOtherSessions(input, context) {
     const { account, session } = await this.recent(context); const revision = account.revision;
-    const count = account.sessions.filter(s => s !== session && s.expiresAt > this.clock()).length; account.sessions = [session]; this.audit(account, 'other-device-sessions-revoked');
+    const keep=new Set([await this.sessionID(session)]);let parent=session.parentSessionId;while(parent&&!keep.has(parent)){keep.add(parent);parent=account.sessions.find(s=>s.id===parent)?.parentSessionId;}const before=account.sessions.filter(s=>s.expiresAt>this.clock()).length;const ids=new Map(await Promise.all(account.sessions.map(async s=>[s,await this.sessionID(s)])));await this.pruneSessions(account,s=>!keep.has(ids.get(s)));const count=before-account.sessions.filter(s=>s.expiresAt>this.clock()).length; this.audit(account, 'other-device-sessions-revoked');
     await this.save(account, revision); return { revoked: count };
   }
   deviceFlow() { return this.deviceLogin ||= new DeviceLogin(this, IdentityFault); }
@@ -405,7 +415,7 @@ export class IdentityService {
   async emailStart(input, context) {
     if (!this.mailer) fail('email_unavailable', 'Email delivery is not configured.');
     const { account, session } = await this.authorized(context, true); const revision = account.revision;
-    if (session.createdAt + 900000 <= this.clock()) fail('reauthentication_required', 'Sign in again before changing recovery email.');
+    if (this.authAt(session) + 900000 <= this.clock()) fail('reauthentication_required', 'Sign in again before changing recovery email.');
     const email = emailAddress(input.email);
     if (!await this.rateLimiter.check({ operation: 'email', remoteIP: context.remoteIP, handle: account.handle })) fail('rate_limited');
     const token = `${account.id}.${this.crypto.random()}`;
@@ -446,7 +456,7 @@ export class IdentityService {
     const challenge = account?.emailChallenges?.find(c => c.purpose === 'login' && secureEqual(c.hash, hash) && c.expiresAt > this.clock());
     if (!account || account.status !== 'active' || account.emailLoginEnabled !== true || !challenge || challenge.email !== account.verifiedEmail || challenge.emailRevision !== account.emailVerifiedAt) fail('unauthorized', 'Email login failed.');
     const revision = account.revision; account.emailChallenges = account.emailChallenges.filter(c => c !== challenge);
-    const result = await this.session(account); await this.save(account, revision); return result;
+    const result = await this.session(account,{source:'email'}); await this.save(account, revision); return result;
   }
   async configureEmailLogin(input, context) {
     const { account } = await this.recent(context); const revision = account.revision;
@@ -458,11 +468,11 @@ export class IdentityService {
     await this.save(account, revision); return { emailLoginEnabled: account.emailLoginEnabled, account: await this.projectAccount(account) };
   }
   async logoutSaved(input,context){
-    this.origin(context);const {account,session}=await this.authorized(context);const revision=account.revision;account.sessions=account.sessions.filter(s=>s!==session);this.audit(account,'session-closed');await this.save(account,revision);return {loggedOut:true};
+    this.origin(context);const {account,session}=await this.authorized(context);const revision=account.revision;await this.pruneSessions(account,s=>s===session);this.audit(account,'session-closed');await this.save(account,revision);return {loggedOut:true};
   }
   async logout(input, context) {
     const { account, session } = await this.authorized(context, true); const revision = account.revision;
-    account.sessions = account.sessions.filter(s => s !== session); this.audit(account, 'session-closed');
+    await this.pruneSessions(account,s=>s===session); this.audit(account, 'session-closed');
     await this.save(account, revision); return { loggedOut: true };
   }
 }

@@ -19,8 +19,8 @@ class Repository {
 class DeviceRepository {
   records = new Map();
   async get(id) { return structuredClone(this.records.get(id)); }
-  async findByUserCode(code) { return structuredClone([...this.records.values()].find(value => value.userCode === code)); }
-  async create(value) { if (this.records.has(value.id) || [...this.records.values()].some(record => record.userCode === value.userCode)) return false; this.records.set(value.id, structuredClone(value)); return true; }
+  async findByUserCode(code) { return structuredClone([...this.records.values()].find(value => value.userCodeHash === code)); }
+  async create(value) { if (this.records.has(value.id) || [...this.records.values()].some(record => record.userCodeHash === value.userCodeHash)) return false; this.records.set(value.id, structuredClone(value)); return true; }
   async compareAndSwap(id, revision, value) { if (this.records.get(id)?.revision !== revision) return false; this.records.set(id, structuredClone(value)); return true; }
 }
 const config = { origin: 'https://3sln.example', rpID: '3sln.example', rpName: '3sln', termsVersion: '2026-10-11' };
@@ -38,6 +38,7 @@ async function activate(service, input = signup) {
   const pending = await service.signup(input, context);
   const file = await service.downloadRecovery(pending, context);
   const owner = await service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context);
+  await service.stepUp({method:'password',password:input.password},{...context,...owner});
   return { pending, file, owner, ownerContext: { ...context, sessionToken: owner.sessionToken, csrfToken: owner.csrfToken } };
 }
 
@@ -53,7 +54,7 @@ test('signup requires Turnstile, terms and mandatory proved recovery download be
   assert(!stored.includes(signup.password)); assert(!stored.includes(pending.pendingToken)); assert(!stored.includes(file.recoveryToken));
   await assert.rejects(service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: false }, context), { code: 'recovery_confirmation_required' });
   const owner = await service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context);
-  assert.equal(owner.account.status, 'active');
+  assert.equal(owner.account.status, 'active');await service.recent({...context,...owner});assert.equal((await service.authorized({...context,...owner})).session.stepUpAt,undefined);
   await assert.rejects(service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context), { code: 'unauthorized' });
 });
 
@@ -174,7 +175,7 @@ test('parallel signup reserves one handle and concurrent email claims never merg
   const pending = race.find(r => r.status === 'fulfilled').value; const file = await service.downloadRecovery(pending, context);
   const alice = await service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context);
   const bob = await activate(service, { ...signup, handle: 'bob' });
-  const aliceContext = { ...context, ...alice };
+  const aliceContext = { ...context, ...alice };await service.stepUp({method:'password',password:signup.password},aliceContext);
   await service.emailStart({ email: 'same@mail.example' }, aliceContext);
   await service.emailStart({ email: 'same@mail.example' }, bob.ownerContext);
   const claims = await Promise.allSettled([service.emailConfirm({ token: messages[0].token, confirmed: true }, aliceContext), service.emailConfirm({ token: messages[1].token, confirmed: true }, bob.ownerContext)]);
@@ -240,6 +241,8 @@ test('last passkey cannot be removed without another login method and recovery; 
   await service.registerPasskey({ ...pending, response: first.registration(pending.registrationOptions.challenge) }, context);
   const file = await service.downloadRecovery(pending, context);
   const owner = await service.confirmRecovery({ ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true }, context); const ownerContext = { ...context, ...owner };
+  await service.recent(ownerContext);assert.equal((await service.authorized(ownerContext)).session.stepUpAt,undefined);
+  const step=await service.stepUpBegin({},ownerContext);await service.stepUp({method:'passkey',response:first.assertion(step.authenticationOptions.challenge,owner.account.id)},ownerContext);
   await assert.rejects(service.removePasskey({ credentialId: first.id }, ownerContext), { code: 'credential_required' });
   const beginning = await service.credentialBegin({ label: 'Second passkey' }, ownerContext);
   await service.credentialFinish({ challengeId: beginning.challengeId, response: second.registration(beginning.registrationOptions.challenge) }, ownerContext);
@@ -274,7 +277,7 @@ test('QR device sign-in keeps polling secrets out of QR, needs explicit matching
   await assert.rejects(service.pollDeviceLogin({ deviceCode: request.deviceCode }, { ...requesting, deviceBinding: 'wrong-cookie' }), { code: 'unauthorized' });
   assert.equal((await service.pollDeviceLogin(request, requesting)).status, 'slow_down'); advance(10000);
   assert.equal((await service.pollDeviceLogin(request, requesting)).status, 'authorization_pending');
-  const inspection = await service.deviceRequest({ userCode: request.userCode }, context); assert.equal(inspection.label, 'Living room TV'); assert.equal(inspection.owner, undefined);
+  const inspection = await service.deviceRequest({ userCode: request.userCode }, ownerContext); assert.equal(inspection.label, 'Living room TV'); assert.equal(inspection.owner, undefined);
   const approval = { requestId: request.requestId, userCode: request.userCode, accountHandle: 'alice', approved: true };
   await assert.rejects(service.approveDeviceLogin({ ...approval, userCode: '22222222' }, ownerContext), { code: 'invalid_device_request' });
   await assert.rejects(service.approveDeviceLogin({ ...approval, accountHandle: 'different-account' }, ownerContext), { code: 'confirmation_required' });
@@ -294,7 +297,7 @@ test('device denial, cancellation, expiry and revoked approving sessions never i
   const denied = await create(); await service.denyDeviceLogin(denied, ownerContext); assert.deepEqual(await service.pollDeviceLogin(denied, context), { status: 'access_denied' });
   const cancelled = await create(); await service.cancelDeviceLogin(cancelled, context); assert.deepEqual(await service.pollDeviceLogin(cancelled, context), { status: 'access_denied' });
   const expired = await create(); advance(300000); assert.deepEqual(await service.pollDeviceLogin(expired, context), { status: 'expired_token' });
-  await assert.rejects(service.deviceRequest(expired, context), { code: 'invalid_device_request' });
+  await assert.rejects(service.deviceRequest(expired, ownerContext), { code: 'invalid_device_request' });
   const revoked = await create(); await service.approveDeviceLogin({ ...revoked, accountHandle: 'alice', approved: true }, ownerContext);
   await service.logout({}, ownerContext); advance(5000); assert.deepEqual(await service.pollDeviceLogin(revoked, context), { status: 'access_denied' });
 });

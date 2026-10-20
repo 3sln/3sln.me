@@ -92,14 +92,14 @@ test('interrupted email cleanup cannot publish an old email or delete a replacem
 });
 
 test('device code uniqueness, direct request CAS, expiry reuse, and immutable expiry',async()=>{
-  const f=fixture(),r=f.repository,a={id:'device-a',userCode:'ABCDEFGH',revision:0,expiresAt:2000},b={...a,id:'device-b'};
+  const f=fixture(),r=f.repository,a={id:'device-a',userCodeHash:'hash-of-ABCDEFGH',revision:0,expiresAt:2000},b={...a,id:'device-b'};
   assert(await r.createDevice(a));assert.equal(await r.createDevice(b),false);
-  assert.equal((await r.findDeviceByCode(a.userCode)).id,a.id);
+  assert.equal((await r.findDeviceByCode(a.userCodeHash)).id,a.id);
   assert.equal(await r.compareAndSwapDevice(a.id,0,{...a,revision:1,expiresAt:9000}),false);
-  f.advance(2001);assert.equal(await r.findDeviceByCode(a.userCode),null);
+  f.advance(2001);assert.equal(await r.findDeviceByCode(a.userCodeHash),null);
   assert(await r.createDevice({...b,expiresAt:4000}));
   assert(await r.compareAndSwapDevice(a.id,0,{...a,revision:1,status:'cancelled'}));
-  assert.equal((await r.findDeviceByCode(a.userCode)).id,b.id);
+  assert.equal((await r.findDeviceByCode(a.userCodeHash)).id,b.id);
 });
 
 test('an email conflict aborts a new account and permanently burns its admitted handle',async()=>{

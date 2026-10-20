@@ -8,6 +8,7 @@ export const publicDocumentation=Object.freeze([
  ['Bindle specification','docs/spec/protocol.md','Protocol and discovery'],
  ['Bindle specification','docs/spec/federation-implementation.md','OAuth and RPC wire profile'],
  ['Bindle specification','docs/spec/auth.md','Authentication'],
+ ['Bindle specification','docs/spec/device-authorization.md','Device authorization (proposed)'],
  ['Bindle specification','docs/spec/contracts.md','Resources and preference fragments'],
  ['Bindle specification','docs/spec/resource-contributions.md','Application connections and tools'],
  ['Bindle specification','docs/spec/app-metadata.md','Application metadata'],

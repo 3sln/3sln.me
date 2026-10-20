@@ -1,6 +1,6 @@
 # Extensibility: slots, unified integrations and brokered resources — design note
 
-Status: **provisional design, 2026-10-20, revision 1** (under independent review: [extensibility review](../release/extensibility-review.md)). Documentation only: no code, runtime, build or production change. Human sign-off: reviewer ___ / date ___ / outcome ___. The coordinator records the decision in [DEVLOG](../../DEVLOG.md).
+Status: **provisional design, 2026-10-20, revision 2.** Revision 1 was wargamed by independent security and interop reviewers; every finding is answered (§12, [extensibility review](../release/extensibility-review.md)). Documentation only: no code, runtime, build or production change. Human sign-off: reviewer ___ / date ___ / outcome ___. The coordinator records the decision in [DEVLOG](../../DEVLOG.md).
 
 Normative drafts: [extensions](../spec/extensions.md) (slots and the `extensions` array) and [integrations](../spec/integrations.md) (unified integrations, the preference-update webhook, discovery, brokered credentials and severance). This note holds rationale, rejected alternatives, 3sln.me implications, migration and implementation slices.
 
@@ -26,8 +26,9 @@ From DEVLOG "2026-10-20 — Scope reduction" and NOTES.md:
 | EX-7 | Provider-to-integration calls (events, discovery) are **provider-signed JWTs**: RFC 8417 SETs pushed per RFC 8935, and RFC 9068 access tokens for discovery. Integration-to-provider calls are ordinary OAuth RPC, plus data-free **change hints** authenticated by an RFC 7523 client assertion. | integrations §4, §6, §8 |
 | EX-8 | The **preference-update webhook** is the `preferences-updated` SET: a full approved snapshot with a per-connection `seq`, enqueued transactionally and coalesced. A snapshot plus `seq` is idempotent and order-insensitive. | integrations §6 |
 | EX-9 | **Discovery** is a provider-only POST with contracts (AND), text, contract-defined facets, browse parent, exact `ids` and a `limit: 0` probe. Integrations must apply every constraint or fail. | integrations §4 |
-| EX-10 | **Brokered credentials are provider-minted RFC 9068 JWT access tokens**, at most 300 s, one resource and its exact methods, optionally DPoP-bound, minted on each preferences read. The integration validates offline against the issuer JWKS. The provider owns the coupling because only it can mint. | integrations §5 |
-| EX-11 | **Severance = commit, then invalidate, with a bound.** The provider commits authority changes and enqueues invalidation events in one transaction. Invalidation makes revocation immediate at a cooperating integration. Expiry guarantees `access_ends_by` = commit + 360 s without cooperation. Optional introspection serves contracts that need instant revocation. | integrations §7 |
+| EX-10 | **Brokered credentials are provider-minted RFC 9068 JWT access tokens** signed by a dedicated brokering key set: at most 300 s, one resource and its exact methods, DPoP `supported` or `required`. They are projected only through a new `preferences/v2` whose `id` stays the provider's opaque reference (the integration's ID appears only in `broker.resource`). The integration validates offline, after looking up the connection locally. The provider owns the coupling because only it can mint. | integrations §5 |
+| EX-11 | **Severance = commit, then invalidate, with a bound.** The provider commits authority changes, refresh-token revocation and invalidation events in one transaction. A conforming integration rejects invalidated tokens on acknowledgment, and in any case by `access_ends_by` = commit + 360 s, even if it never receives the event. No party can stop a non-conforming integration, and consent says so. Contracts can require introspection (30 s bound) or opt out of brokering. | integrations §7 |
+| EX-12 | **Integrations get offline authority** through a connection-bound, rotating refresh token for `private_key_jwt` clients. It has no absolute cap while the connection is live and is revoked by the severance commit. | integrations §3.4 |
 
 ## 3. Slots: the shape and the selection answer
 
@@ -134,10 +135,10 @@ Google Drive becomes a built-in integration with a provider-authored manifest wh
 | Proxy every call through the provider gateway | Instant | Provider on every call. Contradicts "communicate directly". | Kept for issuer-hosted and built-in resources only. |
 | Introspection on every call (RFC 7662) | Instant | Provider on every call, plus a round trip. | Optional (`introspection_endpoint`) for contracts that need instant revocation. |
 | Integration mints long-lived consumer credentials at the provider's request; provider sends invalidations | Only as reliable as invalidation delivery. A lost or ignored invalidation means indefinite access. | Good | Rejected: severance must not depend on the remote party. |
-| **Provider mints short-lived JWTs; integration verifies offline; invalidation accelerates** (chosen) | At a cooperating integration, immediate on acknowledgment. Otherwise bounded at 360 s. | No provider round trip per call. Fail-closed within 300 s if the provider is down. | Chosen. |
+| **Provider mints short-lived JWTs; integration verifies offline; invalidation accelerates** (chosen) | A conforming integration: immediate on acknowledgment, otherwise by 360 s. A non-conforming integration cannot be forced by any design. | No provider round trip per call. Fail-closed within 300 s if the provider is down. | Chosen. |
 | Long-lived provider-minted JWT plus revocation list | Revocation-list delivery has the same problem as invalidation | Good | Rejected. |
 
-The chosen design meets the user's words exactly. The provider **owns the coupling credential**: its signing key and the connection generation. It **severs on demand**: it stops minting and sends `connection-revoked` or `credential-revoked`, the invalidation request that cancels the consumer's credentials at the integration. It is **robust**: correctness never depends on the invalidation arriving.
+The chosen design meets the user's words exactly. The provider **owns the coupling credential**: its signing key and the connection generation. It **severs on demand**: it stops minting and sends `connection-revoked` or `credential-revoked`, the invalidation request that cancels the consumer's credentials at the integration. It is **robust**: a conforming integration's correctness never depends on the invalidation arriving. What it cannot do is police a dishonest integration, which already holds the owner's data anyway. The security review (SEC-2) made the spec say so instead of overclaiming.
 
 ### 6.2 Why the token is a JWT here when Bindle tokens are otherwise opaque
 
@@ -167,9 +168,9 @@ The messaging interop spec publishes slot `…/slots/public-message-intake/v1`: 
 
 1. **3sln.me manifest** declares `features: {"extensions.v1":{}, "integrations.v1":{…}, "brokered-resources.v1":{}}` and `extensions: [{"slot": "…/public-message-intake/v1", "role": "consumer", "ref": "email-bridge", "purpose": "Delivers email sent to your public address."}]`.
 2. **Messaging app's client metadata** declares `bindle_integration.resources` (its `rpc_endpoint`, `discovery_endpoint`, contracts including `public-intake/v1`) and `extensions: [{"slot": "…/public-message-intake/v1", "role": "occupant", "ref": "inbox"}]`.
-3. **Setup.** After the owner connects the app, the provider sees the occupant declaration plus its own consumer declaration, and offers to route bridged email to it. The owner fills the slot: the provider runs discovery with `contracts: [public-intake/v1]`, and the owner picks the app's intake resource. The provider registers a brokered record and assigns it (extensions §5.1, disclosing that the email bridge will deliver email for the owner's public address to `inbox.example`). Separately, the owner enables the email-bridge provider feature (extensions §5.3).
-4. **Delivery.** On durable acceptance of an email (public-email-bridge design), the bridge reads the slot value, mints itself a brokered token (`client_id` is the issuer), and calls `deliver` at the app's `rpc_endpoint` with `tx` derived from the ingress fingerprint. A retry after an unknown outcome reuses that `tx`. Under `exclusive`, no other occupant is ever tried.
-5. **Change and failure.** If the owner replaces the occupant, undispatched items go to the new occupant at dispatch time. Items with an indeterminate outcome stay with the old occupant's `tx` until resolved, never duplicated. If the slot is empty or the feature is disabled, the bridge applies its own refusal or holding policy (bridge design). If the app is offline, items queue within the bridge's budgets. If the owner disconnects the app, the slot is projected unavailable from the commit and no further deliveries occur.
+3. **Setup.** After the owner connects the app, the provider sees the occupant declaration plus its own consumer declaration. In its own interface, outside the app's authorization flow, it lists the app as a candidate for routing bridged email. It never preselects the app, and never offers this inside the app's authorization flow (extensions §3.4). If the slot is already occupied, replacement requires recent authentication. The owner fills the slot: the provider runs discovery with `contracts: [public-intake/v1]`, and the owner picks the app's intake resource. The provider registers a brokered record and assigns it (extensions §5.1, disclosing that the email bridge will deliver email for the owner's public address to `inbox.example`). Separately, the owner enables the email-bridge provider feature (extensions §5.3).
+4. **Delivery.** On durable acceptance of an email (public-email-bridge design), the bridge reads the slot value, mints itself a brokered token (`client_id` is the issuer), and calls `deliver` at the app's `rpc_endpoint` with `tx` = UUIDv5(feature `ref`, contract, entity, ingress fingerprint) (extensions §5.3). The `public-intake` contract must label email provenance unverified: the token attests only that the provider delivered the message. A retry after an unknown outcome reuses that `tx`. Under `exclusive`, no other occupant is ever tried.
+5. **Change and failure.** If the owner replaces the occupant, undispatched items go to the new occupant at dispatch time. An item with an indeterminate outcome at the removed occupant is reported to the owner as unknown and is never dispatched to the new occupant (extensions §3.3). Replacement revokes the old credential, so a same-`tx` retry is impossible. SMTP responses MUST NOT vary with slot occupancy, occupant availability or feature state (no occupancy oracle, extensions §9.8). If the slot is empty or the feature is disabled, the bridge applies its own refusal or holding policy (bridge design). If the app is offline, items queue within the bridge's budgets. If the owner disconnects the app, the slot is projected unavailable from the commit and no further deliveries occur.
 
 ### 7.2 Host classifier consumed by the messaging app
 
@@ -178,7 +179,7 @@ Slot `…/slots/item-classifier/v1` as in extensions §2: contract `decision-mod
 1. **3sln.me manifest** declares `{"slot": "…/item-classifier/v1", "role": "occupant", "ref": "classifier", "options": {"label": "3sln.me classifier"}}`, a built-in occupant backed by Workers AI and metered against the owner's plan.
 2. **Messaging app's manifest** declares `{"slot": "…/item-classifier/v1", "role": "consumer", "ref": "triage", "purpose": "Sort incoming messages."}` and requests the slot fragment as **optional** at authorization, with method `decide`.
 3. **Available.** The consent presentation offers the built-in classifier (and any connected AI integration's models) as candidates, with cost and data-processing disclosure. The owner assigns one or more, in order. The app reads `@preferences` for the slot and calls `decide` on the first occupant: through the issuer gateway for the built-in, or directly at the integration's endpoint for a brokered model. On any error it fails over to the next occupant.
-4. **Unavailable.** On a provider without the slot, with no built-in occupant and no capable integration, the optional request is reported `unavailable` without a prompt (extensions §5.2), and the app omits AI classification, as the DEVLOG direction requires. On a provider without `extensions.v1`, the app may still request the fragment as an ordinary optional fragment.
+4. **Unavailable.** Two cases. (a) A provider with `extensions.v1` that recognizes the slot but has no possible occupant for anyone (no built-in, no permitted occupant integration) reports the optional request `unavailable` without a prompt. This is a public fact, so it is no oracle (extensions §5.2). Otherwise the request is presented and may be declined. (b) A provider without `extensions.v1` processes it as an ordinary fragment (core amendment C1), or a strict one refuses it. In every case without an approved occupant, the app omits AI classification, as the DEVLOG direction requires.
 
 ### 7.3 Activity stays in core
 
@@ -188,7 +189,8 @@ App-originated alerts use the existing app-notification path (owner-local resour
 
 | Area | Implication |
 | --- | --- |
-| Signing key | `/oauth/jwks` currently serves an empty key set (`packages/federation/http.mjs`). `integrations.v1` needs a provisioned ES256 key used only for minted tokens and SETs, with rotation. This is a secret-provisioning step and a production gate. |
+| Signing key | `/oauth/jwks` currently serves an empty key set (`packages/federation/http.mjs`). `brokered-resources.v1` needs a separate brokering key set (its own `jwks_uri`) with purpose-separated ES256 keys, rotation and the key-compromise procedure. This is a secret-provisioning step and a production gate. |
+| Validators | `packages/federation/schema.mjs` rejects unknown fragment members (`exact([...])`), so 3sln.me rejects slot fragments until amendment C1. The client-metadata validator refuses `jwks_uri` and `private_key_jwt` until C7. The preferences read path withholds a whole field while any resource awaits consent, which C3 must change. |
 | Egress | Events and discovery are provider-originated fetches to integration origins. Node uses the DNS-pinned adapter. Workers use strictly-public fetch plus a DoH screen without connection pinning, the same residual risk recorded for `client-id-metadata.v1`. Production declaration needs that verified. |
 | Durable outbox | Events are per-account transactional outbox rows in the account's single writer (DO storage, Node SQLite), drained by account alarms with bounded batches and budgets. |
 | Minting path | Preferences reads that project brokered resources mint per call. Mint counts join the existing per-account work budget. |
@@ -208,7 +210,8 @@ App-originated alerts use the existing app-notification path (owner-local resour
 | M4 | Google Drive connector | Built-in integration manifest. Existing resources, mappings and generations untouched. | Owner-visible regrouping only. |
 | M5 | Components profile | No change. Optionally reference the shared processing rules. | None. |
 | M6 | Email bridge design | Provider consumer of `public-message-intake`, gated on the messaging app spec. | The bridge is unimplemented, so nothing breaks. |
-| M7 | `contracts.md` preferences v1 | Brokered projection member (`broker`, `token_type`, `expires_at`) inside field values. `docs/artefacts/preferences-v1.json` leaves `values` an unconstrained object, so the schema permits it. A consumer unaware of `broker` that calls the issuer RPC with the foreign resource ID and minted token fails closed (the issuer rejects minted JWTs and does not own the resource). | Issuer-hosted projection unchanged. |
+| M7 | `contracts.md` preferences v1 | Publish `preferences/v2` (amendment C9): a uniform per-resource object (`id`, `label`, `status`, `contracts`, `token`, `token_type`, `expires_at`, optional `broker`) and an integration-only `seq`. v1 readers never receive brokered values (they are omitted, with the field in `requiresConsent`). Revision 1 claimed v1 compatibility; the interop review (INT-3) showed that changes semantics at an immutable URL, and that old clients fail with a 400. | v1 is unchanged. |
+| M8 | Core specs | Apply amendments C1–C11 (extensions §12, integrations §14) through the coordinator, since other agents also edit `protocol.md` during the messaging extraction. | Additive, except C3 (projection behavior), which changes a withholding behavior into the protocol §4 requirement. |
 
 ## 10. Implementation slices (non-overlapping ownership)
 
@@ -216,14 +219,14 @@ Each slice runs `npm test`. UI slices add DOM and browser verification. Proposed
 
 | Slice | Scope | Files (new unless noted) | Depends on |
 | --- | --- | --- | --- |
-| X1 | Slot manifest and `extensions` validation, pure functions | `packages/federation/extensions.mjs`, `tests/extensions.test.mjs` | — |
+| X1 | Slot manifest and `extensions` validation, pure functions; C1 unknown-member tolerance | `packages/federation/extensions.mjs`, `packages/federation/schema.mjs` (fragment validator only), `tests/extensions.test.mjs` | — |
 | X2 | Manifest declaration (`features`, `extensions`) from config | `packages/federation/runtime.mjs`, `packages/runtime/federation.mjs` (manifest builders only) | X1 |
-| X3 | Integration manifest parsing and snapshot | `packages/federation/client-metadata.mjs` (extend), `packages/federation/integrations.mjs`, `tests/integrations-manifest.test.mjs` | X1 |
+| X3 | Integration manifest parsing, snapshot, key pinning, C7 confidential clients | `packages/federation/client-metadata.mjs` (extend), `packages/federation/integrations.mjs`, `tests/integrations-manifest.test.mjs` | X1 |
 | X4 | Connections domain (state machine, generations, kinds) on the engine | `packages/app/domains/connections.mjs`, `packages/runtime/account/connections.mjs`, `tests/engine-connections.test.mjs` | X3 |
 | X5 | Signing key, JWKS, token and SET minting | `packages/federation/signing.mjs`, `packages/federation/http.mjs` (JWKS route only), `tests/federation-signing.test.mjs` | — |
 | X6 | Event outbox and delivery (RFC 8935 client, retries, coalescing) | `packages/runtime/integration-events.mjs`, `tests/integration-events.test.mjs` | X4, X5 |
 | X7 | Discovery client, brokered records, revalidation and hints | `packages/federation/resource-discovery.mjs`, `packages/federation/brokered.mjs`, hint route in `packages/runtime/routes/integrations.mjs`, tests | X4, X5 |
-| X8 | Preferences projection for brokered resources, minting and severance | `packages/federation/service.mjs` (projection and mint path; coordinate with the federation owner), `tests/brokered-severance.test.mjs` | X7 |
+| X8 | preferences/v2 projection (C3, C9), minting, connection-bound refresh tokens and severance | `packages/federation/service.mjs` (projection, mint and refresh paths; coordinate with the federation owner), `docs/artefacts/preferences-v2.json`, `tests/brokered-severance.test.mjs` | X7 |
 | X9 | Reference resource-server verifier and fixture integration (conformance) | `tests/fixtures/integration-server.mjs`, `tests/integrations-conformance.test.mjs` | X5–X8 |
 | X10 | Built-in classifier occupant and Drive built-in manifest | `packages/runtime/account/classifier.mjs`, `packages/storage/google-drive-integration.mjs` | X1, X4 |
 | X11 | Connections and slots console | `apps/web/src/ui/connections/*`, browser tests under `tests/browser/` | X4, X7 |
@@ -234,11 +237,13 @@ X5 and X9 can start immediately. X1 → X3 → X4 is the critical path.
 ## 11. Open questions for the user
 
 1. **Public slot resolution.** Should a slot be able to opt into public per-entity resolution, so a sender's app can find a recipient's messaging endpoint from a handle, with owner opt-in and rate limits? It is deliberately excluded here to keep core narrow and avoid an enumeration surface. The messaging-app design may need it.
-2. **Brokered token lifetime.** 300 s matches the core access-token cap. Should contracts be allowed to request less, or (with DPoP) more?
+2. **Revocation delay for brokered resources.** 360 s at a conforming integration, 30 s for contracts that require introspection, and opt-out per contract. Is that acceptable as the default, or should brokering of write-capable contracts require introspection?
 3. **Integration manifest location.** A client metadata member keeps one source of truth but shares the 16 KiB client-metadata bound. Is a separate document worth a second fetch?
-4. **Built-in occupants as candidates.** May the provider *preselect* its built-in occupant in the consent presentation, with the owner still confirming? The spec forbids assignment without an owner action, but presentation defaults are provider policy.
+4. **No preselection.** Revision 2 forbids preselecting any candidate, including built-ins, and requires neutral ordering (security review SEC-22). This costs a click for the common case (the 3sln.me classifier). Confirm.
 5. **Who publishes slot manifests?** Messaging-related slots belong to the messaging spec, and the classifier slot to a generic 3sln.me artefact. Where should the registry live (`/artefacts/slots/`)?
+
+6. **Core amendments.** Approve C1–C11, especially C3 (an unapproved occupant no longer hides approved ones) and C8 (a bounded-delay revocation exception to protocol §4 for brokered resources).
 
 ## 12. Review reconciliation
 
-Pending: [extensibility review](../release/extensibility-review.md).
+Two independent reviewers wargamed revision 1: security and abuse (24 findings: 3 High, 15 Medium, 6 Low), and interop and evolution (22 findings: 6 High, 11 Medium, 5 Low). Revision 2 of both specs and of this note answers every finding. The per-finding table is in the [extensibility review](../release/extensibility-review.md). Both reviewers independently judged keeping `profiles` distinct to be correct.

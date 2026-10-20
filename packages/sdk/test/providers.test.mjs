@@ -1,7 +1,7 @@
 // Provider-agnostic flows across declarations (components-profile decision note
 // §5–§6, §8). Every provider here is testing.mjs's mock: no deployed provider
 // declares these features yet. Fixtures use .example hosts.
-import {test} from 'node:test';
+import {test as nodeTest,afterEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {createSession} from '../src/flows.mjs';
 import {createMockProvider,memoryStorage,installPopupDrivers} from '../src/testing.mjs';
@@ -9,14 +9,17 @@ import {BindleClient} from '../src/identity.mjs';
 import {validateAccessResponse} from '../src/tokens.mjs';
 
 const clientId='https://app.example/client',redirectUri='https://app.example/callback';
-const tick=(ms=5)=>new Promise(resolve=>setTimeout(resolve,ms));
+const test=(name,fn)=>nodeTest(name,{timeout:5000},fn),cleanups=[];
+afterEach(()=>{for(const cleanup of cleanups.splice(0))cleanup();});
 function fakeWindow(extra={}){const assigned=[];return {assigned,navigator:{language:'en'},location:{href:'https://app.example/',assign:url=>assigned.push(url)},matchMedia:()=>({matches:false}),...extra};}
 async function setup({provider,providers=[provider],decide,blocked,load=true,win=fakeWindow(),...options}){
-  const fetch=async(input,init)=>{const url=new URL(input instanceof Request?input.url:input);const match=providers.find(item=>item.issuer===url.origin);return match?match.fetch(input,init):new Response('',{status:404});};
+  const revocations=new Map();
+  const fetch=async(input,init)=>{const url=new URL(input instanceof Request?input.url:input);const match=providers.find(item=>item.issuer===url.origin);const response=match?await match.fetch(input,init):new Response('',{status:404});for(const [token,resolve]of revocations)if(match?.revoked.has(token)){resolve();revocations.delete(token);}return response;};
   const driver=installPopupDrivers(win,providers,{decide,blocked});
   const session=createSession({clientId,redirectUri,fetcher:fetch,storage:memoryStorage(),history:{replaceState(){}},window:win,defaultHost:new URL(provider.issuer).host,...options});
+  cleanups.push(()=>{session.dispose();driver.uninstall();});
   if(load)await session.loadCapabilities();
-  return {session,win,driver,fetch};
+  return {session,win,driver,fetch,revoked:token=>providers.some(item=>item.revoked.has(token))?Promise.resolve():new Promise(resolve=>revocations.set(token,resolve))};
 }
 const entries=provider=>[...provider.entries.values()].filter(entry=>!entry.legacy);
 const opened=win=>win.open.length;
@@ -40,11 +43,11 @@ test('minimal provider (floor only): identity-pinned redirect, no popup, nothing
 
 test('standard provider: select-account popup, revocation, and no reauth or provider sign-out',async()=>{
   const provider=createMockProvider({issuer:'https://standard.example',declaration:'standard',accounts:[{handle:'alex'},{handle:'sam'}]});
-  let choice={decision:'approve'};const {session,driver}=await setup({provider,decide:()=>choice});
+  let choice={decision:'approve'};const {session,driver,revoked}=await setup({provider,decide:()=>choice});
   assert.deepEqual(await session.signIn(),{outcome:'completed'});assert.equal(driver.opened.length,1);
   const first=session.client.session;
   choice={decision:'approve',account:provider.accounts[1]};assert.deepEqual(await session.switchAccount({revokePrevious:true}),{outcome:'completed'});
-  assert.equal(entries(provider).at(-1).intent,'select-account');await tick();assert.ok(provider.revoked.has(first.refresh_token),'only the previous app session is revoked');
+  assert.equal(entries(provider).at(-1).intent,'select-account');await revoked(first.refresh_token);assert.ok(provider.revoked.has(first.refresh_token),'only the previous app session is revoked');
   assert.ok(!provider.revoked.has(session.client.session.refresh_token));
   assert.deepEqual(await session.reauthenticate(),{outcome:'discovery-error',code:'unsupported-provider'});assert.equal(driver.opened.length,2,'no window for an undeclared intent');
 });
@@ -180,10 +183,10 @@ test('FedCM: used when declared and available; failures after the activation exp
 
 test('island hooks: prepare keeps PKCE in memory; codes are validated like callbacks; several flows pend at once',async()=>{
   const provider=createMockProvider({issuer:'https://full.example',declaration:'full'});
-  let release;const {session,driver}=await setup({provider,decide:()=>new Promise(resolve=>release=resolve)});
+  let release,entered;const started=new Promise(resolve=>entered=resolve),{session,driver}=await setup({provider,decide:()=>new Promise(resolve=>{release=resolve;entered();})});
   const prepared=await session.prepareIsland('https://full.example');
   assert.equal(session.client.storage.length,0,'island records never touch storage');assert.ok(prepared.dpopJkt);
-  const popupFlow=session.signIn();await tick(10);assert.equal(session.client.storage.length,1,'a popup transaction pends alongside');
+  const popupFlow=session.signIn();await started;assert.equal(session.client.storage.length,1,'a popup transaction pends alongside');
   // The island creates its own entry with the prepare inputs (here: directly at the mock).
   const created=await (await provider.fetch('https://full.example/api/oauth/entries',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clientId:prepared.clientId,redirectUri:prepared.redirectUri,challenge:prepared.challenge,challengeMethod:'S256',state:prepared.state,intent:'login',requests:[],presentation:'popup',dpopJkt:prepared.dpopJkt})})).json();
   const code=new URL(provider.authorize(created.entryId)).searchParams.get('code');

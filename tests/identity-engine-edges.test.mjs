@@ -113,9 +113,9 @@ test('device codes: human-entered variants normalize, confusable symbols are ref
   const device = { ...context, deviceBinding: 'tv-browser' }, request = await act('createDeviceLogin', { label: 'TV', turnstileToken: 'verified' }, device);
   assert.match(request.userCode, /^[2-9A-HJ-NP-Z]{8}$/);
   const spaced = request.userCode.toLowerCase().replace(/(.{4})/, '$1- ');
-  assert.equal((await service.deviceRequest({ userCode: spaced }, context)).requestId, request.requestId);
+  assert.equal((await service.deviceRequest({ userCode: spaced }, ownerContext)).requestId, request.requestId);
   for (const userCode of ['0OOOOOOO', 'IIIIIIII', '11111111', request.userCode.slice(1), request.userCode + 'A'])
-    await assert.rejects(service.deviceRequest({ userCode }, context), { code: 'invalid_device_request' });
+    await assert.rejects(service.deviceRequest({ userCode }, ownerContext), { code: 'invalid_device_request' });
   let interval = 0;
   for (let i = 0; i < 14; i++) { const result = await act('pollDeviceLogin', request, device); assert.equal(result.status, 'slow_down'); assert(result.interval >= interval && result.interval <= 60); interval = result.interval; }
   assert.equal(interval, 60);
@@ -134,6 +134,6 @@ test('failing guards fail closed before any account is reserved, and failed acti
   assert.equal(broken.repository.records.size + limited.repository.records.size, 0);
   assert.equal(updates, 0);
   const working = identityEngine(); working.engine.feed.addEventListener('identity-updated', () => updates++);
-  await activate(working.act); assert.equal(updates, 3);
+  await activate(working.act); assert.equal(updates, 4);
   for (const method of ['owner', 'constructor', '__proto__', 'privileged']) assert.throws(() => new IdentityAction(method, {}, context), TypeError);
 });

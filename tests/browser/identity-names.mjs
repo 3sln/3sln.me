@@ -7,6 +7,10 @@ const previous=Object.fromEntries(names.map(name=>[name,globalThis[name]]));for(
 const {Engine,Provider,dodo}=await import('../../apps/web/src/shared/stack.mjs');
 const {default:StateProvider}=await import('../../apps/web/src/providers/browser-state.mjs');
 const {ClaimHandle,DownloadNameCertificate}=await import('../../apps/web/src/bl/identity.mjs');
+const {ConfirmOwner,CancelOwnerConfirmation,cancelStepUp}=await import('../../apps/web/src/bl/step-up.mjs');
+const {OwnerFlow}=await import('../../apps/web/src/bl/owner-flow.mjs');
+const {RevokeOtherDevices}=await import('../../apps/web/src/bl/release.mjs');
+const {default:stepUpView}=await import('../../apps/web/src/ui/step-up.mjs');
 const {default:authView}=await import('../../apps/web/src/ui/release-auth.mjs');
 const {default:securityView}=await import('../../apps/web/src/ui/release-security.mjs');
 const {default:recoveryView}=await import('../../apps/web/src/ui/release-recovery.mjs');
@@ -21,7 +25,7 @@ async function fixture(){
  const calls=[],downloads=[];
  const api={csrf:'csrf',async request(path,body){calls.push({path,body});return {};},async get(path){calls.push({path});return {account,grants:[]};}};
  const browser={download:(...args)=>downloads.push(args)};
- const engine=new Engine({providers:{state:StateProvider,api:Provider.fromSingleton(api),browser:Provider.fromSingleton(browser)}});
+ const engine=new Engine({providers:{state:StateProvider,api:Provider.fromSingleton(api),browser:Provider.fromSingleton(browser),portalContributions:Provider.fromSingleton({}),recoveryFile:Provider.fromSingleton({})}});
  const write=patch=>engine.container.use({state:{write:true}},({state})=>state.transition(next=>Object.assign(next,patch)));
  await write({...base,loading:false});
  return {api,browser,engine,calls,downloads,write,read:()=>engine.container.use(['state'],({state})=>state.snapshot()),act:action=>engine.dispatch(action).next('complete')};
@@ -67,4 +71,46 @@ test('certificate download verifies the selected public assignment and rejects t
   let release,entered;const waiting=new Promise(resolve=>{entered=resolve;});f.api.request=()=>{entered();return new Promise(resolve=>{release=resolve;});};
   const pending=f.act(new DownloadNameCertificate({handle:account.handle}));await waiting;await f.write({session:{account:{id:crypto.randomUUID()}},beamGeneration:1,busy:false});release(result);await pending;assert.equal(f.downloads.length,1);
  }finally{await f.engine.dispose();}
+});
+
+function promptReady(f){return new Promise(resolve=>{const changed=async()=>{const state=await f.read();if(state.stepUp&&!state.busy){f.engine.feed.removeEventListener('browser-state-updated',changed);resolve(state.stepUp);}};f.engine.feed.addEventListener('browser-state-updated',changed);changed();});}
+for(const method of ['password','passkey'])test(`inline ${method} confirmation retries the rejected request once without consuming the original form again`,{timeout:5000},async()=>{
+ const f=await fixture();let pending;try{
+  let fresh=false,claims=0,consumed=0,assertions=0;const bodies=[],options={challenge:'challenge'};
+  f.browser.consumeSubmission=id=>{assert.equal(id,'original');consumed++;return {handle:'7alias',confirmed:'on'};};f.browser.authenticatePasskey=async value=>{assert.deepEqual(value,options);assertions++;return {id:'own-key'};};
+  f.api.request=async(path,body)=>{f.calls.push({path,body});if(path.endsWith('/begin'))return {password:method==='password',passkey:method==='passkey',authenticationOptions:options};if(path.endsWith('/step-up')){assert.equal(body.method,method);fresh=true;return {};}claims++;bodies.push(body);if(!fresh)throw Object.assign(Error('Confirm first'),{code:'reauthentication_required',status:403});return {};};
+  const ready=promptReady(f);pending=f.act(new ClaimHandle({operationId:'original'}));const prompt=await ready;assert.equal(claims,1);assert.equal(consumed,1);
+  const root=render(stepUpView,await f.read(),'es');assert.match(root.textContent,/Confirma tu identidad/);assert.equal(root.querySelector('[name=password]')!==null,method==='password');
+  await f.act(new ConfirmOwner({id:prompt.id,method,values:{password:'private password'}}));await pending;const state=await f.read();assert.equal(state.stepUp,null);assert.equal(state.busy,false);assert.equal(claims,2);assert.deepEqual(bodies[0],bodies[1]);assert.equal(consumed,1);assert.equal(assertions,method==='passkey'?1:0);assert(!JSON.stringify(state).includes('private password'));
+ }finally{cancelStepUp(f.browser);await pending;await f.engine.dispose();}
+});
+
+test('wrong credentials and canceled passkey ceremonies retain the owner and prompt; cancel discards the pending action',{timeout:5000},async()=>{
+ const f=await fixture();let pending;try{
+  let claims=0;f.api.request=async path=>{if(path.endsWith('/begin'))return {password:true,passkey:true,authenticationOptions:{challenge:'one'}};if(path.endsWith('/step-up'))throw Object.assign(Error('Authentication failed.'),{status:401});claims++;throw Object.assign(Error('Confirm first'),{code:'reauthentication_required',status:403});};
+  const ready=promptReady(f);pending=f.act(new ClaimHandle({values:{handle:'7alias',confirmed:'on'}}));const prompt=await ready;
+  await f.act(new ConfirmOwner({id:prompt.id,method:'password',values:{password:'wrong'}}));assert.equal((await f.read()).session.account.id,account.id);assert.equal((await f.read()).stepUp.id,prompt.id);assert.equal((await f.read()).error,'Authentication failed.');
+  f.browser.authenticatePasskey=async()=>{throw Error('Passkey canceled.');};await f.act(new ConfirmOwner({id:prompt.id,method:'passkey'}));assert.equal((await f.read()).error,'Passkey canceled.');assert.equal(claims,1);
+  await f.act(new CancelOwnerConfirmation({id:prompt.id}));await pending;assert.equal((await f.read()).stepUp,null);assert.equal((await f.read()).busy,false);assert.equal(claims,1);
+ }finally{cancelStepUp(f.browser);await pending;await f.engine.dispose();}
+});
+
+for(const change of ['owner','session','offline'])test(`confirmation cannot retry after ${change} changes`,{timeout:5000},async()=>{
+ const f=await fixture();let pending;try{
+  f.api.request=async path=>{f.calls.push({path});if(path.endsWith('/begin'))return {password:true};throw Object.assign(Error('Confirm first'),{code:'reauthentication_required',status:403});};
+  const ready=promptReady(f);pending=f.act(new ClaimHandle({values:{handle:'7alias',confirmed:'on'}}));const prompt=await ready;
+  await f.write(change==='owner'?{session:{account:{id:crypto.randomUUID()}},beamGeneration:1}:change==='session'?{session:{account,sessionContext:'replacement'}}:{offline:true});await f.act(new ConfirmOwner({id:prompt.id,method:'password',values:{password:'private'}}));await pending;assert.equal(f.calls.length,2);assert.equal((await f.read()).stepUp,null);
+ }finally{cancelStepUp(f.browser);await pending;await f.engine.dispose();}
+});
+
+test('legacy console actions use inline confirmation and a repeated freshness rejection does not loop',{timeout:5000},async()=>{
+ const f=await fixture();let pending;try{
+  let mutations=0,begins=0;f.api.request=async path=>{if(path.endsWith('/begin')){begins++;return {password:true};}if(path.endsWith('/step-up'))return {};mutations++;throw Object.assign(Error('Still needs confirmation'),{code:'reauthentication_required',status:403});};
+  const ready=promptReady(f);pending=f.act(new RevokeOtherDevices());const prompt=await ready;await f.act(new ConfirmOwner({id:prompt.id,method:'password',values:{password:'private'}}));await pending;const state=await f.read();assert.equal(mutations,2);assert.equal(begins,1);assert.equal(state.stepUp,null);assert.equal(state.busy,false);assert.equal(state.error,'Still needs confirmation');
+ }finally{cancelStepUp(f.browser);await pending;await f.engine.dispose();}
+});
+
+test('bearer message dispatches never trigger owner confirmation or automatic retries',async()=>{
+ class Dispatch extends OwnerFlow {async perform(r){await r.api.request('/api/messages/'+account.id+'/postbacks',{},'POST',{dispatchToken:'proof'});}}
+ const f=await fixture();try{let calls=0;f.api.request=async()=>{calls++;throw Object.assign(Error('Remote confirmation required'),{code:'reauthentication_required',status:403});};await f.act(new Dispatch());assert.equal(calls,1);assert.equal((await f.read()).stepUp,undefined);assert.equal((await f.read()).busy,false);}finally{await f.engine.dispose();}
 });

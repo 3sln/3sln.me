@@ -111,7 +111,7 @@ test('Worker metadata updates do not read payload R2 objects; cold restore retai
 
 test('actual Worker device registry uniqueness and approval CAS are atomic',async()=>{
  const namespaces=await h.mf.getDurableObjectNamespace('IDENTITIES');const registry=namespaces.get(namespaces.idFromName('devices-v1'));const code='ABCD-EFGH';
- const first={id:crypto.randomUUID(),userCode:code,revision:0,expiresAt:Date.now()+60000,status:'pending'};const second={...first,id:crypto.randomUUID()};
+ const first={id:crypto.randomUUID(),userCodeHash:code,revision:0,expiresAt:Date.now()+60000,status:'pending'};const second={...first,id:crypto.randomUUID()};
  const results=await Promise.all([registry.createDevice(first),registry.createDevice(second)]);assert.equal(results.filter(Boolean).length,1);const winner=await registry.findDeviceByCode(code);
  const cas=await Promise.all([registry.compareAndSwapDevice(winner.id,0,{...winner,revision:1,status:'approved'}),registry.compareAndSwapDevice(winner.id,0,{...winner,revision:1,status:'denied'})]);assert.equal(cas.filter(Boolean).length,1);assert.equal(await registry.compareAndSwapDevice(winner.id,0,winner),false);
 });

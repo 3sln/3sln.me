@@ -1,5 +1,8 @@
 # Passkeys, sessions and device approval
 
+Supersession: [Device authorization](device-authorization.md) is the proposed successor for interoperable device grants. This document describes the existing provider-local device sign-in.
+
+
 Status: implemented platform-independent account policy under the user's request for multiple passkeys, device management and TV/new-device approval. Worker persistence, HTTP routes, cookie delivery and UI verification are separate integration evidence recorded in DEVLOG.md. This is an issuer-local login flow, not a claim of OAuth device-grant interoperability.
 
 An owner can enroll up to five verified passkeys, inspect safe credential metadata, rename labels and remove a credential. Enrollment is a fresh WebAuthn registration ceremony bound to the exact RP/origin, account, expiring challenge and initiating owner session. Enrollment, removal and session revocation require a session authenticated within 15 minutes and exact-origin/session CSRF checks. Removing a passkey requires a remaining working password or passkey and a configured recovery-file hash. Removing a credential revokes login sessions created using that credential. A verified email remains contact-only unless its owner explicitly enables email login. Email login is disabled by default; disabling it invalidates outstanding links, while file recovery remains unchanged. Passkey removal does not treat contact verification as a replacement working credential.

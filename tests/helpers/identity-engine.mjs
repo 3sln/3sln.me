@@ -26,8 +26,8 @@ export class MemoryAccounts {
 export class MemoryDevices {
   records = new Map();
   async get(id) { return structuredClone(this.records.get(id)); }
-  async findByUserCode(code) { return structuredClone([...this.records.values()].find(value => value.userCode === code)); }
-  async create(value) { if (this.records.has(value.id) || [...this.records.values()].some(record => record.userCode === value.userCode)) return false; this.records.set(value.id, structuredClone(value)); return true; }
+  async findByUserCode(code) { return structuredClone([...this.records.values()].find(value => value.userCodeHash === code)); }
+  async create(value) { if (this.records.has(value.id) || [...this.records.values()].some(record => record.userCodeHash === value.userCodeHash)) return false; this.records.set(value.id, structuredClone(value)); return true; }
   async compareAndSwap(id, revision, value) { if (this.records.get(id)?.revision !== revision) return false; this.records.set(id, structuredClone(value)); return true; }
 }
 /** Serialized in-memory transactional metadata, the contract IdentityShardStorage needs. */
@@ -76,6 +76,7 @@ export async function activate(act, input = signupInput()) {
   const pending = await act('signup', input);
   const file = await act('downloadRecovery', pending);
   const owner = await act('confirmRecovery', { ...pending, recoveryToken: file.recoveryToken, downloadConfirmed: true });
+  await act('stepUp',{method:'password',password:input.password},sessionContext(owner));
   return { pending, file, owner, ownerContext: sessionContext(owner) };
 }
 export const sessionContext = (result, base = context) => ({ ...base, sessionToken: result.sessionToken, csrfToken: result.csrfToken });

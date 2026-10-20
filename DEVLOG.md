@@ -1716,3 +1716,123 @@ Each suite passed 10 consecutive runs under 12 busy-loop children plus 4 concurr
 **Activity (Codex).** [Core interop draft](docs/spec/activity.md), [host activity center](docs/architecture/activity-center.md) and [adversarial review](docs/release/activity-design-review.md). Signed app activity with required app attribution and namespaced app tags; lifecycle and limits; per-app opt-in push routing; multi-account safety; an exact migration list.
 
 Open questions: push/digest limits; whether updates mark read items unread; expiry/history caps. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-20 — Link-and-code approval design (device authorization)
+
+[Core draft](docs/spec/device-authorization.md), [host design](docs/architecture/linked-approval.md), [security review](docs/release/linked-approval-review.md).
+
+- **One request type, two kinds.** "session" extends a provider login to another device; "app" serves CLI/TV clients via RFC 8628. Both share one user-code namespace and one `/approve` page.
+- **Feature and binding.** Declared via RFC 8628 manifest fields plus `features["device-authorization.v1"]`. DPoP is mandatory, including for access tokens.
+- **Lifetime.** Ends at the earliest of the approving session's expiry, the policy cap, or a user-chosen shorter duration (1 h preselected). Ending the approving session revokes everything it approved, transitively.
+- **Freshness.** Approval requires a passkey or password step-up within 5 minutes. Sessions created by device approval, email link or recovery never count as fresh until their own step-up.
+
+Mitigations after review:
+- the user always types or pastes the code; QR carries only a request locator, with no confirm-only path in v1;
+- codes are looked up only for a signed-in account, with failed-guess limits per account and network prefix plus a global budget sized to live codes;
+- codes are stored as server-keyed hashes; device codes are single use;
+- polls cause no storage writes;
+- the requesting screen asks "Continue as @handle?";
+- apps are named by verified host only; a country-mismatch warning instead of location; no pushed approval prompts, and a notice after every approval.
+
+The review found two high-severity defects in the current device sign-in, being fixed now (slice LA1a, via Codex):
+- **LA-R1:** device-approved sessions passed freshness for 15 minutes and got full 24 h lifetimes, enabling chained approvals, passkey addition or email linking.
+- **LA-R2:** the QR review page displayed the code beside the entry field, and approval submitted the URL's code rather than the typed one.
+
+Open questions:
+- app credential cap (24 h or 30 days after step-up);
+- whether ordinary sign-out also ends sessions it approved;
+- the device grant for unreviewed metadata-document clients;
+- default duration;
+- pasted codes for CLIs;
+- proof-of-work.
+
+Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-20 — Extensions, slots and unified integrations (design rev 2)
+
+[Extensions draft](docs/spec/extensions.md), [integrations draft](docs/spec/integrations.md), [design note](docs/architecture/extensibility-design.md), [two-lens review](docs/release/extensibility-review.md): 24 security findings (3 High) and 22 interop findings (6 High), all answered in revision 2.
+
+- **Slots.** A slot is a preference fragment with a `slot` member and exactly one resource field. Occupancy is the owner's value for that field, and consuming a slot is an ordinary fragment grant, so there is no new authorization primitive. A provider unaware of slots sees an ordinary fragment.
+- **Selection policy** is fixed by the slot: `exclusive`, `ordered`, `broadcast` or `consumer-choice`. Owners pick occupants and order; consumers apply the policy. Failover never switches occupants after an ambiguous outcome, and `any-error` failover is allowed only for contracts whose methods are all read/pure.
+- **Extensions.** Manifest `extensions` entries are claims, never assignments: `{slot, digest?, role: occupant|consumer, ref, purpose?, required?, options?}`. They appear in provider and integration manifests.
+- **Profiles stay distinct.** A profile describes the host (one per provider, a map); only profiles may use the component-origin envelope. All three containers share processing rules.
+- **Integrations.** Apps and integrations are one concept (external or built-in). The integration manifest lives within OAuth client metadata, and approval creates the existing app connection, extended with state and generation. Preference updates are RFC 8417 events carrying a full snapshot and a sequence number.
+- **Discovery** is a provider-only search/filter/browse/probe call.
+- **Brokering.** Consumers call integrations directly with 300 s provider-minted RFC 9068 tokens returned through `preferences/v2`. Severance commits first, then sends invalidations; a conforming integration cuts access within 360 s even if the invalidation is lost.
+
+Core amendments C1–C11 are proposed, not yet applied. Notable ones:
+- C1: fragment schemas accept the `slot` member (current `schema.mjs` rejects unknown members);
+- C3: one unapproved occupant no longer hides the field from consumers;
+- C8: bounded-delay revocation for brokered resources.
+
+Implementation slices X1–X12 (critical path X1 → X3 → X4) are in the design note. Open questions:
+- public per-entity slot resolution;
+- the 360 s revocation bound versus introspection for write contracts;
+- a separate integration-manifest fetch;
+- built-in occupants never preselected;
+- slot registry location.
+
+Reviewer ___ Date ___ Outcome ___.
+
+User accepted the coordinator recommendations (2026-10-20):
+
+Device authorization:
+- app credentials up to 30 days only with fresh sign-in at approval;
+- ordinary sign-out also ends sessions it approved, after a clear warning;
+- no device grant for unreviewed metadata-document clients initially;
+- 1 h default for app approvals and normal session length for session approvals;
+- pasted codes acceptable for CLIs;
+- no proof-of-work yet.
+
+Extensions:
+- 360 s bounded revocation acceptable for read-only brokered contracts, while write-capable contracts require live introspection;
+- built-in occupants are never preselected;
+- core amendments C1–C11 approved provisionally.
+
+## 2026-10-20 — BindleBox messaging app design
+
+[Design](docs/architecture/messaging-app.md), [interop draft](docs/spec/bindlebox.md), [extraction plan](docs/architecture/messaging-extraction.md), [two-lens review](docs/release/messaging-app-review.md): 3 blockers and 14 highs, all fixed in docs. The blockers were one-way conversations, groups never forming, and app switching that made users look like forgers. Name recommendation: BindleBox, chosen from eight candidates; no trademark search done.
+
+- **Signing.** The app holds its own per-user key, bound by a provider-signed certificate (≤24 h, limited to message/receipt/archive signing, naming the app's certified delivery URL). Rotation revokes the predecessor, and revocation checks are mandatory for edits, deletes, membership changes and receipts. The identity key stays with the provider and still signs links.
+- **Core keeps** the generic link envelope, response signing, replay records and landing pages; link issuance/policy services for apps; the new key-delegation feature; activity; the SMTP entry point.
+- **BindleBox takes** the contact-link type, conversations, Views, tags and rules.
+- **Send queue.** One per-user queue on the app's Durable Object with per-recipient tasks, network calls outside transactions, spike-derived retry budgets, and a monotonic recipient count. Per-recipient delivered/pending/failed/cancelled states, "Retry missing", automatic per-person catch-up, and SSE progress that survives reconnects.
+- **Host multicast** is optional, at most 32 recipients per request, with credentials verified before any mailbox wakes.
+- **Email bridge** via the public-message-intake slot, with one invariant auto-reply.
+- **No public per-entity slot lookup is needed**; contact links and signed conversation updates suffice.
+
+Extraction plan: new `packages/links`, `packages/content`, `packages/bindlebox-protocol`, `packages/bindlebox-engine` and `apps/bindlebox`, with an import-boundary test. Existing messages are reset rather than migrated (pending user confirmation). BindleBox is engine-first with a multi-party network simulator. Slices: C0–C3 core, B0–B9 BindleBox, then cutover X1 and email bridge X12.
+
+User addition: for public/anonymous requests, BindleBox supports auto-rejection rules through classification, with tiers:
+- "very likely spam" auto-rejected by a default rule (recoverable for a short period);
+- "could be spam" tagged and deprioritized by a default priority rule, but reachable.
+
+Being folded into the design. Reviewer ___ Date ___ Outcome ___.
+BindleBox public-request spam tiers (design §12.1, spec §6.7):
+- "very likely spam" (classifier probability ≥0.97, provisional) is promoted to `sys:spam` and auto-rejected, with no notification and only the fixed bridge reply.
+- "could be spam" (0.70–0.97) stays `sys:suspected.spam`, quiet and sorted low but acceptable.
+- Thresholds are bound to the classifier model version, and a model change suspends auto-reject until re-tuned.
+- With no classifier, deterministic heuristics only and never auto-reject.
+- A recoverable "Rejected" view (500 items or 7 days); allowlisted senders never auto-rejected; per-sender, per-domain and per-owner rate limits.
+- Rejection happens after storage, so senders learn nothing about classification.
+Abuse cases A-1–A-8 added to the review (not independently re-reviewed). The activity-center migration table is corrected so `email.mjs` and `dispatcher.mjs` stay in core.
+
+## 2026-10-20 — Device sign-in security fixes (LA1a) and step-up follow-ups
+
+LA1a (Codex) fixes LA-R1 and LA-R2:
+- device-approved, email-link and recovery sessions require their own credential step-up before counting as fresh;
+- device sessions inherit the approving session's expiry and revoke transitively when it ends;
+- QR/links carry only a request locator, and approval submits the typed code, compared by hash in constant time, never displayed.
+
+Regression tests and en/es copy added. `protocol.md` lists `device-authorization.v1` (proposed), `device-login.md` carries a supersession note, and the new spec is in the public docs.
+
+Browser-gate follow-ups:
+- `identity-names` relied on activation sessions counting as fresh.
+- The `authorization-entry-ui` end-session flake was pre-existing: random test IPs collided on the per-IP signup cooldown. Fixed with sequential test addresses; no limits changed.
+- The occasional 10-minute core run traced to fixed 10 ms sleeps in `packages/sdk/test/flows.test.mjs`, which fail under parallel load and then hang the run.
+
+Coordinator decision:
+- Signup activation that itself completed a passkey or password ceremony counts as fresh, while device approval, email link and recovery do not.
+- An owner step-up route plus an inline "Confirm it's you" prompt replaces forced sign-out/sign-in.
+
+Being implemented together with the flows-test and ui-chaos-scale timing fixes. Reviewer ___ Date ___ Outcome ___.
