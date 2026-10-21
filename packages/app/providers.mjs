@@ -66,6 +66,9 @@ export const PROVIDERS = Object.freeze({
   eventBuses: row('edge', 'domain', 'planned', 'EV-1: unmounted bus manifest validation and immutable fragment pins; EVENT_BUSES_ENABLED required.'),
   deviceGrant: row('edge', 'domain', 'planned', 'LA2: unmounted RFC 8628 device grant (device endpoint, device_code token grant, app-kind consent, DPoP RPC, lineage drain) over the linked-approval port and owner federation shards; DEVICE_AUTHORIZATION_ENABLED required.'),
   links: row('account', 'domain', 'pilot', 'BB-C1a: links contract (issue, revoke, rotate, evaluate, list, changes) over LinkService; owner or slot-occupant app actors; BINDLEBOX_ENABLED required. Obtain with { actor }.', { scoped: true }),
+  delegations: row('account', 'domain', 'pilot', 'IDKEYS-2 (BB-C3): key-delegation.v1 certificates (issue, renew, revoke, reconcile, list, public status) over DelegationRegistry; owner, messaging-ingress occupant app, system or public actors; BINDLEBOX_ENABLED required. Obtain with { actor }.', { scoped: true }),
+  activityPush: row('account', 'domain', 'pilot', 'ACT-2: owner-scoped activity push policy (per-app opt-in, rules, quiet hours, digests, budgets, preview consent) and the leased activity push outbox (packages/messaging/notifications.mjs). Obtain with { actor }. Reached only through the ACTIVITY_V2_ENABLED-checked account RPC.', { scoped: true }),
+  consent: row('both', 'domain', 'planned', 'CX-1: unmounted pure consent risk/wording model over pinned contracts, manifests, reviewed apps and current feed readers; INCREMENTAL_AUTH_ENABLED required.'),
 });
 
 export const systemClock = Object.freeze({ now: () => Date.now() });

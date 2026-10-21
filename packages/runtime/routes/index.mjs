@@ -40,8 +40,9 @@ import * as search from './search.mjs';
 import * as notifications from './notifications.mjs';
 import * as federation from './federation.mjs';
 import * as links from './links.mjs';
+import * as delegation from './delegation.mjs';
 
-export const ROUTES=Object.freeze([site,admin,identity,lifecycle,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,federation,links]);
+export const ROUTES=Object.freeze([site,admin,identity,lifecycle,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,federation,links,delegation]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

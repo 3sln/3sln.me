@@ -1992,3 +1992,41 @@ Wave 2a integration (Codex, coordinator-verified):
 - CLI operation expectations derived from registries.
 
 Gates: core 1595, Worker 55, UI-state 215, BindleBox 96, DOM, build, dry run, audit; browser gate 179 with 4 WebKit skips.
+
+Wave 2a committed and deployed as 0b92f9a (flags off). Wave 2b started:
+- Codex: LA5 requesting screen; CX-1 consent risk/wording model (`packages/consent`).
+- Claude: IDKEYS-2 app key delegation certificates (24 h host-configurable maximum, provisional) with a public status endpoint; ACT-2 activity push policy.
+
+IDKEYS-2 landed (provisional, flag off). `packages/identity/delegation.mjs` issues `key-delegation.v1` certificates as engine Actions/Queries:
+- only to the messaging-ingress occupant reported by a fail-closed `DELEGATION_SLOT_OCCUPANT` port;
+- only for consented author, receipt and archive purposes, with proof of possession, refusing identity-key aliases;
+- signed with the current registry key; host-configurable lifetime `DELEGATION_CERTIFICATE_SECONDS` (24 h maximum, provisional);
+- a new key revokes its predecessor, and renewal keeps `since`;
+- revocation by key, by client or all; bounded history and audit.
+Core encodes certificates itself, since it cannot import the protocol library; a cross-test pins compatibility. Public status `GET /identity/<sub>/delegations/<jkt>` gives uniform answers with `max-age=300`, immutable once a revocation is persisted. 14 tests. [Review](docs/release/key-delegation-review.md): KD-1/2/3/5/6/7 fixed, KD-8 partly fixed. KD-4 open as a production gate: uninstall and suspension hooks must revoke delegations, which needs lifecycle/suspension, EXT-X4 and C1b wiring. Reviewer ___ Date ___ Outcome ___.
+
+CX-1 landed: `packages/consent/{effects,localization,reviewed-contracts,index}.mjs`.
+- Four risk tiers.
+- Wording precedence: 3sln.me catalogue, then contract publisher, then fallback, never the app, with factual attribution. App claims shown separately.
+- en/es localization; feed-reader escalation.
+- Unreviewed apps refused tier-4 requests.
+- Engine queries unmounted and default-off.
+25 tests. Integration must supply verified metadata snapshots and a registrable-domain resolver.
+
+LA5 (Codex) implemented the flag-gated requesting flow (start, poll, accept, cancel, locator validation, expiry, backoff, cancellation fencing; 14 harness tests). It stopped short of the visible screen because `ui/release-auth.mjs` and `release.mjs` were outside its ownership. The coordinator granted an exception for those device hunks, and the screen is being finished.
+
+ACT-2 landed (provisional, behind `ACTIVITY_V2_ENABLED`): activity push policy as engine operations.
+- Per-app, per-incarnation opt-in (default off).
+- Ordered app-scoped rules overriding the app's priority claim (capped at normal).
+- Mutes, quiet hours (fixed offset or IANA zone), digests, per-app and account budgets, collapse cooldowns, Web Push `Topic`.
+- Generic lock-screen text unless both account and device consent.
+- The leased outbox re-checks state before transport.
+Owner operations are reachable only via the flag-checked `activityPush` RPC, avoiding ACT1-S10. [Review](docs/release/activity-design-review.md): R1–R7, R10 fixed. Open:
+- R8: named zones deviate from the design; accepted as an improvement, pending design update;
+- R9: preview enablement without device proof;
+- R11.
+Also pending: an outbox scheduler and `sw.js` rendering of activity notices. Core 1646/1646. Reviewer ___ Date ___ Outcome ___.
+
+LA5 finished behind the default-off flag: device choice, link and code, locator-only QR, account confirmation, polling, expiry and cancellation. The legacy QR flow keeps working. 15 engine and 28 browser tests (en/es, 320/390/1440 px, light/dark). LA3 must mount the linked routes and add QR locator support.
+
+Wave 2b verified: core 1646, Worker 55, UI-state 215, DOM, build, dry run. Codex full browser gate 178 with one provider-matrix assertion failure that passed 3/3 in isolation (watch for flakiness) and 4 WebKit skips.

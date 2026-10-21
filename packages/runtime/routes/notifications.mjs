@@ -8,11 +8,14 @@ export function allowedMethods(path){
  if(path==='/api/notifications')return ['GET','PUT'];
  if(['/api/notifications/subscribe','/api/notifications/unsubscribe','/api/notifications/unsubscribe-link'].includes(path))return ['POST'];
  if(/^\/api\/notifications\/devices\/[^/]+$/.test(path))return ['DELETE'];
+ if(path==='/api/notifications/activity')return ['GET','PUT'];
+ if(/^\/api\/notifications\/activity\/(apps|devices)\/[^/]+$/.test(path))return ['PUT'];
+ if(/^\/api\/notifications\/activity\/explain\/[a-f0-9-]{36}$/.test(path))return ['GET'];
  return null;
 }
 // Notification preferences are protective; unsubscribing is never refused for capacity.
 export const admission={
- protective:[{match:path=>path==='/api/notifications',test:()=>true}],
+ protective:[{match:path=>path==='/api/notifications',test:()=>true},{match:path=>path==='/api/notifications/activity'||path.startsWith('/api/notifications/activity/apps/')||path.startsWith('/api/notifications/activity/devices/'),test:()=>true}],
  exempt:path=>['/api/notifications/unsubscribe','/api/notifications/unsubscribe-link'].includes(path),
 };
 export const stages={
@@ -39,9 +42,21 @@ export const stages={
     const appDisconnect=/^\/api\/apps\/([a-f0-9-]{36})$/.exec(path);if(appDisconnect&&request.method==='DELETE')return json(await object.appDisconnect(id,appDisconnect[1]));
  },
  async owner({request,env,path,owner,id,object}){
+    if(path==='/api/notifications/activity'||path.startsWith('/api/notifications/activity/'))return activityPushRoute({request,env,path,id,object});
     if(path==='/api/notifications')return json(await object.notificationPreferences(id,request.method==='PUT'?await body(request):undefined,Boolean(owner.account.verifiedEmail)));
     if(path==='/api/notifications/unsubscribe-link'&&request.method==='POST')return json({url:`${env.APP_ORIGIN}/unsubscribe#token=${encodeURIComponent(await object.unsubscribeLink(id))}`});
     if(path==='/api/notifications/subscribe'&&request.method==='POST')return json(await object.subscribe(id,await body(request)));
     const device=/^\/api\/notifications\/devices\/([^/]+)$/.exec(path);if(device&&request.method==='DELETE')return json(await object.removeSubscription(id,device[1]));
  },
 };
+
+// ACT-2 activity push settings: absent (404) unless ACTIVITY_V2_ENABLED. Dispatcher claim/authorize/finish are
+// never reachable from HTTP; the account RPC `activityPush` admits only the owner settings operations.
+async function activityPushRoute({request,env,path,id,object}){
+ if(env.ACTIVITY_V2_ENABLED!=='true')return json({error:'not_found'},404);
+ if(path==='/api/notifications/activity')return json(request.method==='PUT'?await object.activityPush(id,'configure',{input:await body(request,32768)}):await object.activityPush(id,'settings'));
+ const target=/^\/api\/notifications\/activity\/(apps|devices|explain)\/([A-Za-z0-9_-]{1,64})$/.exec(path);if(!target)return json({error:'not_found'},404);
+ if(target[1]==='explain'&&request.method==='GET')return json(await object.activityPush(id,'explain',{id:target[2]}));
+ if(request.method==='PUT'&&target[1]!=='explain')return json(await object.activityPush(id,target[1]==='apps'?'app':'device',{id:target[2],input:await body(request,4096)}));
+ return json({error:'not_found'},404);
+}

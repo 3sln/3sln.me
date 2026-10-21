@@ -3,6 +3,8 @@
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
 import {appNotificationCheck} from '../app-notifications.mjs';
 import {mcpCollections as accountMcpCollections,mcpOperation as accountMcpOperation} from '../../mcp/account.mjs';
+import {ACTIVITY_PUSH_OWNER_OPERATIONS} from '../../messaging/notifications.mjs';
+import {operate} from '../../app/engine.mjs';
 
 export const methods={
   async appConnections(owner){return this.apps.list(owner);},
@@ -20,6 +22,11 @@ export const methods={
   async removeSubscription(owner,id){return this.notifications.unsubscribeDevice(owner,id);},
   async unsubscribe(owner,token){return this.notifications.unsubscribe(token);},
   async unsubscribeLink(owner){return `${owner}.${await this.notifications.issueUnsubscribe(owner,'email')}`;},
+  // ACT-2 owner activity push settings; the only entry point to those engine operations, absent with the flag off.
+  async activityPush(owner,name,{id,input}={}){
+   if(this.config.ACTIVITY_V2_ENABLED!=='true'||typeof name!=='string'||!Object.hasOwn(ACTIVITY_PUSH_OWNER_OPERATIONS,name))throw Object.assign(new Error('Not found.'),{code:'not_found',status:404});
+   const Operation=ACTIVITY_PUSH_OWNER_OPERATIONS[name];return operate(this.engine,new Operation({actor:{kind:'owner',owner},id,input:structuredClone(input)}));
+  },
 };
 
 export const rpc={
@@ -38,4 +45,5 @@ export const rpc={
  appConnectionCheck:{warm:true},
  mcpCollections:{},
  mcpOperation:{warm:true,activity:'resource-use'},
+ activityPush:{warm:true},
 };

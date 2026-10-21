@@ -80,7 +80,7 @@ const constructors={
   'link-email':actions.LinkEmail,'revoke-grant':actions.RevokeGrant,
   'add-passkey':actions.AddPasskey,'remove-passkey':actions.RemovePasskey,
   'revoke-device':actions.RevokeDevice,'revoke-other-devices':actions.RevokeOtherDevices,
-  'start-device':actions.StartDeviceLogin,'device-proof-ready':actions.PrepareDeviceQR,'cancel-device':actions.CancelDeviceLogin,
+  'select-device-kind':actions.SelectDeviceKind,'start-device':actions.StartDeviceLogin,'device-proof-ready':actions.PrepareDeviceQR,'accept-device':actions.AcceptDeviceLogin,'cancel-device':actions.CancelDeviceLogin,
   'approve-device':actions.ApproveDeviceLogin,
   'deny-device':actions.DenyDeviceLogin,'set-language':actions.SetLanguage,'set-message-animations':actions.SetMessageAnimations,
   'save-shortcut':actions.SetShortcut,'reset-shortcut':actions.ResetShortcuts,

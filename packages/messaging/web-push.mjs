@@ -35,15 +35,18 @@ export function createPushTransport(config = {}, {fetcher = fetch} = {}) {
   } catch { return null; }
   return Object.freeze({
     available: true,
-    async send(input, payload) {
+    // `options` (ACT-2 activity push only): urgency, a Topic so the push service collapses an undelivered notice of
+    // the same group, and TTL. Omitted, the request is exactly the existing one.
+    async send(input, payload, {urgency = 'normal', topic, ttl = 600} = {}) {
       const subscription = validatePushSubscription(input);
+      if (!['very-low', 'low', 'normal', 'high'].includes(urgency) || topic !== undefined && (typeof topic !== 'string' || !/^[A-Za-z0-9_-]{1,32}$/.test(topic)) || !Number.isInteger(ttl) || ttl < 0 || ttl > 86400) throw fault('invalid_push_options', 400);
       let body;
       try { body = JSON.stringify(payload); } catch { throw fault('invalid_push_payload', 400); }
       if (typeof body !== 'string' || Buffer.byteLength(body) > 2048) throw fault('invalid_push_payload', 400);
       let details;
       try {
         details = webpush.generateRequestDetails(subscription, body, {
-          TTL: 600, urgency: 'normal', contentEncoding: 'aes128gcm',
+          TTL: ttl, urgency, ...topic ? {topic} : {}, contentEncoding: 'aes128gcm',
           vapidDetails: {subject, publicKey: config.VAPID_PUBLIC_KEY, privateKey: config.VAPID_PRIVATE_KEY},
         });
       } catch { throw fault('invalid_subscription', 400); }

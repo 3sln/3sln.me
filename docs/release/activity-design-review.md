@@ -160,3 +160,55 @@ Self-found during fixes: the app principal used for budget, tag and receipt keys
 - Push dispatch from pending groups (ACT-2).
 
 Evidence: core suite, `test:worker`, `test:ui-state`, `build:assets`, `check:worker`. No browser or production evidence. Reviewer ___ / date ___ / outcome ___.
+
+## ACT-2 implementation
+
+2026-10-20. Wave 2b slice ACT-2 implements activity push policy as engine operations in `packages/messaging/notifications.mjs` (`ActivityPushStore`, provider `activityPush`). This section records one independent agent review (privacy and notification abuse, read-only, with probes) and the fixes. It is not human sign-off. Everything is behind `ACTIVITY_V2_ENABLED` (default off); production stays disabled.
+
+**What was built:**
+- Owner policy: account switch, "pause all push", account preview consent, quiet hours, digest cadence, hard mutes, and up to 100 ordered app-scoped rules (tag/exclude/minimum-priority filters; route feed, immediate or digest; priority override; explicit quiet bypass for immediate rules only).
+- Per-app opt-in per connection incarnation, default off: selected tags or all, with an immediate or digest route. Reconnecting needs a fresh opt-in. Opt-in, rule broadening, resuming and turning the account push channel back on all apply only to activity admitted afterwards.
+- App priority is a claim. It can meet a rule's minimum, but it is capped at normal unless an owner rule sets a priority, and it never selects a route or bypasses anything.
+- Budgets: 3/app/hour and 10/day per connection (so they survive reconnects), 6/account/hour and 20/day across devices, charged once per logical notice. Further limits:
+  - a 10-minute cooldown per collapse group;
+  - at most 64 outbox jobs;
+  - held members capped per app.
+- Push-side collapse:
+  - a queued notice that has not been attempted takes the group's newest eligible member;
+  - one Web Push `Topic` per group and device, so the push service replaces an undelivered notice.
+- Leased outbox: claim leases one delivery per enrolled device and freezes its payload at the first attempt. `authorize` runs immediately before transport and checks the current item, revision, route, connection, opt-in, device, quiet hours and preview. Then `finish` applies retry with backoff (8 attempts, 24 h lifetime), or removes a subscription the push service reports as gone (404/410).
+- Lock screen:
+  - Generic notices say only "New activity". Their routing data is a per-account, per-device destination hint, plus the item and revision for single notices. No owner ID is included.
+  - Preview needs both account and device consent. It shows the app and subject, plus the destination account label when the dispatcher supplies one.
+  - No icons, URLs or actions are ever included.
+- Owner settings are reachable only through the account RPC `activityPush`, which checks the flag, and the `/api/notifications/activity…` routes. These operations are deliberately absent from `ACCOUNT_OPERATIONS`, which addresses the ACT1-S10 pattern for this slice. Claim, authorize and finish have no HTTP path. `web-push.mjs` gains optional urgency, topic and TTL; omitting them sends exactly the existing request.
+- Tests: `tests/activity-push.test.mjs` (engine harness, fake clock) and `tests/activity-push-transport.test.mjs`.
+
+**Review findings:**
+
+| ID | Severity | Finding | Outcome |
+| --- | --- | --- | --- |
+| ACT2-R1 | medium-high, confirmed | A single shared `held` bucket let one app push everyone's release time to the next day, and evict other apps' members with 33 holds. | **Fixed.** Buckets are per app connection. Each member keeps its own release time, which never moves later, and an app evicts only its own members. Summaries pick members round-robin across apps. Regression R1. |
+| ACT2-R2 | medium, confirmed | A replace that changed `collapseKey` re-joined an event and pushed again. | **Fixed.** Event members past revision 1 never notify. Update notifications (default off in the design) are not implemented. Regression R2. |
+| ACT2-R3 | medium, confirmed | Budget overflow came back as extra account-charged digests, escaping the per-app cap. | **Fixed.** Overflow waits for the owner's scheduled digest. Unscheduled releases (quiet end, cooldown) produce at most one merged summary per hour. Regression in the priority-spoofing test. |
+| ACT2-R4 | medium, confirmed | Hourly digests during quiet hours burst into one notice per bucket at quiet end. With quiet all day, buckets grew without bound. | **Fixed.** One merged summary per pass, ineligible members pruned while quiet, per-app caps. Regression R1. |
+| ACT2-R5 | medium, confirmed | Turning the existing account push channel back on released activity admitted while it was off. | **Fixed.** `NotificationService` records when the channel turns on (`activity-push-channel`), and that time is part of the "only new activity" cutoff. Legacy delivery is unchanged. Regression R5. |
+| ACT2-R6 | low, confirmed | Quiet hours starting between claim and authorize dropped the notice. | **Fixed.** If nothing has been delivered yet, it is held for the post-quiet summary. Regression R6. |
+| ACT2-R7 | low, confirmed | Odd UTC offsets turned a daily digest into an hourly one, and a DST gap skipped that day's digest. | **Fixed.** Offsets must be 15-minute steps. A skipped local hour uses the first instant after the gap. Regression R7. |
+| ACT2-R8 | low | Named IANA zones deviate from the design's "fixed offsets; named zones deferred". A stored zone the runtime no longer knows would fail every claim. | **Fallback fixed** (fixed offset). **Deviation open**: it needs reconciliation and sign-off in DEVLOG. |
+| ACT2-R9 | low, suspected | Any owner session can turn preview on for any enrolled device; A6 asks for per-device consent. | **Open.** Needs proof from that device (subscription possession) or confirmation shown on it. This is ACT-3 / service-worker work. |
+| ACT2-R10 | low/info, confirmed | A lease could expire while transport was still in flight, and a second claim re-sent the notice. | **Fixed.** Authorize extends the lease 30 s past the transport timeout, and the minimum lease is 15 s. Regression R10. |
+| ACT2-R11 | info | `allowedMethods` still lists `/api/notifications/activity*` with the flag off, so it answers 405 rather than 404. | **Open, low.** Same as ACT1-S10: `allowedMethods(path)` has no configuration input. The handlers answer 404. |
+
+**ACT-1 open items:**
+- **S6:** not in ACT-2 files, still open.
+- **S7:** partly addressed. Push now has its own per-app opt-in, separate from admission. Admission still shares the v1 toggle (`packages/apps/connections.mjs`, federation; X4).
+- **S10:** addressed for the push operations as described above. ACT-1's own operations are unchanged.
+
+**Not done (reconciliation for DEVLOG):**
+- No scheduler drives this outbox, or the legacy one, in the runtime. `dispatchActivityPush` is the pass a scheduler would run.
+- The service worker does not yet render `type:'bindle-activity'` or resolve `destination.account` (ACT-3 / `apps/web/sw.js`).
+- Per-rule device sets, update notifications, and per-device preview proof (R9).
+- Changing the time zone does not recompute the due time of digest members already held.
+
+Evidence: core suite, `test:worker`, `test:ui-state`, `build:assets`, `check:worker`. No browser, device, provider or production evidence. Reviewer ___ / date ___ / outcome ___.
