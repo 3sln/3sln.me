@@ -146,3 +146,45 @@ Also noted by the author: `dpop.mjs` lets a malformed segment's `DOMException` (
 
 Decision reviewer: __________  Date: __________  Outcome: __________
 
+
+## LA3 mount
+
+Status: agent review, 2026-10-20. One independent agent reviewer read the uncommitted LA3 mount and ran workerd probes against it. The mount covers: `packages/runtime/device-grant.mjs`; the linked, device, `/approve` and declaration hunks in `packages/runtime/routes/{identity,federation,site}.mjs` and `packages/runtime/federation.mjs`; and the Worker/Node composition. Everything sits behind `DEVICE_AUTHORIZATION_ENABLED`, which defaults to off. This is local evidence only. There is no production verification and no human sign-off.
+
+Human reviewer: __________  Date: __________  Outcome: __________
+
+**Judged sound by the reviewer:**
+- **Owner trust.**
+  - Review, approve and drain take the owner from the authenticated session.
+  - `issue` takes it from LA1's redemption.
+  - RPC takes it from the token prefix, after an active-account check and before any Durable Object wakes.
+  - The owner shard refuses any other owner, and `device()` exposes only five methods. None of them is reachable over HTTP.
+- **Approval routes.** They run after the router's exact-Origin check and require the member's CSRF token and an owner/session-context match.
+- **`configure`.** It adds no capability beyond `/api/preferences`.
+- **Binding cookie.** It is `__Host-`, HttpOnly and SameSite=Strict.
+- **Review payload.** It carries no client name, DPoP data or device code. `authAt` is UX only, and every decision re-checks it.
+- **Lone `Sec-Fetch-Mode`.** Relaxing the browser refusal for this single header is safe.
+- **Bounded reads.** Body reads are bounded, and poll limits run before signatures or storage.
+- **Declaration.** The declaration appears only on the authority manifest, and only when the flag is on and federation, refresh and the DPoP key are all mounted. Every declared member works.
+- **Flag off.**
+  - The new paths answer exactly like unknown paths.
+  - No cookies are set.
+  - `/api/config` gains only a boolean.
+  - The legacy `/device` page and the QR validator are unchanged.
+- **Flag on with federation off.** Only the session kind mounts, and `configure` fails closed.
+- **Drain.** It re-arms while the outbox has entries, and it is cleanup rather than the access control.
+
+| ID | Severity | Finding | Disposition |
+| --- | --- | --- | --- |
+| LA3-S1 | Medium | Refresh and access tokens have the same shape as device codes. Device-code cancellation ran first for any DPoP-bearing revocation and returned its own errors (for example a stale proof, or `invalid_request` for a browser client). The real RFC 7009 revocation then never ran, while the client believed the token was revoked. | **Fixed.** Only an explicit `token_type_hint=device_code` can fail the request. Without a hint, cancellation is best effort and the RFC 7009 handler always runs. Requests with browser headers skip it. Worker test: a stale-proof, unhinted DPoP revocation still revokes. |
+| LA3-S2 | Medium | Device polling went through the generic `/oauth/*` limiter, which allows 30 requests per minute per IP and answers 429. The provider's global poll cap answered 503. The SDK treats both as terminal, so a shared NAT, or an attacker in the same lane, could abort other users' sign-ins. | **Fixed at the mount.** The `device_code` branch now runs before the generic limiter, under the provider's own per-network and global poll bounds. Overload is answered as RFC 8628 `slow_down` (interval 10). Residual (SDK owner): the SDK should treat 429 or 503 with `Retry-After` as a back-off. |
+| LA3-S3 | Low | Routes were gated on the string `'true'`, but the mount evidence also accepted boolean `true`. On Node, `config:{DEVICE_AUTHORIZATION_ENABLED:true}` could therefore declare routes that were not mounted. | **Fixed.** The routes use the same predicate as the mount evidence. |
+| LA3-S4 | Low | An uncoded failure on the token branch became a 500 after redemption. A lost owner-shard call left a live lineage with no family. | **Fixed.** The token branch answers 503 `temporarily_unavailable`. A lost or uncoded remote `issue` revokes the reserved lineage and answers `access_denied`. |
+| LA3-S5 | Low | A malformed `choice` was dropped, so the request fell back to the longest default lifetime. Separately, an app-kind approval sent without a consent array goes straight to LA1. | **Fixed for `choice`.** A present but malformed choice now answers `invalid_choice`. **Accepted** for the second part: LA1 consumes the request, the redemption then fails closed with `access_denied`, and only the approver's own flow is affected. |
+| LA3-S6 | Low (suspected) | On the Worker, every resolve, session kind included, wakes the member's owner FederationObject. That writes its owner marker and arms its alarm. | **Accepted residual.** The calls are authenticated and bounded by the account and network budgets. Routing session-kind resolves away from the shard would need a kind probe that charges the guess budget twice. Revisit with a provider short-circuit. |
+
+Also reconciled by the author during the mount (not reviewer findings):
+- Node's `fetch` (undici, also the SDK's CLI transport) always sends `Sec-Fetch-Mode: cors`. Under the spec's literal "any `Sec-Fetch-*`" rule, the LA2 browser refusal would reject every Node CLI. The mount withholds only a lone `Sec-Fetch-Mode` from the check, because browsers send it together with `Sec-Fetch-Site`/`Dest` (and `Origin` on POST). Spec §4.1 wording needs the same refinement (coordinator).
+- With the flag on, the console uses the linked flow, so the legacy QR browser test (`tests/e2e/worker-flow.test.mjs`) does not apply. It passes with the flag off.
+
+Decision reviewer: __________  Date: __________  Outcome: __________

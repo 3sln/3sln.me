@@ -1,3 +1,4 @@
+import {projectIncoming,removeIncoming} from '../store/item-index.mjs';
 // Receive path for link kinds (spec §4.5, §7.1, §8; architecture §11). Cheapest refusal first:
 //  edge: credential grammar and the edge index (handleIngress, before any mailbox work);
 //  mailbox, read-only: stored exact meta segments, framing/schema, kind/MIME/window bounds, owner budget pre-check;
@@ -143,7 +144,7 @@ export class ReceiveDeliver extends MailboxAction {
     const item={id,origin:'native',kind:p.kind,author:{principal:author.principal,keyId:author.keyId,jkt:author.jkt,client:{client_id:author.client.client_id,origin:author.client.origin}},
      jti:live.jti,operationId:p.operationId,subject:p.subject,content:p.content,bodyRef:delivery.body?(staged??{storage:'mailbox'}):null,createdAt:p.createdAt,receivedAt:now,
      state:request?'pending':'inbox',request,hot,tags,tagHistory:[],payloadDigest:delivery.payloadDigest,quarantined:false,reviewed:false,notification:request?null:'push',envelope};
-    await tx.put(KEYS.item(id),item);if(delivery.body&&item.bodyRef.storage==='mailbox')await tx.put(KEYS.body(id),delivery.body);
+    await tx.put(KEYS.item(id),item);await projectIncoming(tx,item);if(delivery.body&&item.bodyRef.storage==='mailbox')await tx.put(KEYS.body(id),delivery.body);
     if(request)await tx.put(KEYS.pending(now,id),{id});
     await tx.put(jktIndex(author.jkt,id),1);
     const seen=await tx.get(seenKey(author.jkt));await tx.put(seenKey(author.jkt),{jkt:author.jkt,principal:author.principal,lastSeen:now,checkedAt:seen?.checkedAt??(author.statusChecked?now:0)});

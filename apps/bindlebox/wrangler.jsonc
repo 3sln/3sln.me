@@ -1,0 +1,12 @@
+{
+ "$schema":"../../node_modules/wrangler/config-schema.json",
+ "name":"bindlebox-app",
+ "main":"worker/index.mjs",
+ "compatibility_date":"2026-10-11",
+ "compatibility_flags":["nodejs_compat","global_fetch_strictly_public"],
+ "workers_dev":false,
+ "preview_urls":false,
+ "durable_objects":{"bindings":[{"name":"MAILBOXES","class_name":"MailboxObject"},{"name":"LINK_INDEX","class_name":"LinkIndexObject"}]},
+ "migrations":[{"tag":"v1","new_sqlite_classes":["MailboxObject","LinkIndexObject"]}],
+ "vars":{"BINDLEBOX_ENABLED":"false","BINDLEBOX_CLIENT_ID":"https://messages.example/bindle/client.json"}
+}

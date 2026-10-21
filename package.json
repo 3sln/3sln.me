@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:activity": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/activity-engine.mjs tests/browser/activity-contract.mjs && node --test tests/browser/activity-browser.mjs",
     "test:device-requesting": "node --experimental-loader ./tests/browser/loader.mjs --test tests/e2e/device-requesting-engine.mjs && node scripts/run-browser-checks.mjs tests/e2e/device-requesting.test.mjs tests/e2e/device-requesting-linked.test.mjs",
     "dev": "npm run dev:worker",
     "test:approve": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/approve.mjs",

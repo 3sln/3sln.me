@@ -1,5 +1,6 @@
+import {activityEnabled,activityView} from './activity.mjs';
 import {h,icon,badge,pageHeader,helpers,fire,interfaceText} from './release-primitives.mjs';
-export default function searchView(state){
+export default function searchView(state){if(activityEnabled(state))return activityView(state,{search:true});
  const {btn,form,date}=helpers(state),search=state.spaceSearch??{phase:'idle',items:[]},draft=state.searchDraft??{},loading=search.phase==='loading',items=search.items??[],semantic=state.semanticPreferences;
  const input=(name,title,placeholder,type='text')=>h('label',h('span',title),h('input').key(`space-search-${name}`).props({name,type,value:draft[name]??'',placeholder}).attrs({'aria-label':title,maxlength:'512'}).classes('input').on({input:event=>fire(event.currentTarget,'edit-space-search',{field:name,value:event.target.value})})).classes('field');
  return h('div',pageHeader('Search your space','Find messages and files across your indexed content.'),

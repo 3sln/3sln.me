@@ -15,6 +15,7 @@ import {linksProvider,LINK_OPERATIONS,LinkList,LinkChanges,RevokeLink} from '../
 import {decideLinkAudience} from '../../links/audience.mjs';
 import {linkPolicyRegistry} from '../../links/policies.mjs';
 import {StorageError} from '../../storage/policy.mjs';
+import {integrationsEnabled} from '../../app/domains/connections.mjs';
 
 export const LINK_ENGINE_OPERATIONS=operations(...LINK_OPERATIONS);
 const engines=new WeakMap();
@@ -25,7 +26,7 @@ export function linkService(c){
 }
 function linksEngine(c){
  let engine=engines.get(c);
- if(!engine){engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,links:linksProvider({service:linkService(c),enabled:linksEnabled(c.config),occupant:typeof c.config.LINK_SLOT_OCCUPANT==='function'?c.config.LINK_SLOT_OCCUPANT:undefined})}});engines.set(c,engine);}
+ if(!engine){engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,links:linksProvider({service:linkService(c),enabled:linksEnabled(c.config),occupant:typeof c.config.LINK_SLOT_OCCUPANT==='function'?c.config.LINK_SLOT_OCCUPANT:integrationsEnabled(c.config)?query=>c.linkSlotOccupant(query):undefined})}});engines.set(c,engine);}
  return engine;
 }
 const run=(c,Operation,params)=>{const operation=new Operation(params);return operation instanceof AppQuery?read(linksEngine(c),operation):perform(linksEngine(c),operation);};

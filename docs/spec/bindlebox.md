@@ -352,6 +352,8 @@ Without `creatorBinding`, the invitee could not reply (review P-1).
 - `genesis` is `{payload, proof}` signed by the creator's delegate key with the genesis prefix. Its payload is `{version:1, profile, conversationId (UUID), createdAt, creator: author descriptor, participants: [{principal, keyId}] (2 to maxParticipants, unique principals, creator and approached recipient each exactly once), secretEpoch (UUID), secretDigest (SHA-256 of the secret), subject, content}`.
 - `returnControl` is `{resource, nonce (22-character base64url), expiresAt (at most 7 days after createdAt), maxResponseBytes: 8192}`. It authorizes only §6.2.
 
+**Provisional BB4-I3 reconciliation (2026-10-20; reviewer/date/outcome pending):** this implementation permits only participants named in genesis. Adding a principal beyond genesis requires a new conversation; no later record expands that list. This restriction remains provisional.
+
 The participant list is a **proposal**, not a roster. Receiving it admits nobody. The UI shows it as "proposed by the creator, unverified" (review S-17). The invitee MUST refuse with `participants_exceeded` (403) when `participants.length` exceeds its own `maxParticipants`.
 
 ### 6.2 Invitation response
@@ -377,14 +379,14 @@ The invitee POSTs `{payload:{version:1, profile, conversationId, genesisDigest, 
 - **Counter jumps.** A counter more than 1,024 above the receiver's frontier for that stream is refused with `counter_gap` (400).
 - **Gaps.** Audiences differ per event, so gaps are normal. Receivers keep at most 256 gap exceptions per stream and expire them at the 7-day window (review S-10).
 - **Parents.** `parents` holds at most 8 event IDs.
-- **Epoch.** `epoch` is the secret epoch the sender used.
+- **Epoch (provisional BB4-I3).** `epoch` is the secret epoch the sender used. One event uses one epoch across its frozen audience, even when peers disagree about rotation. An occupant does not regenerate the same event under different epochs for different recipients; unavailable epochs remain retryable until the obligation deadline. Independent reviewer/date/outcome pending.
 
 | `type` | Body | Members | Receiver effect |
 | --- | --- | --- | --- |
 | `message` | yes | — | Append. |
 | `edit` | yes | `target` (event ID) | New revision, applied only when the target's author equals this author. The original is retained. |
 | `retract` | no | `target` | Tombstone, applied only when the target's author equals this author. Suppresses rendering of the target. |
-| `peer-proposal` | no | `data:{principal, keyId, introduction?}` | Offer to the owner. Never auto-accepted. `introduction`, when present, is the proposed peer's **own** complete signed invitation response or `peer-hello`. It is the only way a third party can convey that peer's ingress, and the receiver MUST verify it under §3.3 and §3.4 against the proposed principal, with `binding.ingress` equal to that peer certificate's `client.ingress` (review S-2). A creator relays introductions for genesis participants who accepted. |
+| `peer-proposal` | no | `data:{principal, keyId, introduction?}` | **Provisional BB4-I3:** offer a genesis-listed peer to the owner. With prior `acceptListed: true` consent, a verified introduction may auto-accept that genesis participant, subject to block/removal/decline fences and the local group bound. Otherwise an explicit owner decision is required. Principals outside genesis are not added. Independent reviewer/date/outcome pending. `introduction`, when present, is the proposed peer's **own** complete signed invitation response or `peer-hello`. It is the only way a third party can convey that peer's ingress, and the receiver MUST verify it under §3.3 and §3.4 against the proposed principal, with `binding.ingress` equal to that peer certificate's `client.ingress` (review S-2). A creator relays introductions for genesis participants who accepted. |
 | `peer-response` | no | `data:{proposal, decision}` | Updates the proposer's view of this owner's decision. |
 | `peer-hello` | no | `data:{binding:{ingress, incarnation, profiles, limits, multicast?}, startCounter}` | Sent directly from one participant to another, to an ingress learned from a verified introduction. Its credential is a pair token computed with the fixed incarnation `hello` (§6.4). The receiver answers an accepted hello with its own `peer-hello`, so each side learns the incarnation the other issued for it. The receiver adds the author to its accepted-peer set **automatically** only if it accepted the same genesis with `acceptListed: true` and the genesis lists the author, or it accepted a `peer-proposal` naming the author. Otherwise it offers the hello to the owner. `binding.ingress` MUST equal the author certificate's `client.ingress`. The receiver's frontier for that stream starts at `startCounter`. |
 | `rotate` | no | `data:{newEpoch, secretDigest}`. The new secret travels only in the protected `secret` part (§7.1). | Proposal. Local selection is explicit. |
@@ -436,6 +438,8 @@ Until archive encryption exists, conversation secrets are not exported (§10). A
 3. The receiver updates the binding, issues a fresh incarnation, and replies to the new ingress with a `secret-share` record (protected `secret` part) containing the current secret, plus a `peer-hello`.
 
 A peer that is offline answers when it returns. Until then, obligations to that peer are `retry_scheduled` with reason `epoch`.
+
+**Provisional BB4-I3 reconciliation:** while a restored mailbox awaits its secret, records from accepted peers are refused with `recipient_unavailable` (503, `Retry-After: 60`) after author verification, rather than treated as terminal authorization failures. The edge uses its awaiting-secret fence to route these accepted peers without an available pair-token digest. Only a valid, digest-bound `secret-share` installs the missing secret. Other authors remain refused. Independent reviewer/date/outcome pending.
 
 ### 6.7 Request filtering is not observable
 

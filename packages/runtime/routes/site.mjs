@@ -5,6 +5,7 @@ import {onboardingEnabled,onboardingOnly} from '../../identity/onboarding.mjs';
 import {publicBadgePolicy,compileBadgeSprite} from '../../identity/badge-policy.mjs';
 import {publicArtifact} from '../../core/public-contracts.mjs';
 import {json,privateHeaders,signupEnabled,securePage,brandPage,passthrough} from './shared.mjs';
+import {deviceAuthorizationEnabled} from '../device-grant.mjs';
 
 async function badgePresentation(env){
  const policy=publicBadgePolicy(env);if(!policy.path)return policy;
@@ -31,7 +32,7 @@ export const stages={
    if(path==='/manifest.webmanifest'&&request.method==='GET'){const asset=await env.ASSETS.fetch(request);const manifest=await asset.json();const name=env.BRAND_NAME||'3sln.me';return new Response(JSON.stringify({...manifest,name,short_name:name,...name==='3sln.me'?{}:{icons:[{src:'/generic-icon.svg',sizes:'any',type:'image/svg+xml',purpose:'any'}]}}),{headers:{'Content-Type':'application/manifest+json','Cache-Control':'no-cache'}});}
  },
  async anonymous({env,path,local}){
-   if(path==='/api/config')return json({origin:env.APP_ORIGIN,brand:{name:env.BRAND_NAME||(local?'3sln.me':'3sln.me'),host:new URL(env.APP_ORIGIN).host},termsVersion:env.TERMS_VERSION,turnstileSiteKey:env.TURNSTILE_SITE_KEY,localDevelopment:local,signupEnabled:signupEnabled(env),onboardingOnly:onboardingOnly(env),tokenOnboardingEnabled:onboardingEnabled(env)||env.ADMIN_CLAIMS_ENABLED===true,badgePolicy:await badgePresentation(env),signupContactRequired:env.SIGNUP_CONTACT_REQUIRED==='true',emailSetupAvailable:env.EMAIL_SETUP_AVAILABLE===true,pushSetupAvailable:env.PUSH_AVAILABLE===true,passwordEnabled:true,passkeyEnabled:true,emailEnabled:env.EMAIL_AVAILABLE===true,notificationEmailEnabled:false,pushEnabled:false,vapidPublicKey:env.VAPID_PUBLIC_KEY,billingEnabled:env.BILLING_ENABLED==='true',searchEnabled:true,semanticSearchEnabled:env.SEMANTIC_SEARCH_ENABLED==='true',providers:providerConfig(env)});
+   if(path==='/api/config')return json({origin:env.APP_ORIGIN,brand:{name:env.BRAND_NAME||(local?'3sln.me':'3sln.me'),host:new URL(env.APP_ORIGIN).host},termsVersion:env.TERMS_VERSION,turnstileSiteKey:env.TURNSTILE_SITE_KEY,localDevelopment:local,signupEnabled:signupEnabled(env),onboardingOnly:onboardingOnly(env),tokenOnboardingEnabled:onboardingEnabled(env)||env.ADMIN_CLAIMS_ENABLED===true,badgePolicy:await badgePresentation(env),signupContactRequired:env.SIGNUP_CONTACT_REQUIRED==='true',emailSetupAvailable:env.EMAIL_SETUP_AVAILABLE===true,pushSetupAvailable:env.PUSH_AVAILABLE===true,passwordEnabled:true,passkeyEnabled:true,emailEnabled:env.EMAIL_AVAILABLE===true,notificationEmailEnabled:false,pushEnabled:false,vapidPublicKey:env.VAPID_PUBLIC_KEY,deviceAuthorizationEnabled:deviceAuthorizationEnabled(env),billingEnabled:env.BILLING_ENABLED==='true',activityV2Enabled:env.ACTIVITY_V2_ENABLED===true||env.ACTIVITY_V2_ENABLED==='true',searchEnabled:true,semanticSearchEnabled:env.SEMANTIC_SEARCH_ENABLED==='true',providers:providerConfig(env)});
  },
  async pages({request,env,url,path}){
    const artifact=publicArtifact(path),registry=['/artefacts/contracts','/artefacts/contracts/','/artefacts/contracts/index.html','/artefacts/contracts/index.json'].includes(path);
@@ -54,6 +55,16 @@ export const stages={
    if(path==='/token-onboarding'){if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, HEAD'});const page=await securePage(await brandPage(await env.ASSETS.fetch(new Request(new URL('/console.html',url),request)),env));const headers=new Headers(page.headers);headers.set('X-Robots-Tag','noindex, nofollow');return new Response(request.method==='HEAD'?null:page.body,{status:page.status,headers});}
    if(path==='/console'){if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, HEAD'});const page=await securePage(await brandPage(await env.ASSETS.fetch(new Request(new URL('/console.html',url),request)),env));return request.method==='HEAD'?new Response(null,{status:page.status,headers:page.headers}):page;}
    if(path==='/recovery/setup'||path==='/recovery/restore'){const page=await env.ASSETS.fetch(new Request(new URL('/console.html',url),request));return passthrough(securePage(await brandPage(page,env),true));}
+   // Linked approval (LA3, behind DEVICE_AUTHORIZATION_ENABLED): /approve is the LA4 page, served from the
+   // authorization document with no referrer, no framing and its own browsing context group; /device and
+   // /device/approve redirect to it for one release (LA-13; browsers carry the fragment, the page drops any code).
+   if(deviceAuthorizationEnabled(env)&&(path==='/approve'||path==='/device'||path==='/device/approve')){
+    if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, HEAD'});
+    if(path!=='/approve')return new Response(null,{status:302,headers:{...privateHeaders,Location:'/approve'}});
+    const page=await securePage(await brandPage(await env.ASSETS.fetch(new Request(new URL('/authorize.html',url),request)),env)),headers=new Headers(page.headers);
+    headers.set('Cross-Origin-Opener-Policy','same-origin');headers.set('X-Robots-Tag','noindex, nofollow');
+    return new Response(request.method==='HEAD'?null:page.body,{status:page.status,headers});
+   }
    if(path==='/preferences'&&request.method==='GET'){const page=await env.ASSETS.fetch(new Request(new URL('/authorize.html',url),request));return passthrough(securePage(await brandPage(page,env)));}
    if(path.startsWith('/users/')||path==='/integrations/google/complete'||path==='/mcp/consent'||path==='/unsubscribe'||path==='/waitlist/confirm'||path==='/waitlist/leave'||path==='/email/confirm'||path==='/email/login'||path==='/device'||path==='/device/approve'||path.startsWith('/artefacts/')){
      if(path.startsWith('/artefacts/'))return passthrough(env.ASSETS.fetch(request));

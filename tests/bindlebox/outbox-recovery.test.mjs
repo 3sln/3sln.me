@@ -58,3 +58,11 @@ test('BB-B3 one authorization repair; repeated 403 becomes terminal without open
  assert.equal(repairs,1);assert.equal((await f.get(1)).failed,1);assert.equal(f.requests.length,2);
  assert.equal([...(await f.store.list({prefix:'bb:send:breaker/'})).values()][0].failures,0);
 });
+
+
+test('expired catch-up material has a durable cleanup alarm and is purged at the retry horizon',async t=>{
+ const {nextWake}=await import('../../apps/bindlebox/worker/storage.mjs'),f=await fixture(t);await f.submit({record:true});
+ f.clock.advance(73*3600000);const expired=await f.drain(),key='bb:send:task/'+uuidOf(1)+':0',task=await f.store.get(key);assert.equal(task.state,'expired');assert.ok(task.credential);
+ const horizon=task.createdAt+167*3600000;assert.equal(expired.nextAlarmAt,horizon);assert.equal(await nextWake(f.store,f.clock.now()),horizon);
+ f.clock.set(horizon);await f.drain();assert.equal((await f.store.get(key)).credential,null);assert.equal(await nextWake(f.store,f.clock.now()),null);assert.equal((await f.get(1)).failed,1);
+});

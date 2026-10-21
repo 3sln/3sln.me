@@ -10,6 +10,7 @@ import {encryptSecret,decryptSecret} from './secrets.mjs';
 import {dpopNonces} from '../federation/dpop.mjs';
 import {ENTRY_INTENTS,ENTRY_SHARDS,AuthorizationEntries,entryManifest,entryShard,remoteShard} from '../federation/authorization-entries.mjs';
 import {componentsProfile,componentsDeclaration} from '../federation/components-profile.mjs';
+import {deviceManifest} from '../federation/device-authorization.mjs';
 import {createManifestDeclarationProvider,ManifestDeclarations,withManifestDeclarations} from '../federation/runtime.mjs';
 import {ClientDirectory,CLIENT_METADATA_FEATURE,clientSite} from '../federation/client-metadata.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
@@ -28,6 +29,10 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  {flag:'CLIENT_METADATA_ENABLED',mounted:c=>c.target==='authority'&&c.directory?.enabled===true,declare:()=>({features:{[CLIENT_METADATA_FEATURE]:{}}})},
  {flag:'FEDERATION_ENTRY_ENABLED',mounted:c=>c.target==='entries'&&!!c.entries,declare:c=>entryManifest(c.issuer,{intents:c.entries.intents()})},
  {flag:'FEDERATION_ENTRY_ENABLED',mounted:c=>c.target==='entries'&&c.components===true&&!!c.entries?.embedOrigin&&c.entries.dpop===true,declare:c=>componentsDeclaration(componentsProfile(c.config))},
+ // LA3: RFC 8628 members plus the feature, only where the adapter mounted the device endpoint, the device_code token
+ // branch, DPoP RPC and cancellation (runtime/device-grant.mjs). DPoP algorithms and revocation_endpoint are already
+ // base authority members whenever that mount is possible.
+ {flag:'DEVICE_AUTHORIZATION_ENABLED',mounted:c=>c.target==='authority'&&c.mounts.deviceAuthorization===true,declare:c=>{const {device_authorization_endpoint,grant_types_supported,features}=deviceManifest(c.issuer);return {device_authorization_endpoint,grant_types_supported,features};}},
 ]);
 /** Synchronous adapter over the same provider Query used by the engine harness. Mounts never come from query input. */
 export function federationDeclarations(config,context={}){return new ManifestDeclarations().fetch({config,federation:createManifestDeclarationProvider({registry:MANIFEST_DECLARATIONS,context:{...context,issuer:config.APP_ORIGIN,mounts:context.mounts??{}}})});}

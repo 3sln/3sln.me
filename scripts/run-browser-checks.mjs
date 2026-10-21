@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile, readFile, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, mkdtemp, rm, cp } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -16,7 +16,10 @@ const persistence=await mkdtemp(`${tmpdir()}/3sln-browser-state-`);
 const configDirectory=await mkdtemp(resolve('.output/e2e-run-'));
 const configPath=resolve(configDirectory,'wrangler.json');
 const config=JSON.parse(await readFile('wrangler.local.jsonc','utf8'));
-config.main=resolve(config.main);config.assets.directory=resolve(config.assets.directory);delete config.$schema;
+config.main=resolve(config.main);
+// A running browser holds the shell's content-addressed import map. Parallel asset builds must not delete
+// modules underneath it; each ephemeral Worker serves a private snapshot for its entire suite.
+const assetSnapshot=resolve(configDirectory,'public');await cp(resolve(config.assets.directory),assetSnapshot,{recursive:true});config.assets.directory=assetSnapshot;delete config.$schema;
 config.vars.APP_ORIGIN=origin;
 // Each fixture signs up from its own documentation-range IP pseudonym, so the per-IP cooldown and daily
 // windows keep their configured values. All fixtures share one /24, one region ("unknown" under wrangler dev)
@@ -29,6 +32,9 @@ config.vars.FEDERATION_ENABLED='true';
 // The authorization-entry suite runs in its own Worker with the entry store and a dedicated loopback embed origin.
 if(process.env.E2E_AUTHORIZATION_ENTRIES==='1')Object.assign(config.vars,{FEDERATION_ENTRY_ENABLED:'true',EMBED_ORIGIN:`http://127.0.0.1:${port}`});
 config.vars.FEDERATION_CLIENTS=JSON.stringify([{id:'https://bindle-client.example/client',name:'Independent fixture app',origin:'https://bindle-client.example',redirectUris:['https://bindle-client.example/callback']}]);
+// LA3 device authorization gate: E2E_DEVICE_AUTHORIZATION=1 runs the whole suite with the flag on in this generated
+// local config, plus one operator-reviewed device client under a reserved .example host. Default runs keep it off.
+if(process.env.E2E_DEVICE_AUTHORIZATION==='1'){config.vars.DEVICE_AUTHORIZATION_ENABLED='true';config.vars.FEDERATION_CLIENTS=JSON.stringify([...JSON.parse(config.vars.FEDERATION_CLIENTS),{id:'https://acme.example/cli',name:'Acme CLI',origin:'https://acme.example',redirectUris:['https://acme.example/callback'],grantTypes:['urn:ietf:params:oauth:grant-type:device_code','refresh_token']}]);}
 const storageContract='https://3sln.me/artefacts/contracts/object-storage/v1';
 config.vars.FEDERATION_SCHEMAS=JSON.stringify({
  'https://3sln.me/artefacts/preferences/app-messages/v1':JSON.parse(await readFile('docs/artefacts/app-message-preferences-v1.json','utf8')),
@@ -49,7 +55,7 @@ const bootToken=mintBootToken(origin);config.vars.BOOTSTRAP_TOKEN_SHA256=await b
 const onboardingKey=randomBytes(32).toString('base64url');
 await writeFile(configPath,JSON.stringify(config));
 await writeFile(resolve(configDirectory,'.dev.vars'),`KEY_ENCRYPTION_KEY=${randomBytes(32).toString('base64')}\nSESSION_COOKIE_KEY=${randomBytes(32).toString('base64url')}\nRECOVERY_SIGNING_KEY=${recoverySigningKey}\nAPP_NOTIFICATION_SIGNING_JWK=${JSON.stringify(appMessagePrivate)}\nONBOARDING_KEY=${onboardingKey}\n`,{mode:0o600});
-const worker=spawn(process.execPath,['node_modules/wrangler/bin/wrangler.js','dev','--config',configPath,'--port',String(port),'--persist-to',persistence],{stdio:['ignore','pipe','pipe'],env:{...process.env,WRANGLER_SEND_METRICS:'false',WRANGLER_LOG_PATH:resolve(configDirectory,'wrangler.log')}});
+const worker=spawn(process.execPath,['node_modules/wrangler/bin/wrangler.js','dev','--config',configPath,'--port',String(port),'--inspector-port','0','--persist-to',persistence],{stdio:['ignore','pipe','pipe'],env:{...process.env,WRANGLER_SEND_METRICS:'false',WRANGLER_LOG_PATH:resolve(configDirectory,'wrangler.log')}});
 let failed;
 worker.once('error',error=>{failed=error;});
 worker.once('exit',code=>{failed=new Error(`Wrangler exited before checks completed (${code}).`);});

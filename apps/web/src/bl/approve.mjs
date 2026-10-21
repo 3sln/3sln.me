@@ -5,6 +5,7 @@
 // linked/{approve,deny} re-match the typed code and owner/session; approve returns {expiresAt}.
 // linked/configure takes the consent kit's fragment/values/revision/digest fields and returns a new review.
 // App resolve/approve must independently enforce fresh sign-in in this flow; browser evidence is UX only.
+import {createApprovalCaptcha} from './approval-captcha.mjs';
 import {Action,Query,Engine,Provider,dodo as d} from '../shared/stack.mjs';
 import {createEntryAPI,parseAccounts} from './authorize-entry.mjs';
 import {freshAPI,ConfirmOwner,CancelOwnerConfirmation,cancelStepUp} from './step-up.mjs';
@@ -36,12 +37,11 @@ export function createApproveAPI({fetch}={}){
  return {setContext(value){member=value?.account?{id:value.account.id,sessionContext:value.sessionContext}:null;csrf=value?.csrfToken??null;},
   get:(path)=>transport.get(path,{member}),async request(path,body){const value=await transport.post(path,body,{member,csrf});return path==='/api/auth/step-up/begin'&&value.passkey?{...value,password:false}:value;}};
 }
-export function createApproveBrowser(win=globalThis.window){return {now:()=>Date.now(),location:()=>win.location,clearFragment:()=>win.history.replaceState(null,'',win.location.pathname),focus:selector=>win.document.querySelector(selector)?.focus(),
+export function createApproveBrowser(win=globalThis.window){const captcha=createApprovalCaptcha(win);return {installSignInProof:captcha.install,dispose:captcha.dispose,now:()=>Date.now(),location:()=>win.location,clearFragment:()=>win.history.replaceState(null,'',win.location.pathname),focus:selector=>win.document.querySelector(selector)?.focus(),
  readDraft(){try{const v=JSON.parse(win.sessionStorage.getItem(KEY)??'null');win.sessionStorage.removeItem(KEY);return v;}catch{return null;}},saveDraft:value=>{try{win.sessionStorage.setItem(KEY,JSON.stringify(value));}catch{fail('draft_unavailable');}},clearDraft:()=>{try{win.sessionStorage.removeItem(KEY);}catch{}},navigate:path=>win.location.assign(path),
  authenticatePasskey:async options=>serializeCredential(await win.navigator.credentials.get({publicKey:decodeOptions(options)})),
- // LA3's host supplies the existing Turnstile component; never pretend a populated key is a proof.
- signInProof:()=>({}),framed:()=>win.top!==win.self};}
-const messages={invalid_code:'That code does not match. Get a new code on your device if it expired.',rate_limited:'Too many attempts. Wait before trying again.',unauthorized:'That account is no longer signed in. Choose an account again.',account_context_conflict:'That account is no longer signed in. Choose an account again.',session_context_conflict:'That account is no longer signed in. Choose an account again.',draft_unavailable:'This browser could not save your pending approval. Stay here and sign in.',fresh_signin_required:'Sign in again here to approve this app.',reauthentication_required:'Confirm your passkey or password before approving.',invalid_credentials:'Sign-in failed. Check your details and try again.'};
+ signInProof:captcha.proof,framed:()=>win.top!==win.self};}
+const messages={challenge_pending:'The security check is still running. Please wait a moment and try again.',invalid_code:'That code does not match. Get a new code on your device if it expired.',rate_limited:'Too many attempts. Wait before trying again.',unauthorized:'That account is no longer signed in. Choose an account again.',account_context_conflict:'That account is no longer signed in. Choose an account again.',session_context_conflict:'That account is no longer signed in. Choose an account again.',draft_unavailable:'This browser could not save your pending approval. Stay here and sign in.',fresh_signin_required:'Sign in again here to approve this app.',reauthentication_required:'Confirm your passkey or password before approving.',invalid_credentials:'Sign-in failed. Check your details and try again.'};
 // The local freshness guard borrows freshAPI's suspended-request prompt, without inventing a server
 // endpoint or minting authentication evidence. The decision endpoint must still check freshness itself.
 async function confirmApprovalOwner(r,ctx){let confirmed=false;const gate={get:async()=>{if(!confirmed){confirmed=true;fail('reauthentication_required');}return {};},request:async(...args)=>{const value=await r.api.request(...args);return args[0]==='/api/auth/step-up/begin'&&value.passkey?{...value,password:false}:value;}};await freshAPI({...r,api:gate},ctx).get('approval-credential');}
@@ -61,7 +61,7 @@ export class ApproveAction extends Action {
   try{
    if(kind==='boot'){
     if(r.browser.framed?.()){s.phase='blocked';return;}
-    s.locator=approvalLocator(r.browser.location().hash);r.browser.clearFragment();const draft=r.browser.readDraft();
+    s.locator=approvalLocator(r.browser.location().hash);r.browser.clearFragment();await r.browser.installSignInProof?.();if(!live())return;const draft=r.browser.readDraft();
     if(draft?.v===1&&Number.isSafeInteger(draft.savedAt)&&draft.savedAt<=r.browser.now()&&r.browser.now()-draft.savedAt<=TEN_MIN){if(!s.locator&&UUID.test(draft.locator??''))s.locator=draft.locator;s.draft=normalizeApprovalCode(draft.code)??'';}
     s.accounts=parseAccounts(await r.api.get('/api/auth/accounts'));s.phase='code';if(s.draft){r.secrets.code=s.draft;s.phase=s.accounts.length?'choose':'signin';s.signInReason='initial';}return;
    }
@@ -141,6 +141,6 @@ export function startApprovePage({root,preferredLocale='en',win=globalThis.windo
  let channel;try{channel=new win.BroadcastChannel('bindle-accounts');channel.onmessage=event=>{if(event.data?.type==='accounts-changed'&&Object.keys(event.data).length===1)refresh();};}catch{}
  const expiry=win.setInterval(()=>{if(model.request&&['review','credential'].includes(model.phase))dispatch('expire');},1000);
  dispatch('boot');
- const dispose=()=>{disposed=true;model.beamGeneration++;cancelStepUp(browser);secrets.code=null;channel?.close();arming.dispose();win.clearInterval(expiry);query.unsubscribe();root.removeEventListener('3sln-intent',intent);win.removeEventListener('focus',refresh);win.document.removeEventListener('visibilitychange',refresh);win.removeEventListener('pagehide',dispose);engine.dispose();};
+ const dispose=()=>{disposed=true;model.beamGeneration++;cancelStepUp(browser);secrets.code=null;browser.dispose?.();channel?.close();arming.dispose();win.clearInterval(expiry);query.unsubscribe();root.removeEventListener('3sln-intent',intent);win.removeEventListener('focus',refresh);win.document.removeEventListener('visibilitychange',refresh);win.removeEventListener('pagehide',dispose);engine.dispose();};
  win.addEventListener('pagehide',dispose,{once:true});return {engine,state,secrets,dispatch,render,dispose};
 }

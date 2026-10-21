@@ -111,7 +111,7 @@ async function consumeEffects(c,lifecycle,owner){
  const settings=lifecycleSettings(c.config);
  for(const [path,effect]of await c.metadata.list({prefix:'lifecycle/effect/',limit:16})){
   if(effect?.owner===owner){
-   if(effect.kind==='freeze'&&settings.cold){const access=await lifecycle.access(owner);if(access.blocked&&access.generation===effect.generation)await c.metadata.put(COLD_KEY,coldJob(effect.generation));}
+   if(effect.kind==='freeze'){const access=await lifecycle.access(owner);if(access.blocked&&access.generation===effect.generation){await c.connectionsSeverAccount?.(owner,{reason:'lifecycle-frozen'});if(settings.cold)await c.metadata.put(COLD_KEY,coldJob(effect.generation));}}
    if(effect.kind==='thaw')await c.metadata.delete(COLD_KEY);
   }
   await c.metadata.delete(path);

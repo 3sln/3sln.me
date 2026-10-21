@@ -17,6 +17,7 @@ import {createNodeMetadataFetch} from '../../packages/apps/node-metadata-fetch.m
 import {parseClients} from '../../packages/mcp/service.mjs';
 import { createIdentityEngine, createArgon2Hasher, createWebAuthnAdapter } from '../../packages/identity/index.mjs';
 import { nodeResources } from './resources.mjs';
+import {deviceGrantMountable,deviceGrantRunner,engineLinkedPort,localDeviceGrant,deviceLimits} from '../../packages/runtime/device-grant.mjs';
 
 export async function createNodeServer({directory=resolve('.data'),config={},mailer,formTransport,resolveIdentityBadges}={}){
  if(resolveIdentityBadges!==undefined&&typeof resolveIdentityBadges!=='function')throw new TypeError('Badge resolver must be injected code.');
@@ -43,9 +44,14 @@ export async function createNodeServer({directory=resolve('.data'),config={},mai
  // Administration is mounted only once boot is configured or the operator keeps it on with ADMIN_ENABLED=true.
  const adminEnabled=bootConfigured(settings)||settings.ADMIN_ENABLED==='true';
  const identityResources={repository:resources.repository,deviceRequests:resources.deviceRequests,linkedApprovals:resources.deviceRequests,linkedLimits:resources.linkedLimits,linkedPollLimits:resources.linkedPollLimits,crypto,mailer,pushTransport,resolveIdentityBadges,...adminEnabled?{reservedHandle:name=>admin.isReserved(name)}:{},onboarding:onboardingPort({config:settings,repository:resources.repository,authority:resources.abuse,...adminEnabled?{runtimeName:(name,digest)=>admin.runtimeName(name,digest),redeemName:(name,digest)=>admin.redeemName(name,digest)}:{}}),systemBootstrap:systemBootstrapPort({config:settings,repository:resources.repository,authority:resources.abuse}),setupBilling:setupBillingPort(resources.accounts),identityBackup:identityBackupPort({config:settings,accounts:resources.accounts}),paidHandleEligibility:async owner=>{const result=await resources.accounts.get(owner).invoke({method:'paidHandleEligibility',args:[owner]});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),result.$fault);return result===true;},turnstile:{verify:input=>application.turnstile(ports,input)},rateLimiter:{check:input=>application.rateLimit(ports,input)},webauthn,passwordHasher,config:{BADGE_DEFINITIONS:settings.BADGE_DEFINITIONS,HOST_NAME_POLICY:settings.HOST_NAME_POLICY,ONBOARDING_NAMES:settings.ONBOARDING_NAMES,paidSignupEnabled:paidSignupEnabled(settings),requireReachability:settings.SIGNUP_CONTACT_REQUIRED==='true',origin,rpID:parsed.hostname,rpName:settings.BRAND_NAME,termsVersion:settings.TERMS_VERSION,allowInsecureLocalhost:local,linkedCodeKey:settings.LINKED_CODE_KEY||settings.KEY_ENCRYPTION_KEY||null,deviceAuthorizationEnabled:settings.DEVICE_AUTHORIZATION_ENABLED==='true'}};
- const admin=new AdminService({store:resources.adminStore,identity:new IdentityService(identityResources),onboarding:identityResources.onboarding,webauthn,passwordHasher,rateLimiter:identityResources.rateLimiter,config:settings});
+ const admin=new AdminService({connectionsSeverAccount:async(owner,input)=>{const result=await resources.accounts.get(owner).invoke({method:'connectionsSeverAccount',args:[owner,input]});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),result.$fault);return result;},store:resources.adminStore,identity:new IdentityService(identityResources),onboarding:identityResources.onboarding,webauthn,passwordHasher,rateLimiter:identityResources.rateLimiter,config:settings});
  if(adminEnabled){ports.ADMIN_SERVICE=()=>admin;ports.ADMIN_CLAIMS_ENABLED=onboardingKeyReady(settings);}
  ports.IDENTITY_ENGINE=()=>createIdentityEngine(identityResources);
+ // Device grant (LA3): only with the flag and every dependency of its declared members (runtime/device-grant.mjs).
+ if(deviceGrantMountable(settings)){
+  const linked=engineLinkedPort(ports.IDENTITY_ENGINE),provider=localDeviceGrant({config:settings,linked,shard:owner=>resources.federationShard(owner),limits:deviceLimits(resources.abuse),pollLimits:resources.linkedPollLimits});
+  ports.DEVICE_GRANT=deviceGrantRunner({config:settings,deviceGrant:provider});resources.attachDeviceGrant({linked,drain:input=>ports.DEVICE_GRANT.drain(input)});
+ }
  // The optional dedicated embed origin (components profile) is the only other host this server answers.
  let embed=null;try{const value=settings.EMBED_ORIGIN?new URL(settings.EMBED_ORIGIN):null;if(value&&value.origin===settings.EMBED_ORIGIN&&value.host!==parsed.host)embed=value;}catch{}
  const server=http.createServer(async(req,res)=>{

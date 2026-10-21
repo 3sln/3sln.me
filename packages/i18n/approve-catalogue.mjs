@@ -1,6 +1,7 @@
 // LA4: English source keys; bab interpolation and the shared console fallback.
 import {createLocalization,resolveLocale,ObjectCatalogue} from './index.mjs';
 const es={
+ 'The security check is still running. Please wait a moment and try again.':'La comprobación de seguridad sigue en curso. Espera un momento y vuelve a intentarlo.',
  'Approve a sign-in':'Aprobar un inicio de sesión',
  'Loading accounts…':'Cargando cuentas…',
  'Open this page in its own browser tab to approve a sign-in.':'Abre esta página en su propia pestaña para aprobar un inicio de sesión.',

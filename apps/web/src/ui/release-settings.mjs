@@ -1,8 +1,10 @@
+import {activityEnabled} from './activity.mjs';
 import {h,icon,badge,field,select,pageHeader,helpers,fire} from './release-primitives.mjs';
 export default function settingsView(state){
   const {btn,form}=helpers(state),query=(state.bindingSearch??'').toLowerCase();
   const rows=(state.shortcuts??[]).filter(row=>`${row.title} ${row.command} ${row.key} ${row.when}`.toLowerCase().includes(query));
   return h('div',pageHeader('Make this space feel like yours.','Choose your language and customize context-aware keyboard shortcuts.'),
+    activityEnabled(state)?h('section',h('h2','Activity'),h('p','Manage per-app push, quiet hours, digests and lock-screen privacy.'),btn('Activity push settings',{kind:'navigate',view:'notifications'},'button secondary')).classes('panel'):null,
     h('section',h('h2','Language'),h('p','Language and shortcut preferences are saved only on this browser. Account secrets and message data are never stored with them.').classes('muted'),form([select('locale','Interface language',[['en','English'],['es','Español']],state.locale??'en')],{kind:'set-language'},'Save language')).classes('panel','language-panel'),
     h('section',h('h2','Message animations'),h('label',h('input').props({type:'checkbox',checked:state.messageAnimations!==false}).on({change:event=>fire(event.currentTarget,'set-message-animations',{enabled:event.currentTarget.checked})}),h('span','Allow message animations')).classes('checkbox-field'),h('p','Saved only in this browser. Message motion stops after five seconds and follows your system’s reduced-motion preference.').classes('muted')).classes('panel','message-motion-panel'),
     h('section',h('div',h('div',h('h2','Keyboard shortcuts'),h('p','Shortcuts run only when their context matches. Text editing and reserved browser keys stay available.').classes('muted')),btn('Reset all overrides',{kind:'reset-shortcuts'},'button secondary',!(state.keybindingOverrides??[]).length)).classes('page-heading'),

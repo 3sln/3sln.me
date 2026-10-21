@@ -76,10 +76,20 @@ test('real passkey signup, confirmation gate, sign out and assertion login',asyn
   await page.getByRole('button',{name:'Resources',exact:true}).click();await screenshot(page,'live-resources-desktop');
   await page.getByRole('button',{name:'Account & security',exact:true}).click();await screenshot(page,'live-security-desktop');
   await page.setViewportSize({width:390,height:844});await screenshot(page,'live-security-mobile');
+  const linked=(await(await context.request.get(baseURL+'/api/config')).json()).deviceAuthorizationEnabled;
+  if(!linked){
   const tvContext=await browser.newContext({viewport:{width:1440,height:1000},extraHTTPHeaders:{'CF-Connecting-IP':'198.51.100.222'}});t.after(()=>tvContext.close());const tv=await tvContext.newPage();tv.setDefaultTimeout(15000);await tv.goto(baseURL+'/console?signin');const created=tv.waitForResponse(response=>response.url().endsWith('/api/auth/device/start'));await tv.getByRole('button',{name:'Use phone / TV QR',exact:true}).click();const device=await(await created).json();await tv.getByRole('heading',{name:'A new screen. The same you.',exact:true}).waitFor();assert.equal(await tv.getByRole('button',{name:'Show device QR',exact:true}).count(),0);await tv.locator('.device-qr').waitFor();assert.equal((await(await tvContext.request.get(baseURL+'/api/session')).json()).authenticated,false);await screenshot(tv,'live-automatic-tv-qr');
   // LA4 retires the review surface; LA3 mounts /approve later. Exercise the LA1 compatibility decision over real HTTP.
   await page.goto(device.verificationUriComplete);await page.locator('a[href="/approve#r='+device.requestId+'"]').waitFor();assert.equal(await page.locator('input[name=code]').count(),0);assert.equal(await page.getByText(device.userCode,{exact:true}).count(),0);
   const decision=await page.evaluate(async device=>{const session=await(await fetch('/api/session')).json(),headers={Origin:location.origin,'Content-Type':'application/json','X-CSRF-Token':session.csrfToken,...session.sessionContext?{'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext}:{}};const response=await fetch('/api/auth/device/approve',{method:'POST',headers,body:JSON.stringify({requestId:device.requestId,userCode:device.userCode,accountHandle:session.account.handle,approved:true})});return {status:response.status,body:await response.json()};},device);assert.equal(decision.status,200,JSON.stringify(decision.body));assert.equal(decision.body.approved,true);await tv.locator('.app-shell').waitFor();assert.equal((await(await tvContext.request.get(baseURL+'/api/session')).json()).account.id,assigned.id);await screenshot(tv,'live-automatic-tv-approved');
+  }else {
+   // LA3 supersedes the legacy requester with the typed-code /approve flow.
+   const tvContext=await browser.newContext({viewport:{width:1440,height:1000},extraHTTPHeaders:{'CF-Connecting-IP':'198.51.100.222'}});t.after(()=>tvContext.close());const tv=await tvContext.newPage();await tv.goto(baseURL+'/console?signin');
+   const [created]=await Promise.all([tv.waitForResponse(response=>response.url().endsWith('/api/auth/linked/start')),tv.getByRole('button',{name:'Sign in with another device',exact:true}).click()]);const device=await created.json();await tv.locator('.device-code').waitFor();
+   await page.goto(device.locatorUri);await page.locator('input[name=code]').fill(device.userCode);await page.locator('.linked-approve form button[type=submit]').click();await page.getByRole('button',{name:'@'+assigned.handle,exact:true}).click();
+   const approve=page.locator('[data-consent-approve]');await page.waitForFunction(()=>document.querySelector('[data-consent-approve]')?.disabled===false);await approve.click();await page.getByRole('heading',{name:'Approved. Return to your device.',exact:true}).waitFor();
+   await tv.getByRole('button',{name:'Continue',exact:true}).click();await tv.locator('.app-shell').waitFor();assert.equal((await(await tvContext.request.get(baseURL+'/api/session')).json()).account.id,assigned.id);
+  }
 
 });
 test('real password setup resumes, recovery rotates, contacts constrain messages, and private APIs never cache',async t=>{

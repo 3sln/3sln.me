@@ -298,3 +298,13 @@ test('review fixes: bound children, network-first poll budget, step-up after the
   assert.equal(await sweepDeviceFamilies(service,owner),0,'once');void token;
  }finally{await f.dispose();}
 });
+
+
+test('LA3 mount relaxes only a lone Sec-Fetch-Mode cors, preserving every other browser-refusal header',async()=>{
+ const {stages}=await import('../packages/runtime/routes/federation.mjs');
+ for(const headers of [{},{'Sec-Fetch-Mode':'cors'},{'Sec-Fetch-Mode':'navigate'},{Origin:'','Sec-Fetch-Mode':'cors'},{Origin:'https://page.example','Sec-Fetch-Mode':'cors'},{'Sec-Fetch-Mode':'cors','Sec-Fetch-Site':'none'},{'Sec-Fetch-Future':'value'}]){
+  let received;const grant={mounted:true,authorize:async input=>{received=input.headers;return {status:400,body:{error:'invalid_request'}};}},request=new Request('https://provider.example/oauth/device_authorization',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded',...headers},body:'client_id=test'});
+  await stages.public({request,env:{APP_ORIGIN:'https://provider.example',DEVICE_AUTHORIZATION_ENABLED:true,DEVICE_GRANT:grant},path:'/oauth/device_authorization',local:false});
+  const lone=Object.keys(headers).length===1&&headers['Sec-Fetch-Mode']==='cors';for(const [name,value] of Object.entries(headers))assert.equal(received[name.toLowerCase()],lone?undefined:value,JSON.stringify(headers));
+ }
+});

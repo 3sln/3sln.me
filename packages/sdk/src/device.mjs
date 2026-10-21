@@ -54,7 +54,7 @@ async function form(io,url,body,{key,signal,nonces,emptySuccess=false}={}){
   abortCheck(signal);const headers={'Content-Type':'application/x-www-form-urlencoded',Accept:'application/json'};
   if(key)headers.DPoP=await io.keys.proof(key,{htu:url,nonce:nonces.get(url),crypto:io.crypto,clock:io.clock});
   abortCheck(signal);
-  const response=await io.fetcher(url,{method:'POST',headers,body,credentials:'omit',redirect:'error',signal:combined(signal,AbortSignal.timeout(15000))}),json=response.ok&&emptySuccess?null:await boundedJSON(response),nonce=response.headers.get('DPoP-Nonce');
+  const response=await io.fetcher(url,{method:'POST',headers,body,credentials:'omit',redirect:'error',signal:combined(signal,AbortSignal.timeout(15000))}),json=response.ok&&emptySuccess?null:await boundedJSON(response).catch(error=>{if([429,503].includes(response.status))return {};throw error;}),nonce=response.headers.get('DPoP-Nonce');
   if(key&&noncePattern.test(nonce??''))nonces.set(url,nonce);
   // Nonce retries are a new proof/attempt; polling applies the interval to them too.
   if(key&&!response.ok&&json?.error==='use_dpop_nonce'&&noncePattern.test(nonce??''))return {response,json,nonceChallenge:true};
@@ -113,6 +113,7 @@ export class PollDeviceAuthorization extends DeviceAction {
     if(response.ok)issued=json;active(state,flow,signal);
     flow.nextPoll=io.clock()+flow.interval;
     if(!response.ok){
+     if(response.status===429||response.status===503){const retry=response.headers.get('Retry-After'),date=Date.parse(retry),delay=/^[0-9]{1,9}$/.test(retry??'')?Number(retry)*1000:Number.isFinite(date)?Math.max(0,date-io.clock()):0;flow.interval=Math.min(60000,flow.interval*2);flow.nextPoll=io.clock()+Math.max(flow.interval,delay);flow.nonceRetried=false;continue;}
      if(json?.error==='authorization_pending'){flow.nonceRetried=false;continue;}
      if(json?.error==='slow_down'){flow.nonceRetried=false;flow.interval=Math.max(flow.interval+5000,seconds(json.interval)?json.interval*1000:0);flow.nextPoll=io.clock()+flow.interval;continue;}
      if(nonceChallenge&&!flow.nonceRetried){flow.nonceRetried=true;continue;}

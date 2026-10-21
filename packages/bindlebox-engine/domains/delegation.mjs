@@ -1,3 +1,4 @@
+import {projectIncoming,removeIncoming} from '../store/item-index.mjs';
 // Consumer side of delegated-certificate status (spec §3.4; architecture §4.3 items 3 and 5). The receiver resolves
 // identity keys and `active`/`revoked` status through the injected `directory` provider ({resolveKey, status}), with
 // bounded in-memory caches (5 minutes for active status, revocations kept). A learned revocation is persisted in the
@@ -52,7 +53,7 @@ export async function recordRevocation(tx,{jkt,revokedHour,principal,now}){
  for(const [key] of await tx.list({prefix:`by-jkt/${jkt}/`})){
   const id=key.slice(key.lastIndexOf('/')+1),item=await tx.get(KEYS.item(id));
   if(!item||item.quarantined||item.reviewed||!quarantined(item.createdAt,revokedHour))continue;
-  item.quarantined={reason:'delegation_revoked',at:now};await tx.put(KEYS.item(id),item);
+  item.quarantined={reason:'delegation_revoked',at:now};await tx.put(KEYS.item(id),item);await projectIncoming(tx,item);
   if(item.state==='pending')await tx.delete(KEYS.pending(item.receivedAt,id));count++;
  }
  return count;

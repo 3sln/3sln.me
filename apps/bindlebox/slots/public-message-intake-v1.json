@@ -1,0 +1,8 @@
+{
+ "id":"https://spec.bindle.example/slots/public-message-intake/v1",
+ "title":"Public message intake",
+ "description":"Accepts messages from consented channel bridges.",
+ "publisher":"https://spec.bindle.example",
+ "fields":{"occupant":{"title":"Messaging app","type":"resource","cardinality":{"min":0,"max":1},"contracts":["https://spec.bindle.example/contracts/public-intake/v1"]}},
+ "slot":{"v":1,"field":"occupant","selection":"exclusive","consumers":["provider","application"]}
+}

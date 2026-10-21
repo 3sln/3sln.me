@@ -275,3 +275,11 @@ test('ever-paid: webhook evidence is kept for non-active identities through the 
  assert.equal((await f.db.get('lifecycle/ever-paid-v1')).evidence,'order.paid');
  const g=await fixture(t);await toSuspended(g);assert.deepEqual(await g.invoke('lifecycleEverPaid',{type:'refund.created'}),{recorded:true});
 });
+
+
+test('lifecycle freeze severs connections with cold tiering disabled; tombstone severs again before identity deletion',async t=>{
+ const f=await fixture(t,{cold:'false'}),calls=[];
+ f.controller.connectionsSeverAccount=async(id,input)=>{calls.push({id,...input});};
+ await toSuspended(f);assert.deepEqual(calls,[{id:owner,reason:'lifecycle-frozen'}]);
+ await noticeEpisode(f,SUSPENDED_SPACING);await jumpTo(f,(await f.controller.lifecycle.status(owner)).deadline);await f.tick();f.advance(60000);await f.tick();assert.ok(calls.some(c=>c.id===owner&&c.reason==='lifecycle-tombstone'));assert.equal((await f.repository.get(owner)).status,'deleted');
+});

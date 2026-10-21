@@ -1,0 +1,8 @@
+{
+ "id":"https://spec.bindle.example/slots/item-classifier/v1",
+ "title":"Item classifier",
+ "description":"Answers typed questions about an incoming item.",
+ "publisher":"https://spec.bindle.example",
+ "fields":{"occupants":{"title":"Classifiers","type":"resource","cardinality":{"min":0,"max":4},"contracts":["https://spec.bindle.example/contracts/decision-model/v1"]}},
+ "slot":{"v":1,"field":"occupants","selection":"ordered","failover":"any-error","consumers":["application","provider"],"options":{"occupant":{"label":{"type":"string","maxLength":64}},"consumer":{}}}
+}

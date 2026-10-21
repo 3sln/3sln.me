@@ -2,7 +2,7 @@
 // transport, receipt verification, directory/status calls and optional repairs run outside them.
 import {MailboxAction,MailboxQuery,OwnerScopedProvider} from '../engine.mjs';
 import {fault} from '../faults.mjs';
-import {validateEnvelope,payloadDigest,eventId,sha256,jcs,strictJSON,base64url,encodeDelivery,parseDelivery,parseCredential,checkCredentialKind,verifyReceipt,classifyFailure,aggregate,applyReceipt,OBLIGATION_STATES} from '../../bindlebox-protocol/index.mjs';
+import {validateEnvelope,payloadDigest,eventId,sha256,jcs,strictJSON,base64url,encodeDelivery,parseDelivery,parseCredential,parseDelegation,checkCredentialKind,verifyReceipt,classifyFailure,aggregate,applyReceipt,OBLIGATION_STATES} from '../../bindlebox-protocol/index.mjs';
 import {recordProgress,progressPage} from './events.mjs';
 const META='bb:send:queue',M='bb:send:message/',T='bb:send:task/',B='bb:send:breaker/',HOUR=3600000;
 export const SEND_LIMITS=Object.freeze({recipients:1000,tasks:1000,bytes:32*1024*1024,concurrent:4,perHost:2,connect:5000,total:15000,response:65536,attempts:100,manualAttempts:10});
@@ -19,11 +19,14 @@ async function snapshot(tx,id){
  const tasks=await Promise.all(message.tasks.map(key=>tx.get(key)));
  return {messageId:id,recipientCount:message.tasks.length,revision:message.revision,...aggregate(tasks.map(t=>t.state)),recipients:tasks.map(publicTask)};
 }
+// Expired obligations retain retry material only until their last permitted catch-up; final completions shed it now.
+export const taskCleanupAt=t=>OBLIGATION_STATES[t.state]?.final&&(t.secret||t.credential||t.envelope?.payload?.conversation?.sharedSecret)?t.state==='expired'&&!t.manualUsed?manualEnd(t):0:null;
+const purgeTask=(t,now)=>{if(['delivered','rejected','cancelled'].includes(t.state)||t.state==='expired'&&(t.manualUsed||now>=manualEnd(t))){t.secret=null;t.credential=null;if(t.envelope?.payload?.conversation)delete t.envelope.payload.conversation.sharedSecret;}return t;};
 async function changed(tx,ctx,ids){for(const id of new Set(ids)){const message=await tx.get(M+id);message.revision++;await tx.put(M+id,message);const view=await snapshot(tx,id);await recordProgress(tx,ctx,{messageId:id,revision:view.revision,recipientCount:view.recipientCount,delivered:view.delivered,pending:view.pending,failed:view.failed,cancelled:view.cancelled});}}
 // authorize(tx, task) MUST read live local consent/control state using tx, with no network I/O.
 // repair(task) MAY refresh transport credentials/bindings, never the immutable envelope/audience.
 // Explicit BINDLEBOX_ENABLED is independent of bound services. Missing authorization fails closed.
-export function createOutboxProvider({BINDLEBOX_ENABLED=false,authorize=()=>false,repair,limits={},timers={set:setTimeout,clear:clearTimeout}}={}){
+export function createOutboxProvider({BINDLEBOX_ENABLED=false,authorize=()=>false,repair,renewDelegation,limits={},timers={set:setTimeout,clear:clearTimeout}}={}){
  const caps={...SEND_LIMITS,...limits};
  for(const key of Object.keys(caps))if(!Number.isSafeInteger(caps[key])||caps[key]<1||caps[key]>SEND_LIMITS[key])throw new TypeError(`Invalid send limit ${key}`);
  return class OutboxProvider extends OwnerScopedProvider {
@@ -33,7 +36,7 @@ export function createOutboxProvider({BINDLEBOX_ENABLED=false,authorize=()=>fals
    const transaction=fn=>{check();return store.transaction(async tx=>{if(await tx.get('owner')!==owner)fault('forbidden','Mailbox owner mismatch.',403);return fn(tx);});};
    const allowed=(tx,t)=>authorize(tx,structuredClone(t),owner);
    const tasks=async tx=>[...(await tx.list({prefix:T})).values()];
-   const cancel=async(tx,t,reason='authorization')=>{t.state='cancelled';t.reason=reason;t.generation++;t.revision++;t.lease=null;await tx.put(T+t.id,t);};
+   const cancel=async(tx,t,reason='authorization')=>{t.state='cancelled';t.reason=reason;t.generation++;t.revision++;t.lease=null;await tx.put(T+t.id,purgeTask(t,clock.now()));};
    async function requeue(tx,select){
     const now=clock.now(),ids=[];let count=0;
     for(const t of (await tasks(tx)).sort((a,b)=>a.createdAt-b.createdAt||a.id.localeCompare(b.id))){
@@ -42,7 +45,7 @@ export function createOutboxProvider({BINDLEBOX_ENABLED=false,authorize=()=>fals
      // One additional ten-attempt budget per obligation, ever. Repeated clicks/recovery cannot refill it.
      if(t.manualUsed)continue;t.manualUsed=true;t.budgetEnd=t.attempts+caps.manualAttempts;t.deadline=manualEnd(t);
      const breaker=await tx.get(breakerKey(t.ingress));t.nextAttemptAt=Math.max(now,t.nextAttemptAt,t.notBefore??0,breaker?.until??0);
-     t.state=t.nextAttemptAt>=t.deadline?'expired':'retry_scheduled';t.generation++;t.revision++;t.lease=null;await tx.put(T+t.id,t);ids.push(t.messageId);count++;
+     t.state=t.nextAttemptAt>=t.deadline?'expired':'retry_scheduled';t.generation++;t.revision++;t.lease=null;await tx.put(T+t.id,purgeTask(t,clock.now()));ids.push(t.messageId);count++;
     }
     await changed(tx,ctx,ids);return {requeued:count};
    }
@@ -72,18 +75,18 @@ export function createOutboxProvider({BINDLEBOX_ENABLED=false,authorize=()=>fals
      for(const t of prepared)if(!await allowed(tx,t))fault('not_authorized','Recipient is no longer authorized.',403);
      meta.messages.push(data.operationId);meta.tasks+=prepared.length;meta.bytes+=bytes;await tx.put(META,meta);
      const bodyKeys=[];if(data.body!==null)for(let at=0;at<data.body.byteLength;at+=16384){const key=`bb:send:body/${data.operationId}/${at}`;bodyKeys.push(key);await tx.put(key,Array.from(data.body.subarray(at,at+16384)));}
-     await tx.put(M+data.operationId,{fingerprint,bodyKeys,hasBody:data.body!==null,tasks:prepared.map(t=>T+t.id),revision:0});for(const t of prepared){if(t.secret)t.secret=Array.from(t.secret);await tx.put(T+t.id,t);}
+     await tx.put(M+data.operationId,{fingerprint,bodyKeys,hasBody:data.body!==null,tasks:prepared.map(t=>T+t.id),revision:0});for(const t of prepared){if(t.secret)t.secret=Array.from(t.secret);await tx.put(T+t.id,purgeTask(t,clock.now()));}
      await changed(tx,ctx,[data.operationId]);return snapshot(tx,data.operationId);
     });
    }
    async function claim(){return transaction(async tx=>{
     const now=clock.now(),all=await tasks(tx),ids=[],hosts=new Map();let active=0;
     for(const t of all){
-     if(!pending(t))continue;
+     if(!pending(t)){const at=taskCleanupAt(t);if(at!==null&&at<=now)await tx.put(T+t.id,purgeTask(t,now));continue;}
      if(!await allowed(tx,t)){await cancel(tx,t);ids.push(t.messageId);continue;}
      if(t.lease&&t.lease.until>now){active++;hosts.set(t.host,(hosts.get(t.host)??0)+1);continue;}
-     if(t.lease){t.lease=null;t.generation++;t.state='unknown';t.reason='unreachable';t.revision++;await tx.put(T+t.id,t);ids.push(t.messageId);}
-     if(now>=t.deadline||t.attempts>=t.budgetEnd){t.state='expired';t.revision++;await tx.put(T+t.id,t);ids.push(t.messageId);}
+     if(t.lease){t.lease=null;t.generation++;t.state='unknown';t.reason='unreachable';t.revision++;await tx.put(T+t.id,purgeTask(t,clock.now()));ids.push(t.messageId);}
+     if(now>=t.deadline||t.attempts>=t.budgetEnd){t.state='expired';t.revision++;await tx.put(T+t.id,purgeTask(t,clock.now()));ids.push(t.messageId);}
     }
     const meta=await tx.get(META)??empty(),due=all.filter(t=>pending(t)&&!t.lease&&t.nextAttemptAt<=now).sort((a,b)=>Number(b.control)-Number(a.control)||a.createdAt-b.createdAt||a.id.localeCompare(b.id));
     // Rotate conversation+host lanes; one reserved control candidate precedes ordinary round-robin.
@@ -94,13 +97,13 @@ export function createOutboxProvider({BINDLEBOX_ENABLED=false,authorize=()=>fals
     for(const t of ordered){
      if(active>=caps.concurrent)break;if((hosts.get(t.host)??0)>=caps.perHost)continue;
      const bk=breakerKey(t.ingress),b=await tx.get(bk)??initialBreaker();
-     if(b.until>now||b.until&&b.probe?.until>now){const at=Math.max(b.until,b.probe?.until??0);if(t.nextAttemptAt!==at){t.nextAttemptAt=at;t.state=at>=t.deadline?'expired':'retry_scheduled';t.reason='unreachable';t.revision++;await tx.put(T+t.id,t);ids.push(t.messageId);}continue;}
+     if(b.until>now||b.until&&b.probe?.until>now){const at=Math.max(b.until,b.probe?.until??0);if(t.nextAttemptAt!==at){t.nextAttemptAt=at;t.state=at>=t.deadline?'expired':'retry_scheduled';t.reason='unreachable';t.revision++;await tx.put(T+t.id,purgeTask(t,clock.now()));ids.push(t.messageId);}continue;}
      t.generation++;t.attempts++;t.state='in_progress';t.revision++;t.lease={token:random.uuid(),until:now+caps.total*(t.needsRepair&&repair?2:1)};
      // Persist spacing before network I/O, including a crash between remote custody and local ACK.
      const sample=random.bytes(2),jitter=.8+((sample[0]*256+sample[1])/65535)*.4;
      t.nextAttemptAt=now+Math.max(5000,Math.min(HOUR,Math.round(5000*2**Math.min(20,t.attempts-1)*jitter)));
      if(b.until){b.probe={token:t.lease.token,until:t.lease.until};await tx.put(bk,b);}
-     await tx.put(T+t.id,t);const message=await tx.get(M+t.messageId),chunks=await Promise.all(message.bodyKeys.map(key=>tx.get(key)));
+     await tx.put(T+t.id,purgeTask(t,clock.now()));const message=await tx.get(M+t.messageId),chunks=await Promise.all(message.bodyKeys.map(key=>tx.get(key)));
      claimed.push({...structuredClone(t),secret:t.secret?Uint8Array.from(t.secret):null,body:message.hasBody?Uint8Array.from(chunks.flat()):null});ids.push(t.messageId);active++;hosts.set(t.host,(hosts.get(t.host)??0)+1);
     }
     meta.turn++;await tx.put(META,meta);await changed(tx,ctx,ids);return claimed;
@@ -108,8 +111,19 @@ export function createOutboxProvider({BINDLEBOX_ENABLED=false,authorize=()=>fals
    async function bounded(task){
     const controller=new AbortController();let totalTimer,connectTimer;
     const timeout=new Promise((_,reject)=>{totalTimer=timers.set(()=>{controller.abort();reject(Object.assign(new Error('timeout'),{code:'timeout'}));},caps.total);});
-    const connecting=new Promise((_,reject)=>{connectTimer=timers.set(()=>{controller.abort();reject(Object.assign(new Error('timeout'),{code:'timeout'}));},caps.connect);});
     try{return await Promise.race([timeout,(async()=>{
+     // A renewal changes only the transport proof; payload/event digests and signed bytes stay frozen.
+     const old=parseDelegation(task.envelope.proof.delegation).claims;
+     if(old.exp*1000<=clock.now()+60000){
+      if(typeof renewDelegation!=='function')throw new Error('Delegation renewal unavailable');
+      const delegation=await renewDelegation(),fresh=parseDelegation(delegation).claims;
+      if(fresh.jkt!==old.jkt||fresh.iss!==old.iss||fresh.sub!==old.sub||jcs(fresh.client)!==jcs(old.client)||fresh.since!==old.since||fresh.exp*1000<=clock.now()+60000||fresh.iat*1000>clock.now()+60000)throw new Error('Delegation changed');
+      task.envelope.proof.delegation=delegation;
+     }
+     controller.signal.throwIfAborted();
+     const live=await transaction(async tx=>{const t=await tx.get(T+task.id);return t.generation===task.generation&&t.lease?.token===task.lease.token&&await allowed(tx,t);});
+     controller.signal.throwIfAborted();if(!live)return {};
+     const connecting=new Promise((_,reject)=>{connectTimer=timers.set(()=>{controller.abort();reject(Object.assign(new Error('timeout'),{code:'timeout'}));},caps.connect);});
      const wire=encodeDelivery(task.envelope,{body:task.body,secret:task.secret,boundary:`bb-${task.messageId}`});
      const response=await Promise.race([connecting,egress.fetch(task.ingress,{method:'POST',redirect:'manual',credentials:'omit',signal:controller.signal,headers:{'Content-Type':wire.contentType,'Idempotency-Key':task.envelope.payload.operationId,...task.credential?{Authorization:task.credential}:{}},body:wire.bytes})]);timers.clear(connectTimer);
      if(!(response instanceof Response))throw new TypeError('Invalid egress response');
@@ -131,13 +145,13 @@ export function createOutboxProvider({BINDLEBOX_ENABLED=false,authorize=()=>fals
     if(!current&&!result.receipt)return;
     const authorized=await allowed(tx,t);
     if(!authorized&&(pending(t)||t.state==='expired'))await cancel(tx,t);
-    if(result.receipt){Object.assign(t,applyReceipt(t.state));t.receipt=result.receipt;t.lease=null;t.revision++;await tx.put(T+t.id,t);}
+    if(result.receipt){Object.assign(t,applyReceipt(t.state));t.receipt=result.receipt;t.lease=null;t.revision++;await tx.put(T+t.id,purgeTask(t,clock.now()));}
     else if(authorized&&pending(t)){
      const step=classifyFailure({...result,record:t.kind==='conversation-record',repaired:t.repaired,knownRotation:t.knownRotation,now:clock.now()});
      t.lease=null;t.revision++;
      if(step.action==='terminal'){t.state='rejected';t.class=step.class;}
      else{t.state=step.state??'retry_scheduled';t.reason=step.reason;if(step.notBefore!==undefined)t.notBefore=clock.now()+step.notBefore;t.nextAttemptAt=Math.max(t.nextAttemptAt,t.notBefore??0);if(step.action==='repair'){t.repaired=true;t.needsRepair=true;}if(t.attempts>=t.budgetEnd||t.nextAttemptAt>=t.deadline)t.state='expired';}
-     await tx.put(T+t.id,t);
+     await tx.put(T+t.id,purgeTask(t,clock.now()));
     }
     if(current){
      const key=breakerKey(task.ingress),b=await tx.get(key)??initialBreaker(),wasOpen=Boolean(b.until),bad=Boolean(result.transport)||result.status>=500;
@@ -160,7 +174,7 @@ export function createOutboxProvider({BINDLEBOX_ENABLED=false,authorize=()=>fals
       if(patch.credential!==undefined){checkCredentialKind(t.envelope,parseCredential(patch.credential));t.credential=patch.credential;task.credential=patch.credential;}t.needsRepair=false;
       // Reclaim under the new host's concurrency/breaker bounds instead of forwarding this attempt.
       if(moved){t.state='retry_scheduled';t.reason='moved';t.lease=null;t.generation++;t.revision++;}
-      await tx.put(T+t.id,t);if(moved)await changed(tx,ctx,[t.messageId]);return moved;
+      await tx.put(T+t.id,purgeTask(t,clock.now()));if(moved)await changed(tx,ctx,[t.messageId]);return moved;
      });if(moved)return;
     }
     // Cancellation/revocation can interleave with repairs; check again before starting network work.
@@ -172,9 +186,9 @@ export function createOutboxProvider({BINDLEBOX_ENABLED=false,authorize=()=>fals
     get:id=>transaction(tx=>snapshot(tx,id)),
     list:()=>transaction(async tx=>{const meta=await tx.get(META)??empty();return Promise.all(meta.messages.map(id=>snapshot(tx,id)));}),
     async drain(){const claimed=await claim();await Promise.all(claimed.map(deliver));return transaction(async tx=>{
-     const now=clock.now(),all=(await tasks(tx)).filter(pending),active=all.filter(t=>t.lease?.until>now);
+     const now=clock.now(),rows=await tasks(tx),cleanup=rows.map(taskCleanupAt).filter(at=>at!==null),all=rows.filter(pending),active=all.filter(t=>t.lease?.until>now);
      const due=all.map(t=>{let at=Math.max(now,t.nextAttemptAt,t.lease?.until??0);if(!t.lease){const host=active.filter(a=>a.host===t.host);if(active.length>=caps.concurrent)at=Math.max(at,Math.min(...active.map(a=>a.lease.until)));if(host.length>=caps.perHost)at=Math.max(at,Math.min(...host.map(a=>a.lease.until)));}return at;});
-     return {attempted:claimed.length,pending:due.length,nextAlarmAt:due.length?Math.min(...due):null};
+     const alarms=[...due,...cleanup];return {attempted:claimed.length,pending:due.length,nextAlarmAt:alarms.length?Math.min(...alarms):null};
     });},
     retry:id=>transaction(async tx=>{if(!await tx.get(M+id))fault('not_found','Message not found.',404);return requeue(tx,t=>t.messageId===id);}),
     catchUp:principal=>transaction(tx=>{if(!principal||typeof principal.issuer!=='string'||typeof principal.subject!=='string')fault('malformed','Invalid peer.',400);return requeue(tx,t=>t.peer===peerKey(principal)&&t.state==='expired');}),

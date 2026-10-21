@@ -11,6 +11,7 @@ import {AVATAR,avatarOrigins,readAvatarSource,reencodeAvatar} from '../../federa
 import {handleObjectURL} from '../../storage/object-http.mjs';
 import {UUID as uuidPattern} from '../../core/primitives.mjs';
 import {json,body,cookie,sessionToken,pseudonym,subnet,identity,securePage,brandPage,passthrough} from './shared.mjs';
+import {deviceAuthorizationEnabled} from '../device-grant.mjs';
 
 const encoder=new TextEncoder();
 export const stages={
@@ -21,6 +22,10 @@ export const stages={
  async public({request,env,path,local}){
    if(path==='/.well-known/bindle/manifest.json'||path.startsWith('/oauth/')||path==='/bindle/rpc'||path.startsWith('/bindle/objects/')||path.startsWith('/api/oauth/')||path==='/api/preferences'||path==='/api/grants'||path.startsWith('/api/grants/')){
     let entryRemote;
+    // Device-code polling has its own per-network and global poll bounds and RFC 8628 back-off (LA3-S2): it is
+    // answered before the generic limiter, whose 429 would end a client's flow instead of slowing it.
+    const deviceMounted=env.DEVICE_GRANT?.mounted===true&&deviceAuthorizationEnabled(env);
+    if(deviceMounted&&path==='/oauth/token'){const device=await deviceRoutes(request,env,path,local);if(device)return device;}
     if(env.FEDERATION_ENABLED==='true'&&request.method!=='OPTIONS'){
      const remote=request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown'),secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY;
      if(!secret)return json({error:'temporarily_unavailable',message:'Application connections are not configured.'},503);
@@ -30,6 +35,8 @@ export const stages={
      if(!await env.ABUSE.consume(`bindle/${rateClass}/ip/${ip}`,{windowMs:60000,limit:rpc?120:readOnly?120:30})||!await env.ABUSE.consume(`bindle/${rateClass}/subnet/${network}`,{windowMs:60000,limit:rpc?400:200})||!await env.ABUSE.consume(`bindle/${rateClass}/service-v1-${lane}`,{windowMs:60000,limit:rpc?400:200})){const appOrigin=request.headers.get('Origin');const cors=path.startsWith('/bindle/objects/')?{'Access-Control-Allow-Origin':'*'}:appOrigin&&env.FEDERATION_AUTHORITY?.clients?.some(client=>client.origin===appOrigin)?{'Access-Control-Allow-Origin':appOrigin,Vary:'Origin'}:{};return json({error:'rate_limited',message:'Please wait before continuing this application connection.'},429,{'Retry-After':'60',...cors});}
     }
     if(path.startsWith('/bindle/objects/'))return passthrough(handleObjectURL(request,{controller:env.FEDERATION_AUTHORITY,enabled:env.FEDERATION_ENABLED==='true'}));
+    // Device authorization grant (LA3): only where the adapter mounted DEVICE_GRANT, which requires the flag.
+    if(deviceMounted&&path!=='/oauth/token'){const device=await deviceRoutes(request,env,path,local);if(device)return device;}
     // Provider-owned authorization entry (adaptive sign-in §7): cookieless creation keyed by the caller's IP
     // pseudonym, owner steps resolved through the multi-account cookies, and its own strict document policy (F7).
     const entryResponse=await handleAuthorizationEntry(request,{entries:env.FEDERATION_ENTRIES,issuer:env.APP_ORIGIN,assets:env.ASSETS,allowInsecureLocalhost:local,enabled:env.FEDERATION_ENABLED==='true'&&Boolean(env.FEDERATION_ENTRIES),remote:()=>entryRemote,ownerContext:entryRequest=>entryOwnerContext(entryRequest,env,local),endSession:(entryRequest,context,subject)=>entryEndSession(entryRequest,env,local,subject)});
@@ -56,6 +63,59 @@ export const stages={
     if(mcpOwnerPath(path))return passthrough(handleMcpOwner({request,env,owner,body}));
  },
 };
+// Device grant mounts (LA3; docs/spec/device-authorization.md). Non-browser endpoints: the provider refuses Origin and
+// Sec-Fetch-* itself, and no response here carries CORS. The device_code token branch, device-code cancellation and
+// DPoP RPC are picked out before the generic federation handler; everything else falls through to it unchanged.
+const DEVICE_URN='urn:ietf:params:oauth:grant-type:device_code',OPAQUE=/^[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}$/;
+const formRequest=request=>request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase()==='application/x-www-form-urlencoded';
+async function boundedText(request,max){
+ const length=Number(request.headers.get('Content-Length'));if(Number.isFinite(length)&&length>max)return null;
+ const reader=request.body?.getReader();if(!reader)return '';const chunks=[];let size=0;
+ for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>max){await reader.cancel().catch(()=>{});return null;}chunks.push(value);}
+ const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}return new TextDecoder().decode(bytes);
+}
+const oauthResponse=result=>new Response(JSON.stringify(result.body),{status:result.status,headers:{'Content-Type':'application/json','X-Content-Type-Options':'nosniff',...result.headers}});
+// Country and network trust only where the runtime's client address and geo source are authoritative (Workers).
+function deviceNetwork(request,local){const remoteIP=request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown'),country=request.cf?.country;return {remoteIP,...!local&&request.headers.has('CF-Connecting-IP')&&typeof country==='string'&&/^[A-Z]{2}$/.test(country)?{country,networkTrusted:true}:{}};}
+// Browser evidence is Origin or Sec-Fetch-Site/Dest/User, which browsers send together. Node's fetch (undici, also
+// the SDK's CLI transport) sends a lone `Sec-Fetch-Mode: cors`, which identifies no browser, so only that lone header is
+// withheld from the provider's refusal check (reconciled in docs/release/linked-approval-review.md, LA3 mount).
+const deviceHeaders=request=>{const headers=Object.fromEntries(request.headers);if(!Object.hasOwn(headers,'origin')&&headers['sec-fetch-mode']==='cors'&&Object.keys(headers).filter(name=>name.startsWith('sec-fetch-')).join()==='sec-fetch-mode')delete headers['sec-fetch-mode'];return headers;};
+async function deviceRoutes(request,env,path,local){
+ const grant=env.DEVICE_GRANT;
+ if(path==='/oauth/device_authorization'){
+  if(request.method!=='POST')return json({error:'method_not_allowed'},405,{Allow:'POST','Cache-Control':'no-store'});
+  const text=await boundedText(request,8192);if(text===null)return json({error:'invalid_request'},400,{'Cache-Control':'no-store'});
+  return oauthResponse(await grant.authorize({headers:deviceHeaders(request),body:text,...deviceNetwork(request,local)}));
+ }
+ if(path==='/oauth/token'&&request.method==='POST'&&formRequest(request)){
+  const text=await boundedText(request.clone(),8192);if(text===null||new URLSearchParams(text).get('grant_type')!==DEVICE_URN)return null;
+  // Overload is RFC 8628 back-off, never a terminal error; an unexpected failure after redemption is a 503 (LA3-S4).
+  let result;try{result=await grant.token({headers:deviceHeaders(request),body:text,remoteIP:deviceNetwork(request,local).remoteIP});}catch{return json({error:'temporarily_unavailable'},503,{'Cache-Control':'no-store','Retry-After':'5'});}
+  if(result.status===503&&result.body?.error==='temporarily_unavailable')result={...result,status:400,body:{error:'slow_down',interval:10}};
+  return oauthResponse(result);
+ }
+ // A device code is cancelled with a DPoP proof for its key; the RFC 7009 path then runs as usual (unknown is a silent
+ // success there), so refresh/access revocation is never shadowed. Hinted refresh/access revocations skip this step.
+ if(path==='/oauth/revoke'&&request.method==='POST'&&formRequest(request)&&request.headers.has('DPoP')){
+  const text=await boundedText(request.clone(),8192);if(text===null)return null;const params=new URLSearchParams(text);
+  // Only an explicit device_code hint can fail the request (LA3-S1). Without a hint the cancel is best effort and the
+  // RFC 7009 handler always runs; browsers never reach it.
+  const hint=params.get('token_type_hint'),browser=request.headers.has('Origin')||[...request.headers.keys()].some(name=>name.startsWith('sec-fetch-')&&name!=='sec-fetch-mode');
+  if(!OPAQUE.test(params.get('token')??'')||browser||!['device_code',null].includes(hint))return null;
+  const result=await grant.cancel({headers:deviceHeaders(request),body:text}).catch(()=>null);
+  if(hint==='device_code'&&result)return oauthResponse(result);
+  return null;
+ }
+ if(path==='/bindle/rpc'&&request.method==='POST'&&request.headers.get('Authorization')?.startsWith('DPoP ')){
+  if(request.headers.get('Content-Type')?.split(';')[0].trim()!=='application/json')return json({error:'json_required'},415,{'Cache-Control':'no-store'});
+  const text=await boundedText(request,1500000);let envelope;try{envelope=text===null?null:JSON.parse(text);}catch{}
+  if(!envelope||typeof envelope!=='object'||Array.isArray(envelope))return json({error:'invalid_request'},400,{'Cache-Control':'no-store'});
+  try{return json(await grant.rpc({authorization:request.headers.get('Authorization'),dpop:request.headers.get('DPoP'),envelope,...request.headers.has('Origin')?{origin:request.headers.get('Origin')}:{}}),200,{'Cache-Control':'no-store'});}
+  catch(error){const status={unauthorized:401,use_dpop_nonce:401,forbidden:403,rate_limited:429,temporarily_unavailable:503,not_found:404}[error.code]??400;return json({error:error.code??'invalid_request',message:error.code?error.message:'The request could not be completed.'},status,{'Cache-Control':'no-store',...status===401?{'WWW-Authenticate':error.code==='use_dpop_nonce'?'DPoP error="use_dpop_nonce", algs="ES256"':'DPoP algs="ES256"'}:{},...Number.isSafeInteger(error.retryAfter)?{'Retry-After':String(error.retryAfter)}:{}});}
+ }
+ return null;
+}
 /** Owner context for federation and entry owner steps: the tab's authenticated member cookie, else the legacy session. */
 async function entryOwnerContext(request,env,local){
  const base={csrfToken:request.headers.get('X-CSRF-Token'),origin:request.headers.get('Origin')??env.APP_ORIGIN};

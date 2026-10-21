@@ -7,6 +7,7 @@ import {encryptSecret,decryptSecret} from '../secrets.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
+import {integrationsEnabled} from '../../app/domains/connections.mjs';
 import {DelegationRegistry,delegationsProvider,delegationsEnabled,DELEGATION_OPERATIONS,DelegationList,DelegationStatus,RevokeDelegation,ReconcileDelegations} from '../../identity/delegation.mjs';
 
 // One identity key engine per controller, over the controller's transactional account store (packages/identity/keys.mjs).
@@ -27,7 +28,7 @@ const delegationEngines=new WeakMap();
 function delegationEngine(c){
  let engine=delegationEngines.get(c);
  if(!engine){
-  const registry=new DelegationRegistry({store:c.store,issuer:c.config.APP_ORIGIN,signer:owner=>c.signingKey(owner),occupant:typeof c.config.DELEGATION_SLOT_OCCUPANT==='function'?c.config.DELEGATION_SLOT_OCCUPANT:undefined,account:typeof c.config.IDENTITY_ACCOUNT==='function'?owner=>c.config.IDENTITY_ACCOUNT(owner):undefined,lifetime:c.config.DELEGATION_CERTIFICATE_SECONDS,allowLoopback:c.config.LOCAL_DEVELOPMENT==='true'});
+  const registry=new DelegationRegistry({store:c.store,issuer:c.config.APP_ORIGIN,signer:owner=>c.signingKey(owner),occupant:typeof c.config.DELEGATION_SLOT_OCCUPANT==='function'?c.config.DELEGATION_SLOT_OCCUPANT:integrationsEnabled(c.config)?query=>c.delegationSlotOccupant(query):undefined,account:typeof c.config.IDENTITY_ACCOUNT==='function'?owner=>c.config.IDENTITY_ACCOUNT(owner):undefined,lifetime:c.config.DELEGATION_CERTIFICATE_SECONDS,allowLoopback:c.config.LOCAL_DEVELOPMENT==='true'});
   engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,delegations:delegationsProvider({registry,enabled:delegationsEnabled(c.config)})}});delegationEngines.set(c,engine);
  }
  return engine;

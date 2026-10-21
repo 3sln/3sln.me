@@ -136,3 +136,44 @@ Date: 2026-10-20. Subject: EXT-X3 in `packages/federation/integrations.mjs` (new
 - the X3-S2 adapter fix;
 - token-endpoint enforcement that uses `pinnedKeys` only (LA2/X4);
 - human sign-off on the S1 spec deviation.
+
+## X4 implementation
+
+Date: 2026-10-20. Subject: EXT-X4, the connections domain:
+
+- `packages/apps/connections.mjs` (extended);
+- `packages/app/domains/connections.mjs` and `packages/runtime/account/connections.mjs` (new);
+- `tests/engine-connections.test.mjs`;
+- port and hook wiring in `account/links.mjs`, `account/identity.mjs` and `accounts.mjs`.
+
+One independent reviewer agent worked read-only and wrote proof-of-concept probes. It looked at stale generation use, occupancy hijack, cascade completeness and migration safety. This is an agent review, not human sign-off: reviewer ___ / date ___ / outcome ___.
+
+**What was implemented (local behaviour only, behind `INTEGRATIONS_ENABLED`, default off):**
+
+- **Lifecycle.** States are `configuring`, `active`, `degraded`, `manifest-invalid`, `suspended` and `disconnected`. Each record has a generation, and `status` is derived from the state, so legacy checks stay exact.
+- **Connections.**
+  - External integrations connect from an X3 approval snapshot. The snapshot must re-derive exactly, sit on its own origin, and never use the issuer origin.
+  - Built-in integrations are connections too, connected from a provider-authored registry.
+- **Slot occupancy** is the owner's ordered value per recognized slot (messaging-ingress by default).
+  - The connection must declare the occupant role and offer the slot's contracts.
+  - Exclusive replacement is explicit and needs authentication within the last 15 minutes.
+  - A `createSlotOperation` view feeds the extensions selection machine.
+- **Outbox.** A transactional, bounded outbox emits `connection-*`, `slot-changed`, `occupant-removed` and `manifest-adopted` for X6/X7/X8.
+- **Ports.** `LINK_SLOT_OCCUPANT` and `DELEGATION_SLOT_OCCUPANT` answer for exclusive slots only. `cnx` is the seat id plus the generation.
+- **KD-4.** Durable cascade rows revoke delegations on disconnect (domain and legacy routes), suspend, vacate, replacement and manifest invalidation, and reconcile them on purpose or ingress changes. Account suspension severs every connection through three paths:
+  - the `connectionsSeverAccount` hook;
+  - the identity-directory status the port observes;
+  - a per-connection lifecycle capability-epoch fence.
+
+| ID | Sev | Finding | Status |
+| --- | --- | --- | --- |
+| X4-R1 | High | When the lifecycle was blocked and a `reconcile` cascade was pending, a port read severed, drained, reconciled and re-entered the port without end. Requests hung, cascade rows grew and revocation never happened. | **Fixed.** Drains carry a re-entrancy guard and port reads inside a drain never sever or drain. Severance writes nothing when it is repeated for the same lifecycle incarnation. `setIngress` and `configureSeat` refuse while the account is suspended. |
+| X4-R2 | Medium | The epoch fence covered seated connections only, and `resume` overwrote the fence. An unseated or paused connection survived a missed suspension. | **Fixed.** The port sweeps every migrated connection. `check()` refuses any migrated record whose fence has moved. `resume` past a moved epoch severs every connection. **Open:** admin suspension (`identity/admin.mjs`) and lifecycle `freeze` do not call the hook yet. Lifecycle suspension is covered by the fence. Admin suspension is covered only when it is observed during the suspension (directory status). This needs integrator wiring (an accounts port in the admin path). |
+| X4-R3 | Medium | A same-incarnation re-consent swapped the snapshot without bumping the generation or re-seating. | **Fixed.** A changed snapshot or origin bumps the generation, enqueues the delegation cascade and re-seats. |
+| X4-R4 | Medium | `connect` accepted any `client.origin`, and that origin is signed into delegation certificates. | **Fixed.** The origin must equal the HTTPS origin of the `client_id`. |
+| X4-R5 | Medium/Low | Approving a stale staged change revived a `manifest-invalid` connection. | **Fixed.** `invalid` discards the stage, and `approve` refuses while the manifest is invalid. |
+| X4-R6 | Low | `configured:false` withdrew authority with no generation bump or cascade. | **Fixed.** It bumps the generation and enqueues the cascade, and returning to configured re-seats under the new generation. |
+| X4-R7 | Low | `severAll` truncated at 201 resource rows. | **Fixed.** The listing is paginated. |
+| X4-R8 | Info | (a) Cascade rows written with the flag off are applied later, by `clientId`, which can only over-revoke. (b) Owner routes must take `authTime` from the session. (c) The system disconnect reason was wrong. (d) Write amplification while blocked. | (c) and (d) fixed. (a) accepted. (b) is for the future route owner (X11). |
+
+**Checked without findings:** exclusive-only ports and the bound-owner check; owner/system actor separation; occupancy declaration, contract, state and fence gates; `cnx` changes on every incarnation; the issuance-versus-cascade race (covered by the delegation epoch); durable cascades stopping at the first failure; the `CASCADE_LIMIT` collapse; legacy behaviour with the flag off; a disabled flag never revives a paused record; outbox bounds and gap semantics.

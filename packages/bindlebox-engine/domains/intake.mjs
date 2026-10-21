@@ -1,3 +1,4 @@
+import {projectIncoming,removeIncoming} from '../store/item-index.mjs';
 // Intake: per-parent intake configuration (spec §4.3), bridged public intake `deliver` (spec §9), and public-request
 // filtering with the spam tiers of architecture §12.1. Filtering runs after custody in `intake.drain`, so no
 // receipt, error, header or timing class at admission depends on classification, score, rule or allowlist (§6.7).
@@ -114,7 +115,7 @@ export class IntakeDeliver extends MailboxAction {
    const seen=await tx.get(KEYS.intakeJti(consumer,v.jti));if(seen){if(seen.digest!==digest)conflict();await tx.put(txKey,seen);return {disposition:seen.disposition};}
    await tx.put(KEYS.budget,chargeBudget(await tx.get(KEYS.budget),{now,plan:config.plan,bytes,parent:`intake:${v.channel}`,sender:`email:${address}`,request:{sender:`email:${address}`,domain,email:true}}));
    const item={id,origin:'channel',kind:'channel',channel:v.channel,asserted:{...v.asserted,address},verifiedSender:false,subject:'',content:null,message:args.message,bodyRef:{storage:'mailbox'},createdAt:v.receivedAt,receivedAt:now,state:'pending',request:true,tags:[],tagHistory:[],quarantined:false,reviewed:false,notification:null};
-   await tx.put(KEYS.item(id),item);await tx.put(KEYS.pending(now,id),{id});
+   await tx.put(KEYS.item(id),item);await projectIncoming(tx,item);await tx.put(KEYS.pending(now,id),{id});
    const record={disposition:'stored-receipt',digest,jti:v.jti,at:now};await tx.put(KEYS.intakeJti(consumer,v.jti),record);await tx.put(txKey,record);
    return {disposition:record.disposition};
   });
@@ -154,7 +155,7 @@ export class IntakeDrain extends MailboxAction {
     const next={...current,tags:[...current.tags,...decision.tags.map(t=>({...t,at:now}))],tagHistory:[...current.tagHistory,...decision.history.map(h=>({...h,at:now}))]};
     if(decision.tier==='reject'){Object.assign(next,{state:'rejected',rejectedAt:now,notification:null});await tx.put(KEYS.rejected(now,id),{id});await boundRejected(tx,now);out.rejected++;}
     else Object.assign(next,{state:'request',priority:decision.tier==='suspect'?'low':'normal',notification:decision.tier==='suspect'?'quiet':'push'});
-    if(decision.tier==='suspect')out.suspected++;await tx.put(KEYS.item(id),next);
+    if(decision.tier==='suspect')out.suspected++;await tx.put(KEYS.item(id),next);await projectIncoming(tx,next);
    });
    out.processed++;if(called&&result)out.classified++;
   }
@@ -164,7 +165,7 @@ export class IntakeDrain extends MailboxAction {
 // The Rejected view keeps the most recent 500 items and nothing older than 7 days; erased items lose body and record.
 async function boundRejected(tx,now){
  const rows=[...(await tx.list({prefix:'rejected/'})).entries()];let excess=rows.length-BOUNDS.rejectedItems;
- for(const [key,{id}] of rows){const at=Number(key.split('/')[1]);if(excess>0||at+BOUNDS.rejectedMs<now){const item=await tx.get(KEYS.item(id));await tx.delete(key);await tx.delete(KEYS.item(id));await tx.delete(KEYS.body(id));if(item?.hot>0)await chargeUsage(tx,{bytes:-item.hot,items:-1});
+ for(const [key,{id}] of rows){const at=Number(key.split('/')[1]);if(excess>0||at+BOUNDS.rejectedMs<now){const item=await tx.get(KEYS.item(id));await tx.delete(key);await tx.delete(KEYS.item(id));await removeIncoming(tx,id);await tx.delete(KEYS.body(id));if(item?.hot>0)await chargeUsage(tx,{bytes:-item.hot,items:-1});
   if(item?.author?.jkt)await tx.delete(`by-jkt/${item.author.jkt}/${id}`);if(item?.bodyRef?.storage==='user')await tx.put(`storage-gc/${encodeURIComponent(item.bodyRef.key)}`,{key:item.bodyRef.key});excess--;}}
 }
 // Erases expired Rejected items, then deletes queued user-storage bodies (erased items and refused-attempt orphans)
@@ -187,7 +188,7 @@ export class IntakeRescue extends MailboxAction {
   return receive.store.transaction(async tx=>{
    const item=await tx.get(KEYS.item(id));if(!item||item.state!=='rejected')fault('not_found','That item is not in Rejected.',404);
    await tx.delete(KEYS.rejected(item.rejectedAt,id));
-   const next={...item,state:'request',priority:'normal',notification:null,reviewed:true,tags:item.tags.filter(t=>t.id!==FINAL_SPAM),tagHistory:[...item.tagHistory,{action:'rescued',at:now}]};await tx.put(KEYS.item(id),next);
+   const next={...item,state:'request',priority:'normal',notification:null,reviewed:true,tags:item.tags.filter(t=>t.id!==FINAL_SPAM),tagHistory:[...item.tagHistory,{action:'rescued',at:now}]};await tx.put(KEYS.item(id),next);await projectIncoming(tx,next);
    if(allow===true){const key=item.origin==='native'?KEYS.allowPrincipal(item.author.principal):KEYS.allowEmail(item.asserted.address);await tx.put(key,{at:now,...item.origin==='native'?{principal:{issuer:item.author.principal.issuer,subject:item.author.principal.subject}}:{email:item.asserted.address}});}
    return {id,state:'request'};
   });

@@ -1,4 +1,6 @@
-// LA5: production browser assets with explicit fixtures for LA1's unmounted LA3 contract.
+// LA5: production browser assets. The state matrix below (expiry, slow_down, denial, interruption) keeps explicit
+// fixtures so it stays deterministic; the LA3 tests at the end drive the same screen and /approve against the real
+// mounted routes when the Worker runs with DEVICE_AUTHORIZATION_ENABLED (E2E_DEVICE_AUTHORIZATION=1).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {launch,baseURL,screenshot} from './browser.mjs';
@@ -38,3 +40,50 @@ for(const locale of ['en','es'])test(`linked lifecycle ${locale}: QR fallback, r
  await Promise.all([page.waitForResponse(response=>response.url().endsWith('/api/auth/linked/start')),page.getByRole('button',{name:w.renew,exact:true}).click()]);await page.locator('.device-code').waitFor();f.setStatus('unexpected');await f.tick(5100);await page.getByRole('status').filter({hasText:w.interrupted}).waitFor();f.setCancellation(false);await page.getByRole('button',{name:w.cancel,exact:true}).click();await page.getByRole('alert').waitFor();assert.match(await page.getByRole('alert').innerText(),locale==='es'?/No pudimos confirmar/:/could not confirm/);await f.private();
 });
 for(const locale of ['en','es'])test(`linked confirmation ${locale} installs a session only after a keyboard Continue`,async t=>{const f=await fixture(t,{locale}),{page,calls}=f;await f.start();f.setStatus('confirm');await f.tick(5100);await page.getByRole('heading',{name:/alice/}).waitFor();assert.equal(await page.locator('.app-shell').count(),0);await page.waitForFunction(()=>document.querySelector('.auth-card .button.primary')?.disabled===false);await page.getByRole('button',{name:words[locale].next,exact:true}).focus();await page.keyboard.press('Enter');await page.locator('.app-shell').waitFor();assert.equal(calls.filter(x=>x.path.endsWith('/linked/accept')).length,1);assert.deepEqual(calls.find(x=>x.path.endsWith('/linked/accept')).body,{deviceCode:authority});});
+
+// LA3: real routes end to end. Skipped unless the local Worker mounts linked approval (the default gate keeps it off).
+import {dpopKey} from '../authorization-entry-helpers.mjs';
+const mounted=await(async()=>{try{return (await(await fetch(baseURL+'/api/config')).json()).deviceAuthorizationEnabled===true;}catch{return false;}})();
+const PASSWORD='Linked approval e2e password 2026!',sleep=ms=>new Promise(r=>setTimeout(r,ms));let host=60;const ip=()=>`198.51.100.${host++}`;
+async function member(context){const headers={Origin:baseURL,'Content-Type':'application/json','CF-Connecting-IP':ip()};const pending=await(await context.request.post(baseURL+'/api/auth/signup',{headers,data:{method:'password',password:PASSWORD,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}})).json();assert.ok(pending.pendingToken,JSON.stringify(pending));const file=await(await context.request.post(baseURL+'/api/auth/recovery/download',{headers,data:{pendingToken:pending.pendingToken}})).json();const done=await context.request.post(baseURL+'/api/auth/recovery/confirm',{headers,data:{pendingToken:pending.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true}});assert.equal(done.status(),200);return (await done.json()).account;}
+async function approver(t,{locale,width}){const context=await browser.newContext({viewport:{width,height:1000},locale:locale==='es'?'es-ES':'en-US',serviceWorkers:'block'});t.after(()=>context.close());const account=await member(context),page=await context.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));t.after(()=>assert.deepEqual(errors,[]));page.setDefaultTimeout(20000);return {context,page,account};}
+const fitsPage=async page=>assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'no horizontal scroll');
+/** Drives /approve: typed code, account choice, the credential the page asks for, review and Approve. */
+async function approveOn({page,account},code,{hash='',kind,shot}){
+ await page.goto(baseURL+'/approve'+hash);await page.locator('input[name=code]').waitFor();assert.equal(await page.locator('input[name=code]').inputValue(),'','a locator never fills the code');
+ await page.locator('input[name=code]').fill(code.toLowerCase().replace('-',' '));await page.locator('.linked-approve form button[type=submit]').click();
+ await page.getByRole('button',{name:'@'+account.handle,exact:true}).click();
+ const decide=page.locator('[data-consent-approve]'),stepUp=page.locator('.step-up input[name=password]'),signIn=page.locator('details form input[name=password]');
+ await Promise.race([decide.waitFor(),stepUp.waitFor(),signIn.waitFor({state:'attached'})]);
+ if(await signIn.count()&&!await decide.count()){await page.locator('details summary').click();const form=page.locator('details form');await form.locator('input[name=handle]').fill(account.handle);await signIn.fill(PASSWORD);await form.locator('button[type=submit]').click();}
+ else if(await stepUp.count()&&!await decide.count()){await stepUp.fill(PASSWORD);await page.locator('.step-up form button[type=submit]').click();}
+ await decide.waitFor();if(kind==='session'&&await stepUp.count()){await stepUp.fill(PASSWORD);await page.locator('.step-up form button[type=submit]').click();}
+ assert.match(await page.locator('.linked-approve').innerText(),kind==='app'?/acme\.example/:/TV|televisor|pantalla/i);assert.doesNotMatch(await page.locator('.linked-approve').innerText(),/Acme CLI/,'never requester-supplied names');
+ await fitsPage(page);if(shot)await screenshot(page,shot+'-review');
+ await page.waitForFunction(()=>document.querySelector('[data-consent-approve]')?.disabled===false);await decide.click();
+ if(kind==='session'&&await stepUp.isVisible().catch(()=>false)){await stepUp.fill(PASSWORD);await page.locator('.step-up form button[type=submit]').click();}
+ await page.waitForFunction(()=>/Approved|Aprobad/.test(document.querySelector('.linked-approve h2')?.textContent??''));await fitsPage(page);if(shot)await screenshot(page,shot+'-approved');
+}
+for(const [locale,width] of [['en',390],['es',320],['en',1440]])test(`LA3 real routes ${locale} ${width}px: requesting screen → /approve → Continue as`,{skip:!mounted&&'DEVICE_AUTHORIZATION_ENABLED is off on this Worker'},async t=>{
+ const requester=await browser.newContext({viewport:{width,height:1000},serviceWorkers:'block'});t.after(()=>requester.close());const page=await requester.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));t.after(()=>assert.deepEqual(errors,[]));page.setDefaultTimeout(30000);
+ const a=await approver(t,{locale,width});
+ await page.goto(baseURL+'/console?signin&lang='+locale);const w=words[locale];
+ const started=page.waitForResponse(response=>response.url().endsWith('/api/auth/linked/start'));await page.getByRole('button',{name:w.entry,exact:true}).click();
+ const start=await(await started).json();await page.locator('.device-code').waitFor();await page.locator('img.device-qr').waitFor();
+ const code=await page.locator('.device-code').innerText();assert.equal(code,start.userCode);assert.equal(await page.getByRole('link',{name:baseURL+'/approve',exact:true}).getAttribute('href'),baseURL+'/approve');
+ assert.equal(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage})).then(text=>text.includes(start.deviceCode)),false,'device authority stays out of storage');
+ await approveOn(a,code,{hash:'#r='+start.requestId,kind:'session',shot:`la3-session-${locale}-${width}`});
+ await page.getByRole('heading',{name:new RegExp(a.account.handle)}).waitFor();await fitsPage(page);await screenshot(page,`la3-confirm-${locale}-${width}`);
+ await page.waitForFunction(()=>document.querySelector('.auth-card .button.primary')?.disabled===false);await page.getByRole('button',{name:w.next,exact:true}).click();await page.locator('.app-shell').waitFor();
+ const session=await(await requester.request.get(baseURL+'/api/session')).json();assert.equal(session.account?.handle??session.authenticated,a.account.handle,'the requesting browser is signed in as the approver');
+});
+for(const [locale,width] of [['en',390],['es',1440]])test(`LA3 real routes ${locale} ${width}px: CLI device grant approved on /approve, DPoP token and RPC`,{skip:!mounted&&'DEVICE_AUTHORIZATION_ENABLED is off on this Worker'},async t=>{
+ const a=await approver(t,{locale,width}),key=await dpopKey(),client='https://acme.example/cli';
+ const started=await fetch(baseURL+'/oauth/device_authorization',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:client,dpop_jkt:key.jkt})}),flow=await started.json();
+ assert.equal(started.status,200,JSON.stringify(flow));assert.equal(flow.verification_uri,baseURL+'/approve');assert.equal(flow.verification_uri_complete,undefined);
+ await approveOn(a,flow.user_code,{kind:'app',shot:`la3-app-${locale}-${width}`});
+ let nonce,token;for(let attempt=0;attempt<8&&!token;attempt++){await sleep(attempt?5500:1000);const r=await fetch(baseURL+'/oauth/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded',DPoP:await key.sign({htu:baseURL+'/oauth/token',...nonce?{nonce}:{}})},body:new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:device_code',device_code:flow.device_code,client_id:client})});nonce=r.headers.get('DPoP-Nonce')??nonce;const body=await r.json();if(r.status===200)token=body;else assert.ok(['use_dpop_nonce','slow_down','authorization_pending'].includes(body.error),JSON.stringify(body));}
+ assert.equal(token?.token_type,'DPoP');
+ const rpc=await fetch(baseURL+'/bindle/rpc',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'DPoP '+token.access_token,DPoP:await key.sign({htu:baseURL+'/bindle/rpc',ath:token.access_token})},body:JSON.stringify({version:'0',tx:crypto.randomUUID(),resource:'@profile',contract:'https://3sln.me/artefacts/contracts/profile/v1',method:'read',args:{}})});
+ assert.equal(rpc.status,403,'live token: identity-only grant lacks only the resource');
+});

@@ -69,6 +69,7 @@ export const PROVIDERS = Object.freeze({
   delegations: row('account', 'domain', 'pilot', 'IDKEYS-2 (BB-C3): key-delegation.v1 certificates (issue, renew, revoke, reconcile, list, public status) over DelegationRegistry; owner, messaging-ingress occupant app, system or public actors; BINDLEBOX_ENABLED required. Obtain with { actor }.', { scoped: true }),
   activityPush: row('account', 'domain', 'pilot', 'ACT-2: owner-scoped activity push policy (per-app opt-in, rules, quiet hours, digests, budgets, preview consent) and the leased activity push outbox (packages/messaging/notifications.mjs). Obtain with { actor }. Reached only through the ACTIVITY_V2_ENABLED-checked account RPC.', { scoped: true }),
   consent: row('both', 'domain', 'planned', 'CX-1: unmounted pure consent risk/wording model over pinned contracts, manifests, reviewed apps and current feed readers; INCREMENTAL_AUTH_ENABLED required.'),
+  connections: row('account', 'domain', 'pilot', 'EXT-X4: integration connections (lifecycle state, generation fencing, kinds external/built-in), slot occupancy as the owner\'s ordered value, transactional outbox and delegation cascades, and the LINK/DELEGATION_SLOT_OCCUPANT ports (packages/app/domains/connections.mjs); owner or system actors; INTEGRATIONS_ENABLED required. Obtain with { actor }.', { scoped: true }),
 });
 
 export const systemClock = Object.freeze({ now: () => Date.now() });

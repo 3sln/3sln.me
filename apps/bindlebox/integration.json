@@ -1,0 +1,51 @@
+{
+ "v": 1,
+ "setup": {
+  "fragments": [
+   {
+    "fragment": "https://messages.example/preferences/message-storage/v1",
+    "required": true,
+    "purpose": "Store your message archive in storage you control.",
+    "fields": [
+     "store"
+    ]
+   }
+  ]
+ },
+ "management_url": "https://messages.example/bindle/manage",
+ "events_endpoint": "https://messages.example/bindle/events",
+ "events": [
+  "https://spec.bindle.example/events/preferences-updated/v1"
+ ],
+ "resources": {
+  "rpc_endpoint": "https://messages.example/bindle/rpc",
+  "discovery_endpoint": "https://messages.example/bindle/resources",
+  "contracts": [
+   "https://spec.bindle.example/bindlebox/v1/contracts/mailbox",
+   "https://spec.bindle.example/contracts/public-intake/v1"
+  ],
+  "dpop": "none"
+ },
+ "extensions": [
+  {
+   "slot": "https://spec.bindle.example/slots/messaging-ingress/v1",
+   "role": "occupant",
+   "ref": "mailbox",
+   "digest": "sha256-ioTUirz2yi5eytTDaIsZ-rZHCM-dbpKB36Ly7pin2ZI"
+  },
+  {
+   "slot": "https://spec.bindle.example/slots/public-message-intake/v1",
+   "role": "occupant",
+   "ref": "mailbox",
+   "digest": "sha256-zjvZ9Xfi0N0aCdYy571oXgxAWmHskfzKyogww3iTU2g"
+  },
+  {
+   "slot": "https://spec.bindle.example/slots/item-classifier/v1",
+   "role": "consumer",
+   "ref": "triage",
+   "purpose": "Sort incoming messages.",
+   "required": false,
+   "digest": "sha256--Ox--Hr1Oc6aoOKqZdz1_XqZwtNuDIeY1Z3toHuUpZY"
+  }
+ ]
+}

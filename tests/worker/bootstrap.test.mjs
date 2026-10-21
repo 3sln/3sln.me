@@ -9,3 +9,8 @@ test('first secret-free deployment exposes public drafts and blocks account crea
 });
 
 test('actual Worker public signup switch remains fail-closed without public captcha key and never bypasses challenge verification',async t=>{for(const key of ['', 'configured-public-site-key']){const h=await createHarness({bindings:{APP_ORIGIN:'https://3sln.me',RP_ID:'3sln.me',LOCAL_DEVELOPMENT:'false',RELEASE_READY:'false',SIGNUP_ENABLED:'true',TURNSTILE_SITE_KEY:key,TURNSTILE_SECRET_KEY:'offline-secret'}});t.after(()=>h.close());const config=await(await h.mf.dispatchFetch('https://3sln.me/api/config')).json();assert.equal(config.signupEnabled,Boolean(key));const response=await h.mf.dispatchFetch('https://3sln.me/api/auth/signup',{method:'POST',headers:{Origin:'https://3sln.me','Content-Type':'application/json'},body:JSON.stringify({handle:'public_signup_probe',method:'password',password:'long isolated public signup password',termsAccepted:true,termsVersion:'2026-10-11'})});assert.equal(response.status,key?403:503);assert.equal((await response.json()).error,key?'challenge_failed':'release_gated');assert.equal(await h.directory.findByHandle('public_signup_probe'),null);}});
+
+
+test('activity V2 config exposes the default-off flag consumed by the UI',async t=>{
+ for(const flag of ['false','true']){const h=await createHarness({bindings:{ACTIVITY_V2_ENABLED:flag}});t.after(()=>h.close());const config=await(await h.request('/api/config')).json();assert.equal(config.activityV2Enabled,flag==='true');}
+});

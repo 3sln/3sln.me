@@ -392,3 +392,11 @@ both('administrator suspension exposes a lifecycle hold whose release survives r
  f.advance(60000);await f.admin.reactivate({owner:target.id},boot.context);assert.deepEqual(await f.admin.lifecycleHold(target.id),{held:false,since:null,releasedAt:f.now()});
  await assert.rejects(f.admin.lifecycleHold('not-a-uuid'),{name:'TypeError'});
 });
+
+
+both('admin suspension invokes account connection severance directly after the identity commits',async f=>{
+ const boot=await f.claimBoot(await f.deploy()),ordinary=await f.user(),calls=[];
+ f.admin.connectionsSeverAccount=async(id,input)=>{assert.equal((await f.repository.get(id)).status,'suspended');calls.push({id,...input});};
+ await f.admin.suspend({owner:ordinary.id},boot.context);assert.deepEqual(calls,[{id:ordinary.id,reason:'admin-suspended'}]);
+ await f.admin.reactivate({owner:ordinary.id},boot.context);assert.equal(calls.length,1);
+});

@@ -92,7 +92,7 @@ for(const engine of [chromium,firefox])test(`${engine.name()}: full declaration:
   const order=await page.evaluate(()=>window.events.map(event=>event.type).filter(type=>['bindle-session-change','bindle-sign-in-start','bindle-sign-in-end','bindle-account-change'].includes(type)));
   assert.deepEqual(order,['bindle-session-change','bindle-sign-in-start','bindle-session-change','bindle-account-change','bindle-sign-in-end']);
   const trigger=page.getByRole('button',{name:/^Account: Alex Example$/});await trigger.waitFor();
-  assert.equal(await page.evaluate(()=>document.querySelector('bindle-account').shadowRoot.querySelector('.avatar').classList.contains('picture')),true,'granted picture');
+  await page.locator('bindle-account .avatar.picture').waitFor(); // The account name can render before the image decodes.
   await trigger.click();
   assert.deepEqual(await panelActions(page),['Use another account','Use a different provider','Sign out of this app','Manage at 3sln.example']);
   assert.equal(await page.getByRole('link',{name:'Manage at 3sln.example'}).getAttribute('href'),'https://3sln.example/console/apps');
@@ -120,11 +120,11 @@ for(const engine of [chromium,firefox])test(`${engine.name()}: standard declarat
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await page.screenshot({path:resolve(artifacts,`provider-matrix-panel-${engine.name()}-${width}.png`)});
     // A second press on the trigger toggles closed and stays closed (no close-then-reopen).
-    await trigger.click();await page.waitForTimeout(350);
+    await trigger.click();await page.waitForFunction(()=>document.querySelector('bindle-account').shadowRoot.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded')==='false');
     assert.equal(await trigger.getAttribute('aria-expanded'),'false');
   }
   await page.setViewportSize({width:1280,height:640});
-  await trigger.click();await page.mouse.click(5,600);await page.waitForTimeout(100);
+  await trigger.click();await page.mouse.click(5,600);await page.waitForFunction(()=>window.events.filter(e=>e.type==='bindle-menu-toggle').at(-1)?.detail.reason==='outside');
   assert.equal(await trigger.getAttribute('aria-expanded'),'false');
   const toggles=await page.evaluate(()=>window.events.filter(event=>event.type==='bindle-menu-toggle').map(event=>event.detail));
   assert.deepEqual(toggles.at(-1),{open:false,reason:'outside'});

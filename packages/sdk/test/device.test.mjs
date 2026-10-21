@@ -136,3 +136,9 @@ test('native Node transport sends no browser headers on the wire and does not fo
  }finally{await new Promise(resolve=>server.close(resolve));}
  assert.throws(()=>createDeviceClient({issuer,manifest,clientId}),{code:'invalid_transport'});
 });
+
+
+test('429 and 503 back off polling, honor Retry-After and use a fresh DPoP proof',async()=>{
+ const h=harness({polls:[()=>reply({error:'rate_limited'},429,{'Retry-After':'30'}),()=>new Response('Service unavailable',{status:503}),()=>reply({error:'authorization_pending'},400)]});
+ await signIn(h);assert.deepEqual(h.sleeps,[5000,30000,20000,20000]);assert.equal(new Set(h.proofs.map(p=>p.jti)).size,4);
+});

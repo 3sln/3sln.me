@@ -2030,3 +2030,62 @@ Also pending: an outbox scheduler and `sw.js` rendering of activity notices. Cor
 LA5 finished behind the default-off flag: device choice, link and code, locator-only QR, account confirmation, polling, expiry and cancellation. The legacy QR flow keeps working. 15 engine and 28 browser tests (en/es, 320/390/1440 px, light/dark). LA3 must mount the linked routes and add QR locator support.
 
 Wave 2b verified: core 1646, Worker 55, UI-state 215, DOM, build, dry run. Codex full browser gate 178 with one provider-matrix assertion failure that passed 3/3 in isolation (watch for flakiness) and 4 WebKit skips.
+
+Wave 2b committed and deployed as 5c46045 (flags off). Wave 3a started:
+- Codex: BB-B5 BindleBox views/rules/tags/classify; BB-B8 app shell with workerd durable queue recovery tests; ACT-3 activity UI.
+- Claude: LA3 device authorization mount; EXT-X4 connections domain (providing the occupancy ports and closing KD-4); BB-B4 conversations (option A, provisional pending user confirmation).
+
+EXT-X4 landed (provisional, behind `INTEGRATIONS_ENABLED`): connections as engine operations over the app-connection record.
+- **States:** configuring, active, degraded, manifest-invalid, suspended, disconnected (the spec's six). Every loss of authority bumps the generation.
+- **Sources:** external integrations connect from X3 snapshots, built-ins from a provider registry.
+- **Occupancy:** slot occupancy is the owner's ordered value, gated by declarations and contracts; exclusive replacement requires recent authentication.
+- **Outbox:** a transactional outbox for X6, X7 and X8.
+- **Ports:** `LINK_SLOT_OCCUPANT` and `DELEGATION_SLOT_OCCUPANT` are provided with a seat-incarnation `cnx`.
+- **KD-4 closed:** durable cascades revoke delegations and link authority on disconnect, suspend, vacate, replacement and manifest invalidation. Account suspension severs all connections via hook, observed directory status and a lifecycle-epoch fence.
+Minimal outside edits: port fallbacks in `account/links.mjs` and `account/identity.mjs`; a legacy `severed` hook in `accounts.mjs`. 14 tests. [Review](docs/release/extensibility-review.md#x4-implementation): R1 (high) through R7 fixed. Open: admin suspension and lifecycle freeze should call `connectionsSeverAccount` directly (integration pass). Core 1711, Worker 59. Reviewer ___ Date ___ Outcome ___.
+
+Wave 3a Codex streams landed:
+- **BB-B5:** BindleBox views, rules, tags and classify as default-off engine operations with owner overrides, idempotent Views, and classifier fallback with model-bound thresholds. The index queries KV metadata. Pending: composing `organizationProviders(...)` into the shell and connecting custody writers to `projectIncoming`/`removeIncoming`.
+- **ACT-3:** activity center UI (feed with app attribution, facets, read/archive, push settings) behind the flag; 30 tests across languages, themes and widths. Needs `/api/config` to expose `activityV2Enabled`. Search and date filters are page-scoped; owner/system facets need backend data.
+- **BB-B8:** default-off BindleBox Worker and Node shells, SQLite storage, HTTP-to-dispatch adapters, delegation renewal, manifests and transactional queue alarms. workerd tests prove recovery after remote custody with exactly one recipient effect, a BB-CUT prerequisite. 15 tests; the app'"'"'s own Worker dry run passes; handoff notes in `apps/bindlebox/worker/README.md`. Independent review pending.
+
+Cross-stream issues for the integration pass: an unmapped import in `apps/web/src/bl/activity.mjs` (since fixed per ACT-3), contact-preview failures, `signup-views`/`ui-adversarial` e2e failures.
+
+LA3 landed: the linked-approval and device-grant routes are mounted behind `DEVICE_AUTHORIZATION_ENABLED` via `packages/runtime/device-grant.mjs`, the identity/federation/site route hunks, a `FederationObject` subclass in the Worker and Node composition. `device-authorization.v1` is declared only when mounted. `/approve` loads the approval page, and the browser runner gained `E2E_DEVICE_AUTHORIZATION=1`. Worker-tested CLI and session flows, flag-off behavior and lineage drain; device e2e with the flag on 33/33. [Review](docs/release/linked-approval-review.md): LA3-S1–S5 fixed, S6 accepted.
+
+Open:
+- Node fetch sends a lone `Sec-Fetch-Mode`, so the mount relaxes spec §4.1 refusal (spec reconciliation needed);
+- the SDK should back off on 429/503;
+- production `/approve` inline sign-in lacks Turnstile (gate before enabling).
+
+Full e2e with the flag on had 4 failures: legacy QR worker-flow (passes with the flag off), a flaky contact composer, and two embed/Firefox cases. Reviewer ___ Date ___ Outcome ___.
+
+BB-B4 landed (provisional, unmounted; option A pending user confirmation): `packages/bindlebox-engine/domains/conversations.mjs`.
+- Create, invite and accept in both directions; groups via relayed introductions and `acceptListed` hellos.
+- Per-recipient signing with stream heads persisted before signing; audiences frozen through BB-B3.
+- An edge pair-gate with single-transaction admission.
+- Remove, readmit, leave, block; the live group bound.
+- Edit/retract history with pending mutations.
+- Secret rotation as a proposal with a 7-day overlap and conflict flags.
+- App-switch rejoin with a digest-bound secret-share; honest per-recipient status.
+- One delegate-key snapshot per operation, avoiding the IDKEYS-1 race.
+22 simulator tests (5-party mesh across three hosts). [Review](docs/release/bindlebox-conversations-review.md): BB4-S1–S9 fixed, none critical or high.
+Open for integration:
+- BB4-I1: B3 retries reuse the original certificate, so tasks older than 24 h fail and need renewal on retry;
+- BB4-I2: B3 task rows keep secret parts after completion;
+- BB4-I3: spec reconciliation (awaiting-secret 503, one epoch per event, no members beyond genesis, proposal auto-accept versus §6.3);
+- BB4-I4: registration and composition.
+Reviewer ___ Date ___ Outcome ___.
+
+Wave 3a integration (Codex, coordinator-verified):
+- BindleBox composition of conversations, organization providers, ingress, edge flushing and custody indexing, with a three-party shell simulator test;
+- send retries renew expired delegation certificates, and completed-task secrets are purged with bounded cleanup (BB4-I1/I2);
+- four spec deviations reconciled as provisional, with genesis-only membership enforced (BB4-I3);
+- `activityV2Enabled` exposed in config;
+- admin suspension and lifecycle freeze/tombstone call connection severance directly;
+- SDK device polling backs off on 429/503;
+- Turnstile on `/approve` inline sign-in;
+- precise Node lone `Sec-Fetch-Mode` handling in the spec;
+- fixes for QR test supersession, asset-build and inspector-port races, and provider image readiness.
+
+Gates: core 1726, Worker 60, UI-state 215, BindleBox 157, DOM, build, dry run, audit; full e2e 179 with flags off and 179 with device authorization on (4 WebKit skips each).

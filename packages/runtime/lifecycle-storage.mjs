@@ -48,6 +48,7 @@ export async function purgeBatch(c,owner,{identity,fence,budget=64,log=()=>{}}){
  const save=async()=>c.metadata.put(PURGE_KEY,job);
  let work=0;const remove=async ref=>{if(!ownedBlobRef(owner,ref)){job.foreign++;return;}await c.blobs.delete(ref);job.deleted++;work++;};
  if(job.stage==='identity'){
+  await c.connectionsSeverAccount?.(owner,{reason:'lifecycle-tombstone'});
   // Authentication, sessions, recovery and the email claim end first; the handle stays reserved forever.
   if(!await identity.tombstone(owner,{assignmentId:job.assignmentId}))throw Object.assign(new Error('Identity unavailable for tombstoning'),{code:'lifecycle_identity_unavailable'});
   job.stage='vectors';await save();log({action:'purge-identity-tombstoned'});
