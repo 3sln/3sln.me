@@ -23,7 +23,9 @@ async function account(){
  return {session,headers,owner,id:session.account.id,handle:session.account.handle,sign:async input=>{const r=await owner('/api/links/envelope',input);assert.equal(r.status,200,await r.clone().text());return r.json();}};
 }
 const send=(url,message,headers={})=>fetchURL(url,{method:'POST',headers:{'Content-Type':message.contentType,...headers},body:message.bytes});
-test.before(async()=>{directory=await mkdtemp(join(tmpdir(),'bindle-links-http-'));app=await createNodeServer({directory,config:{APP_ORIGIN:origin}});alice=await account();bob=await account();});
+test.before(async()=>{directory=await mkdtemp(join(tmpdir(),'bindle-links-http-'));app=await createNodeServer({directory,config:{APP_ORIGIN:origin}});
+ // HTTP policy coverage supplies its own shell; built composer behavior belongs to the browser gates.
+ app.resources.assets.fetch=async request=>new URL(request.url).pathname==='/console.html'?new Response('<!doctype html><html><head><title>Link composer fixture</title></head><body><main id="app"></main></body></html>',{headers:{'Content-Type':'text/html'}}):new Response('Not found',{status:404});alice=await account();bob=await account();});
 test.after(async()=>{await app?.close();if(directory)await rm(directory,{recursive:true,force:true});});
 
 test('new-form link: owner issuance, side-effect-free intake metadata, JSON inspection and cross-account authored delivery',async()=>{

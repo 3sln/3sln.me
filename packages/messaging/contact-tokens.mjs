@@ -1,8 +1,8 @@
 import {contactTagPolicy} from './tag-policy.mjs';
 import { fail, key, canonical, base64url, fromBase64url, textEncoder, strictText, boundedString, mimeValid } from './store.mjs';
-
-const algorithms = Object.assign(Object.create(null), { EdDSA: { name: 'Ed25519' }, ES256: { name: 'ECDSA', hash: 'SHA-256' } });
-const importAlgorithm = alg => alg === 'ES256' ? { name: 'ECDSA', namedCurve: 'P-256' } : algorithms[alg];
+import { IdentityKeyRegistry, IDENTITY_ALGORITHMS as algorithms, importAlgorithm, verifiableSigningKey } from '../identity/keys.mjs';
+// The identity key registry moved to packages/identity/keys.mjs (slice C0); re-exported for existing importers.
+export { IdentityKeyRegistry, verifiableSigningKey } from '../identity/keys.mjs';
 const encode = value => base64url(textEncoder.encode(canonical(value)));
 const parse = segment => { try { return JSON.parse(strictText(fromBase64url(segment))); } catch { fail('invalid_token'); } };
 
@@ -25,32 +25,18 @@ export class ContactTokenService {
   constructor({ store, issuer, crypto = globalThis.crypto, clock = () => Date.now(), allowInsecureLocalhost = false }) {
     const origin = new URL(issuer);
     if ((origin.protocol !== 'https:' && !(allowInsecureLocalhost && origin.protocol === 'http:' && origin.hostname === 'localhost')) || origin.origin !== issuer) fail('invalid_issuer');
-    Object.assign(this, { store, issuer, crypto, clock });
+    Object.assign(this, { store, issuer, crypto, clock, keys: new IdentityKeyRegistry({ store, crypto, clock }) });
   }
-  // Caller must have freshly authenticated the owner and confirmed key custody.
-  async registerKey(owner, { kid, alg, publicJwk }) {
-    if (!boundedString(owner) || !boundedString(kid) || !algorithms[alg] || !publicJwk || Object.hasOwn(publicJwk, 'd')) fail('invalid_key');
-    try { await this.crypto.subtle.importKey('jwk', publicJwk, importAlgorithm(alg), false, ['verify']); } catch { fail('invalid_key'); }
-    return this.store.transaction(async tx => {
-      const path = key('contact-key', owner, kid);
-      if (await tx.get(path)) fail('key_exists');
-      await tx.set(path, { owner, kid, alg, publicJwk, active: true });
-      return { kid, alg };
-    });
-  }
-  async revokeKey(owner, kid) {
-    return this.store.transaction(async tx => {
-      const path = key('contact-key', owner, kid); const record = await tx.get(path);
-      if (!record) fail('not_found'); record.active = false; await tx.set(path, record);
-    });
-  }
+  // Registry delegates (packages/identity/keys.mjs). Caller must have freshly authenticated the owner and confirmed key custody.
+  async registerKey(owner, input) { return this.keys.register(owner, input); }
+  async revokeKey(owner, kid) { await this.keys.revoke(owner, { purpose: 'signing', kid }); }
   async createGrant(owner, { kid, collections, mimeTypes, expiresAt, maxMessages = 100, maxBytes = 10485760, maxMessageBytes = 1048576,requiredTags=[],optionalTags=[] }) {
     const now = this.clock(),tagPolicy=contactTagPolicy({requiredTags,optionalTags});
     if (!Array.isArray(collections) || !collections.length || collections.length > 32 || collections.some(id => !boundedString(id)) || new Set(collections).size !== collections.length || !Array.isArray(mimeTypes) || !mimeTypes.length || mimeTypes.length > 32 || mimeTypes.some(type => !mimeValid(type)) || new Set(mimeTypes).size !== mimeTypes.length) fail('invalid_scope');
     if (!Number.isSafeInteger(expiresAt) || Math.floor(expiresAt / 1000) <= Math.floor(now / 1000) || expiresAt > now + 366 * 86400000 || !Number.isSafeInteger(maxMessages) || maxMessages < 1 || maxMessages > 100000 || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 1073741824 || !Number.isSafeInteger(maxMessageBytes) || maxMessageBytes < 1 || maxMessageBytes > 10485760 || maxMessageBytes > maxBytes) fail('invalid_limits');
     return this.store.transaction(async tx => {
-      const signingKey = await tx.get(key('contact-key', owner, kid));
-      if (!signingKey?.active) fail('invalid_key');
+      const signingKey = await verifiableSigningKey(tx, owner, kid);
+      if (!signingKey) fail('invalid_key');
       if ((await tx.list(key('contact-grant'))).filter(row => row.value.owner === owner).length >= 1000) fail('grant_limit');
       for (const collection of collections) if (!(await tx.get(key('collection', owner, collection)))?.active) fail('invalid_collection');
       const claims = { iss: this.issuer, sub: owner, aud: `${this.issuer}/api/messages`, jti: this.crypto.randomUUID(), iat: Math.floor(now / 1000), exp: Math.floor(expiresAt / 1000), collections, mimeTypes, maxMessages, maxBytes, maxMessageBytes,...tagPolicy };
@@ -70,8 +56,8 @@ export class ContactTokenService {
   async list(owner) { return this.store.transaction(async tx => (await tx.list(key('contact-grant'))).map(row => row.value).filter(grant => grant.owner === owner)); }
   async live(tx, verified) {
     const grant = await tx.get(key('contact-grant', verified.claims.jti));
-    const signingKey = await tx.get(key('contact-key', verified.claims.sub, verified.header.kid));
-    if (!grant?.active || !signingKey?.active || grant.claims.exp <= Math.floor(this.clock() / 1000) || canonical(grant.claims) !== canonical(verified.claims) || canonical(grant.header) !== canonical(verified.header)) fail('unauthorized');
+    const signingKey = await verifiableSigningKey(tx, verified.claims.sub, verified.header.kid);
+    if (!grant?.active || !signingKey || grant.claims.exp <= Math.floor(this.clock() / 1000) || canonical(grant.claims) !== canonical(verified.claims) || canonical(grant.header) !== canonical(verified.header)) fail('unauthorized');
     return grant;
   }
   async verify(token) {
@@ -80,7 +66,7 @@ export class ContactTokenService {
     if (!header || !claims || !algorithms[header.alg] || header.typ !== 'contact+jwt' || !boundedString(header.kid) || !boundedString(claims.sub) || !boundedString(claims.jti) || claims.iss !== this.issuer || claims.aud !== `${this.issuer}/api/messages`) fail('invalid_token');
     return this.store.transaction(async tx => {
       const verified = { header, claims }; await this.live(tx, verified);
-      const signingKey = await tx.get(key('contact-key', claims.sub, header.kid));
+      const signingKey = await verifiableSigningKey(tx, claims.sub, header.kid);
       let valid = false;
       try {
         const publicKey = await this.crypto.subtle.importKey('jwk', signingKey.publicJwk, importAlgorithm(header.alg), false, ['verify']);

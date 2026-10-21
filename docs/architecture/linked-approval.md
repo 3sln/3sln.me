@@ -1,6 +1,6 @@
 # Linked approval: approving sign-ins from another device
 
-Status: **provisional design, 2026-10-20.** The generalized linked-approval flow and app device grant remain unimplemented and unrouted; §7.3 distinguishes the existing local LA1a/step-up fixes. Nothing here establishes production verification. This is a 3sln.me host design. The only Bindle interop it relies on is [device authorization](../spec/device-authorization.md) (`device-authorization.v1`, proposed). Everything about pages, wording, account choice and provider-session extension is host policy. Decisions are provisional until signed off in DEVLOG.md. Independent security review: [linked-approval-review](../release/linked-approval-review.md).
+Status: **provisional design, 2026-10-20.** The LA1 identity core is implemented locally behind `DEVICE_AUTHORIZATION_ENABLED` and is unrouted (§10.1). The app device grant (LA2) and the routes (LA3) remain unimplemented. §7.3 distinguishes the existing local LA1a/step-up fixes. Nothing here establishes production verification. This is a 3sln.me host design. The only Bindle interop it relies on is [device authorization](../spec/device-authorization.md) (`device-authorization.v1`, proposed). Everything about pages, wording, account choice and provider-session extension is host policy. Decisions are provisional until signed off in DEVLOG.md. Independent security review: [linked-approval-review](../release/linked-approval-review.md).
 
 Architecture/security/product sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -215,7 +215,7 @@ Local activation exception: signup records `pendingCredentialAt` only after pass
 | Locator resolves | Count against account and prefix limits, not against `G`; no burn |
 | Poll | Interval enforced per device code in the rate limiter (`slow_down` +5 s, max 60 s); 120 per /64 or IPv4 address per min; a global poll ceiling with `slow_down`, then `temporarily_unavailable`, under load. Order: format check → prefix limit → DPoP signature and nonce → request read. `jti` cache in the limiter. |
 | Writes | Only on transitions (approve, deny, cancel, confirm, consume). Today's per-poll `nextPollAt` CAS write is removed. |
-| Retention | Unconsumed records and their code-index entries are deleted at expiry or cancellation (the app kind's authorization entry with them). Consumed records keep `issued` links until `E` for cancellation and lineage, then are deleted. |
+| Retention | Unconsumed records and their code-index entries are deleted at expiry or cancellation (the app kind's authorization entry with them). Consumed session records keep `issued` links until `E` for cancellation, then are deleted. Consumed app requests expire at their approval deadline; app lineage lives on the account until `E`. |
 
 ## 10. Engine operations and storage
 
@@ -233,6 +233,92 @@ The operations follow [app-engine](app-engine.md) conventions (`{actor,id,input}
 | `lineageRevoke` (outbox drain) | Federation | system |
 
 Repository: today's `deviceRequests` adapter (`create`, `get`, `findByUserCode`, `compareAndSwap`) is renamed `linkedApprovals`, and the stored shape gains `kind`. Worker and Node adapters keep their files. The code index stores `userCodeHash`, not the plaintext code.
+
+### 10.1 LA1 contract (implemented locally, 2026-10-20; provisional until LA3 mounts it)
+
+Status: implemented and engine-tested in `packages/identity/linked-approval.mjs`, with service wrappers in `service.mjs` and engine classes in `packages/identity/index.mjs`. Nothing is routed. Every new operation answers `not_found` unless the identity config has `deviceAuthorizationEnabled: true`, which the Worker and Node adapters set from `DEVICE_AUTHORIZATION_ENABLED` (default `false`). The legacy `/api/auth/device/*` aliases keep working with the flag off. This is local behavior only; there is no production verification and no reviewer sign-off. LA4 is building its page mock-first against this contract. Changes to it are recorded here and in DEVLOG.md.
+
+**Engine classes.**
+- `LinkedApprovalAction(method, input, context)` dispatches the browser operations. The result arrives on `dispatchFeed` `result`, as with `IdentityAction`.
+- `LinkedResolveQuery(input, context)` is the browser resolve.
+- `LinkedSystemAction`, `LinkedLineageQuery` and `LinkedOutboxQuery` are for the federation engine only. They MUST NOT be routed.
+
+`context` uses the usual identity shape: `origin`, `remoteIP`, `sessionToken`, `csrfToken`, `expectedOwner`, `sessionContext` and `deviceBinding`. It may also carry `country` (ISO 3166 alpha-2) and `networkTrusted: true`. Set those two only where the runtime's client IP and geo source are authoritative. Without them the country-mismatch warning is off.
+
+**Browser operations (LA3 routes, LA4 page, LA5 screen).**
+
+| Operation | Actor and input | Result |
+| --- | --- | --- |
+| `linkedStart` | anonymous with Turnstile (the `device` guard), exact Origin and a mandatory binding cookie (`deviceBinding` ≥ 32 chars). `{deviceKind:'tv'\|'computer'\|'phone', turnstileToken}` | `{kind:'session', requestId, deviceCode, userCode:'XXXX-XXXX', verificationUri:'<origin>/approve', locatorUri:'<origin>/approve#r=<requestId>', expiresAt, expiresIn:300, interval:5}` |
+| `LinkedResolveQuery` | signed-in member, CSRF. `{code, locator?, turnstileToken?}` (`locator` is the request ID from `#r=`) | Review view: `{requestId, kind, createdAt, expiresAt, account:{id,handle}, requester:{deviceKind\|null}, app?:{clientId, host, reviewedName\|null, requests, preselect}, idleLimitMs? (app), warnings:{countryMismatch, sameBrowser}, freshness:{required:'step-up'\|'sign-in', satisfied}, durations:[{choice, expiresAt, idleExpiresAt?}], defaultChoice:'session'\|'1h'}` |
+| `linkedApprove` | signed-in member, CSRF, fresh credential (below). `{requestId, code, approved:true, choice?, accountHandle?, consent? (app; JSON object ≤ 4 KiB)}`. `accountHandle` is optional and must match when sent; account binding otherwise rests on the tab's `expectedOwner`/`sessionContext`, which LA4 MUST send | `{approved:true, requestId, kind, expiresAt, idleExpiresAt? (app)}` |
+| `linkedDeny` | signed-in member, CSRF. `{requestId, code}` | `{denied:true}` |
+| `linkedPoll` | binding cookie, exact Origin. `{deviceCode}` | `{status:'authorization_pending'\|'slow_down', interval}`, `{status:'confirm', account:{handle}, expiresAt}`, `{status:'access_denied'}` or `{status:'expired_token'}`. It never consumes or writes. |
+| `linkedAccept` | binding cookie (after "Continue as"). `{deviceCode}` | `{status:'authorized', account, sessionToken, csrfToken, expiresAt, sessionContext}` (installed like any sign-in), or a poll status |
+| `linkedCancel` | binding cookie. `{deviceCode}` | `{cancelled:true}`, `{cancelled:false, reason:'denied'\|'session_not_linked'}` |
+
+**Choices.**
+- `session`: `'1h'`, `'8h'` or `'session'` (the default). Options that would reach `S` collapse into `session`.
+- `app`: `'1h'` (the default), `'8h'` or `'30d'`.
+
+`E` is computed by `linkedLifetime` (§7.1). Apps also get `idleExpiresAt = min(t₀ + 7 d, E)`.
+
+**Freshness.**
+- `session` kind: `authAt` within 5 minutes (credential sign-in, verified activation ceremony or step-up). Otherwise the call fails with `reauthentication_required`; run the step-up and retry.
+- `app` kind: the approving session must have `source:'credential'`, be created after the request and be less than 5 minutes old. Otherwise the call fails with `fresh_sign_in_required`; run a fresh passkey or password sign-in in the flow and approve from that session. Step-up and derived sessions never qualify.
+
+**Errors (`IdentityFault.code`).**
+- `invalid_code`: one generic shape for unknown, expired, decided or mismatched codes, from resolve, approve and deny.
+- `rate_limited`, with `retryAfter` in seconds.
+- `challenge_required`: the global budget is spent, so retry with a Turnstile token.
+- `typed_resolution_unavailable`: the operator refuses typed codes; locators still work.
+- `conflict`: already decided.
+- `confirmation_required`, `invalid_choice`, `invalid_consent`, `binding_required`, `invalid_device_kind`, `temporarily_unavailable`, `device_unavailable` (no code key configured), and `not_found` (flag off).
+- Multi-account context errors (`account_context_conflict`, `session_context_conflict`) come from `authorized()`.
+
+**System operations (LA2 federation engine; never routed).**
+
+| Operation | Input | Result |
+| --- | --- | --- |
+| `linkedStartApp` | `{reviewed:true, clientId, host, reviewedName?, requests (≤ 8, ≤ 8 KiB), identityHint?, entryId?, dpopJkt}` plus the requester's `context` (`remoteIP`, `country`, `networkTrusted`). LA2 does client lookup, browser refusal, media type and per-client limits first. LA1 refuses `reviewed !== true` with `unauthorized_client` (Q3). | `{kind:'app', requestId, deviceCode, userCode:'XXXX-XXXX', verificationUri, expiresAt, expiresIn:600, interval:5}`, with no complete URI |
+| `linkedRedeem` | `{deviceCode, clientId, dpopJkt}`, after LA2 verifies the DPoP proof and passes its thumbprint | `{status:'authorization_pending'\|'slow_down', interval}`, `access_denied`, `expired_token`, `invalid_grant` (unknown, malformed, wrong client or already redeemed), or `invalid_dpop_proof`. None of these change state. Only these statuses are returned, never other faults. On success: `{status:'approved', owner, clientId, host, requests, entryId?, consent?, familyId, lineageId, approvedAt, expiresAt:E, idleExpiresAt, idleMs}`. The device code is consumed at most once (request CAS), then the lineage is reserved in an account CAS while the approving session is live. If the session ended, the result is `access_denied` and the request stays closed. A full lineage table (100 live entries) answers `access_denied` before consuming. |
+| `LinkedLineageQuery` | `{owner, lineageId, familyId}` | `true` only while the lineage is live. LA2 MUST call it after writing the family and on every refresh, and fail closed (`invalid_grant`, revoke the family) on `false`. It returns `false`, never throws, when the flag is off. |
+| `LinkedOutboxQuery` / `linkedOutboxAck` | `{owner}` / `{owner, familyIds}` | Pending `[{familyId, lineageId, enqueuedAt}]` / `{acknowledged:n}`. The drain revokes each family, then acknowledges it. Not flag-gated. |
+| `linkedLineageRevoke` | `{owner, lineageId}` | `{revoked}`. Explicit app revocation; the families enter the outbox. |
+| `linkedCancelApp` | `{deviceCode, clientId, dpopJkt}` | `{cancelled:true}`. After redemption it revokes the lineage. |
+
+**Storage and limits.**
+- Repository: `linkedApprovals`, the renamed `deviceRequests` (both names are accepted). Records carry `version:2` and `kind`. `userCodeHash` holds `HMAC-SHA-256(K, 'user-code' ∥ code)`, where `K` is derived by HMAC from `LINKED_CODE_KEY`, falling back to `KEY_ENCRYPTION_KEY`. A missing key fails closed with `device_unavailable`. Only `linkedEphemeralKey: true` (tests) allows a per-instance key. The federation `IdentityService` in `packages/runtime/federation.mjs` passes none of the linked resources, so LA2 MUST call the main identity resources (repository, key, durable limits, flag).
+- Polls and resolves write nothing. Writes happen only on start, decide, cancel and consume.
+- Record `expiresAt` is set to the approval deadline for unconsumed requests, and to `E` for consumed `session` requests so cancellation can still revoke. The storage adapters index request and code-lookup expiry transactionally. Their identity alarms physically delete at most 64 due entries per sweep and schedule a continuation for any remaining batch. A stale index entry cannot delete a replacement code claim or a request whose cancellation fence was extended. Node restores the device store's persisted alarm on startup. The requester network is removed on every decision. Local regression evidence: `tests/linked-approval-cleanup.test.mjs` and `tests/worker/linked-approval.test.mjs` (integrator follow-up to LA1-S2, 2026-10-20; no independent sign-off).
+- `linkedLimits` is a durable window port, `consume(key, {windowMs, limit})`, on the abuse windows under `linked-v1:`. `linkedPollLimits` is the non-durable per-isolate poll limiter.
+- Budgets:
+  - account: 10 per 30 min and 30 per day, charged per attempt before evaluation (resolve, approve, deny);
+  - network: 20 per 15 min and 100 per day per /24 or /64, plus 200 per day per IPv6 /48. Typed codes pay before evaluation. Locator attempts (resolve with `locator`, approve, deny; each guess 1/N) pay only on a miss, so other people's guessing on a shared NAT cannot block QR/locator approvals. An unknown client address is keyed per account, never as one shared bucket;
+  - global: `G = ⌊0.01·N/L⌋` per day, typed codes only;
+  - after `G`: Turnstile on every typed attempt and 5 per 30 min per account.
+- `L` comes from creation-slot counters: 10-minute slots, two slots summed, each slot spread over 8 shard counters so no single window is hot. The production abuse window has no read operation, so the adapters currently assume `L` = the 20,000 cap (`G` = 12,800), which is the most conservative value. A counting read is an integrator follow-up.
+- Start admission: 10 per IPv4 address or /64 and 50 per /24 or /48 per 10 min (skipped for an unknown address), and a global live cap of 10,000 creations per 10-minute slot (≤ 20,000 live). Legacy QR, new session and app starts share the live cap, since `L` must count all of them (review LA1-S5, residual).
+
+**Lineage.**
+- Account fields:
+  - `linkedLineage: [{id, sessions:[approving session, …ancestors], sessionExpiresAt, families, clientId, host, createdAt, expiresAt:E}]`;
+  - `lineageOutbox`;
+  - `derivedFamilies` on the approving session entry.
+- `pruneSessions` treats removal of a still-live session (or a live descendant) as an explicit termination, whatever the caller: revoke, revoke-others, sign-out, passkey removal, cancellation and eviction. A session that had already expired ends naturally, whether or not expiry pruning ran first. It ends the lineage through any removed session or descendant and queues its families, in the same account CAS. Recovery ends all lineage.
+- Natural expiry keeps lineage until `E`. `lineageLive` also fails while the approving session should still be alive but is missing, so any path that bypassed the cascade fails closed.
+- The 10-session eviction prefers sessions with no derived sessions or apps and never evicts the new session's own ancestry.
+- `owner()` adds `signOutImpact:{sessions, apps}` for the sign-out warning, and `approvedFrom` (the parent session ID) on derived device rows.
+
+**Notices.**
+- `approvalNotices.approved(notice)` is an injected port. It is called after each approval with `{type:'linked-approval', owner, kind, subject:{host}\|{deviceKind}, approvedAt, expiresAt, consoleUrl}`.
+- It never carries client or requester text. Failures are swallowed.
+- LA7 supplies the templates and the gated push/mail delivery. No adapter is wired yet, so nothing is delivered.
+
+**Reconciliation items.**
+- **Locally implemented (review LA1-S1, Medium; integrator, 2026-10-20; no independent sign-off).** Suspension calls `revokeAllLineage` in its identity CAS; tombstoning does the same and retains `lineageOutbox` on the deleted identity until drained. Families remain revoked after reactivation, including approvals whose parent sessions expired naturally. Regression evidence: `tests/boot-admin.test.mjs` (Node and Worker-style repositories) and `tests/linked-approval.test.mjs` (actual app approval and lifecycle tombstone). LA2 still owns family issuance and outbox draining.
+- The legacy aliases still consume on poll, without "Continue as", until LA5 ships the confirmation screen.
+- Session-kind starts are under the existing `device` guard plus the start limits above. Per-client and per-ASN caps for app starts belong to LA2.
 
 ## 11. Reusing device-login code
 

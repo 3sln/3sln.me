@@ -80,3 +80,41 @@ It also checked pre-consent privacy, RFC 8628 and RFC 9449 conformance, and whet
 - Update the spec registry (`protocol.md` features table), `device-login.md` (supersession note) and the public-docs allowlist. Record the decisions in DEVLOG.md.
 
 Decision reviewer: __________  Date: __________  Outcome: __________
+
+## LA1 implementation
+
+Status: agent review, 2026-10-20. One independent agent reviewer worked read-only against the uncommitted LA1 identity core: `packages/identity/{linked-approval,device-login,service,index}.mjs`, the Worker/Node adapter hunks and `tests/linked-approval.test.mjs`. It checked them against [linked approval](../architecture/linked-approval.md) §3–§10.1 and the [device authorization](../spec/device-authorization.md) spec. The author fixed the confirmed findings in LA1's own files and added regression tests. Findings that need other owners stay open. This is not human sign-off, and production remains gated.
+
+Human reviewer: __________  Date: __________  Outcome: __________
+
+**Judged sound by the reviewer:**
+- single consume of accept and redeem, with request CAS, including races;
+- the cancel fence;
+- the reserve → re-check order;
+- outbox deduplication;
+- the `E` caps and choice validation;
+- the app fresh-sign-in rule;
+- multi-account context;
+- no pre-consent leak;
+- the charging order;
+- no anonymous inspect in the legacy alias;
+- system operations unreachable from browser classes;
+- adapters passing a configured code key.
+
+| ID | Severity | Finding | Disposition |
+| --- | --- | --- | --- |
+| LA1-S1 | Medium | Admin suspension (`admin.mjs`) and the lifecycle tombstone clear sessions without `revokeAllLineage`. After reactivation, an app approved from a naturally expired session revives for the rest of `E`, and the drain never revokes it. | **Locally implemented by integrator, 2026-10-20; no independent re-review.** Suspension and tombstone CAS writes call `revokeAllLineage`; tombstones retain the durable outbox. Node/Worker-style suspension and actual app-lineage tombstone regression tests pass. LA2 family issuance/draining remains later work; architecture §10.1. |
+| LA1-S2 | Medium | Nothing physically deletes linked-approval records. Adapters only treat them as expired, so requester country and decided-request fields stay at rest and storage grows. | **Locally implemented by integrator, 2026-10-20; no independent re-review.** Transactional expiry indexes and bounded identity-alarm sweeps remove request records and code lookups. Node restores device alarms on restart; consumed session fences survive until E. Portable SQLite/shard and actual Worker regression tests pass; architecture §10.1. |
+| LA1-S3 | Medium | The prefix budget was charged on locator, approve and deny calls, so guessers on a shared /24 could block QR approvals. Unknown client addresses shared one service-wide bucket. Hex IPv4-mapped IPv6 addresses collapsed into one /64. | **Fixed.** Typed codes pay the network budget before evaluation; locator attempts pay only on a miss. Unknown addresses are keyed per account for resolve and skip the start prefix windows. `::ffff:` hex is normalised to IPv4. Tests added. |
+| LA1-S4 | Low | IPv6 resolve limits were per /64 only, so a /48 holder had 65,536 buckets. | **Fixed.** An added /48 tier allows 200 per day. Test added. |
+| LA1-S5 | Low (suspected) | Single Durable Object hot spots: the live-slot counter and `resolve-g`. Filling the live cap also blocks legacy QR starts. | **Partly fixed.** The live counter is sharded 8 ways and summed on read. `resolve-g` stays one window, touched only by typed resolves after the account and network budgets. The shared live cap is kept deliberately, because `L` must count both kinds. Residual. |
+| LA1-S6 | Low | `redeem` consumed before reserving, and a full lineage table or CAS exhaustion threw non-RFC faults. | **Fixed.** Parent liveness and the lineage limit are checked before the consume. Reservation failures map to `access_denied`. Test added. |
+| LA1-S7 | Low | Expired but still-stored sessions counted as explicit removals, so whether an app survived natural expiry depended on whether pruning had run. | **Fixed.** Only removal of a still-live session (or live descendant) is explicit, in every mode. Test added. |
+| LA1-S8 | Low | An omitted `linkedCodeKey` silently used a per-instance key. The federation `IdentityService` passes no linked resources. | **Fixed.** A missing key fails closed, and only `linkedEphemeralKey: true` (tests) opts in. §10.1 requires LA2 to use the main identity resources. |
+
+Contract notes from the review, applied to §10.1:
+- `accountHandle` on approve is optional, and the tab context then carries account binding;
+- redeem returns RFC 8628 statuses only;
+- the retention text is corrected (LA1-S2).
+
+Decision reviewer: __________  Date: __________  Outcome: __________

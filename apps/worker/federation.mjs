@@ -1,3 +1,4 @@
+import {brokeringKeys,brokeringEnabled} from '../../packages/federation/signing.mjs';
 import {DurableObject} from 'cloudflare:workers';
 import {FederationController,federationMetadata} from '../../packages/federation/runtime.mjs';
 import {ShardedIdentityRepository} from '../../packages/runtime/identity-shards.mjs';
@@ -19,16 +20,21 @@ export class FederationObject extends DurableObject {
  async invoke(method,args=[],owner){
   if(!METHODS.includes(method))return {ok:false,error:{code:'unsupported_method',message:'Unsupported federation operation.'}};
   try{
-   if(!UUID_V4.test(owner)||this.owner&&this.owner!==owner||this.entriesPromise)throw Object.assign(new Error('Invalid federation account locator.'),{code:'forbidden'});
-   if(!this.controllerPromise){const persisted=await this.storage.get('@federation-owner');if(persisted&&persisted!==owner||await this.storage.get('@federation-entries'))throw Object.assign(new Error('Invalid federation account locator.'),{code:'forbidden'});this.owner=owner;if(!persisted)await this.storage.put('@federation-owner',owner);this.controllerPromise=this.compose(owner);}
+   if(!UUID_V4.test(owner)||this.owner&&this.owner!==owner||this.entriesPromise||this.brokering)throw Object.assign(new Error('Invalid federation account locator.'),{code:'forbidden'});
+   if(!this.controllerPromise){const persisted=await this.storage.get('@federation-owner');if(persisted&&persisted!==owner||await this.storage.get('@federation-entries')||await this.storage.get('@federation-brokering'))throw Object.assign(new Error('Invalid federation account locator.'),{code:'forbidden'});this.owner=owner;if(!persisted)await this.storage.put('@federation-owner',owner);this.controllerPromise=this.compose(owner);}
    const result=await(await this.controllerPromise)[method](...args);if(method!=='cleanup'&&!['ready','manifest'].includes(method)&&await this.storage.getAlarm()===null)await this.storage.setAlarm(Date.now()+600000);return {ok:true,result};
   }catch(error){return {ok:false,error:{code:error.code??'temporarily_unavailable',message:error.code?error.message:'Federation operation could not be completed.',status:error.status,retryAfter:error.retryAfter}};}
+ }
+ /** Provider-wide brokering keys use their own durable instance, separate from owner and entry stores. */
+ async brokeringJwks(){
+  if(!brokeringEnabled(this.env)||this.owner||this.entriesPromise||await this.storage.get('@federation-owner')||await this.storage.get('@federation-entries')!==undefined)throw new Error('Brokering keys unavailable.');
+  if(!await this.storage.get('@federation-brokering'))await this.storage.put('@federation-brokering',true);this.brokering??=brokeringKeys({issuer:this.env.APP_ORIGIN,secret:this.env.KEY_ENCRYPTION_KEY,metadata:federationMetadata(this.storage)});return this.brokering.jwks();
  }
  /** Pre-owner entry operations for one shard; serialized by this instance's transactional storage. */
  async entries(method,args=[],shard){
   if(!ENTRY_METHODS.includes(method))return {ok:false,error:{code:'unsupported_method',message:'Unsupported authorization entry operation.'}};
   try{
-   if(typeof shard!=='string'||!SHARD.test(shard)||Number(shard)>=ENTRY_SHARDS||this.owner||await this.storage.get('@federation-owner'))throw Object.assign(new Error('Invalid authorization entry store.'),{code:'forbidden'});
+   if(typeof shard!=='string'||!SHARD.test(shard)||Number(shard)>=ENTRY_SHARDS||this.owner||this.brokering||await this.storage.get('@federation-owner')||await this.storage.get('@federation-brokering'))throw Object.assign(new Error('Invalid authorization entry store.'),{code:'forbidden'});
    const marker=await this.storage.get('@federation-entries');if(marker!==undefined&&marker!==shard)throw Object.assign(new Error('Invalid authorization entry store.'),{code:'forbidden'});
    if(!this.entriesPromise){if(marker===undefined)await this.storage.put('@federation-entries',shard);this.entriesPromise=Promise.resolve(this.composeEntries(shard));}
    const entries=await this.entriesPromise;if(!entries)throw Object.assign(new Error('Application sign-in is not available.'),{code:'temporarily_unavailable'});

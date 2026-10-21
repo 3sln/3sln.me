@@ -66,7 +66,7 @@ async function request(route, { method = 'GET', value, headers = {}, raw, form }
 }
 async function signup(handle = `test_${crypto.randomUUID().slice(0, 8)}`) {
   const start = await request('/api/auth/signup', { method: 'POST', value: { handle, method: 'password', password: 'isolated test account password', termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'local-browser-test-token' }, headers: { Origin: origin } });
-  assert.equal(start.status, 200); const pending = await start.json();
+  assert.equal(start.status, 200,start.status===200?'':await start.text()); const pending = await start.json();
   const download = await request('/api/auth/recovery/download', { method: 'POST', value: { pendingToken: pending.pendingToken }, headers: { Origin: origin } });
   assert.equal(download.status, 200); const file = await download.json();
   const activation = await request('/api/auth/recovery/confirm', { method: 'POST', value: { pendingToken: pending.pendingToken, recoveryToken: file.recoveryToken, downloadConfirmed: true }, headers: { Origin: origin } });

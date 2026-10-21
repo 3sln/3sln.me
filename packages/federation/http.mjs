@@ -1,3 +1,4 @@
+import {BROKERING_JWKS_PATH,JWKS_MAX_AGE,brokeringManifest} from './signing.mjs';
 const privateHeaders={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
 const json=(value,status=200,headers={})=>new Response(JSON.stringify(value),{status,headers:{...privateHeaders,'Content-Type':'application/json',...headers}});
 const error=(code,message,status=400)=>Object.assign(new Error(message),{code,status});
@@ -20,14 +21,20 @@ const preflightOrigin=(origin,path,directory)=>{if(!directory?.enabled||!['/api/
 /** Returns null for unrelated routes. Root HTTP adapters remain responsible for
  * caller IP/rate limits and asset serving; no platform SDK appears here. `ownerContext(request)`
  * lets an adapter resolve its own session cookies (multi-account members); default: the legacy cookie. */
-export async function handleFederation(request,{controller,issuer,clients=controller?.clients??[],directory=controller?.directory,allowInsecureLocalhost=false,assets,enabled=true,ownerContext}){
- const url=new URL(request.url);if(!routes(url.pathname))return null;let cors={};
+/** `brokering` ({enabled, jwks()}) exists only when BROKERING_ENABLED is true; otherwise its JWKS route and manifest
+ * member do not exist. */
+async function brokeringJwks(request,brokering){const body=JSON.stringify(await brokering.jwks()),etag=`"${btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(body))))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')}"`;
+ const headers={...privateHeaders,'Cache-Control':`public, max-age=${JWKS_MAX_AGE}, must-revalidate`,'Content-Type':'application/jwk-set+json','Access-Control-Allow-Origin':'*',ETag:etag};
+ return request.headers.get('If-None-Match')===etag?new Response(null,{status:304,headers}):new Response(body,{status:200,headers});}
+export async function handleFederation(request,{controller,issuer,clients=controller?.clients??[],directory=controller?.directory,allowInsecureLocalhost=false,assets,enabled=true,ownerContext,brokering}){
+ const url=new URL(request.url),brokered=brokering?.enabled===true&&typeof brokering.jwks==='function';if(!routes(url.pathname)&&!(brokered&&url.pathname===BROKERING_JWKS_PATH))return null;let cors={};
  try{
   if(url.origin!==issuer)throw error('invalid_origin','Use the configured provider origin.',403);
   if(!enabled||!controller||!await controller.ready())throw error('temporarily_unavailable','Federation is not configured and release enabled.',503);
   const path=url.pathname,origin=request.headers.get('Origin'),context=typeof ownerContext==='function'?await ownerContext(request):sessionContext(request,allowInsecureLocalhost,issuer);
   if(request.method==='OPTIONS'){if(origin!==issuer&&!clients.some(c=>c.origin===origin)&&!preflightOrigin(origin,path,directory))throw error('forbidden','Application origin is not registered.',403);return new Response(null,{status:204,headers:{...privateHeaders,'Access-Control-Allow-Origin':origin,Vary:'Origin','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, DPoP','Access-Control-Max-Age':'600'}});}
-  if(path==='/.well-known/bindle/manifest.json'&&request.method==='GET')return json(await controller.manifest(),200,{'Access-Control-Allow-Origin':'*'});
+  if(path==='/.well-known/bindle/manifest.json'&&request.method==='GET')return json({...await controller.manifest(),...brokered?brokeringManifest(issuer):{}},200,{'Access-Control-Allow-Origin':'*'});
+  if(brokered&&path===BROKERING_JWKS_PATH&&request.method==='GET')return await brokeringJwks(request,brokering);
   if(path==='/oauth/jwks'&&request.method==='GET')return json({keys:[]},200,{'Access-Control-Allow-Origin':'*'});
   if(path==='/oauth/authorize'&&request.method==='GET'){const id=url.searchParams.get('request_id');if(!id||!/^(?:[a-f0-9-]{36}\.)?[A-Za-z0-9_-]{43}$/.test(id)||[...url.searchParams.keys()].some(k=>k!=='request_id'))throw error('invalid_request','A provider-stored request identifier is required.');await controller.inspect(undefined,id);if(!assets?.fetch)throw error('temporarily_unavailable','Authorization interface is unavailable.',503);const page=await assets.fetch(new Request(new URL('/authorize.html',issuer),{method:'GET'}));const headers=new Headers(page.headers);for(const[k,v]of Object.entries(privateHeaders))headers.set(k,v);return new Response(page.body,{status:page.status,headers});}
   if(path==='/api/oauth/requests'&&request.method==='POST'){const input=await jsonBody(request);cors=await clientOrigin(request,clients,input.clientId,issuer,directory);return json(await controller.beginAuthorization(input),201,cors);}

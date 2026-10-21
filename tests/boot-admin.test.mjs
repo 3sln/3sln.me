@@ -134,6 +134,14 @@ both('role classes bound what administrators can grant to users, themselves, oth
  assert.deepEqual(effectiveAuthority({version:1,capabilities:{},roles:{},badgeClasses:{}},{roles:['admin']},{internal:false,active:true}).admin,false);
 });
 
+both('suspension atomically revokes app lineage after natural session expiry and reactivation cannot revive it',async f=>{
+ const boot=await f.claimBoot(await f.deploy()),member=await f.makeAdmin(boot,'ops');f.identity.config.deviceAuthorizationEnabled=true;
+ const familyId='app-family',lineageId=crypto.randomUUID(),target=await f.user({sessions:[],linkedLineage:[{id:lineageId,sessions:['expired-parent'],sessionExpiresAt:f.now()-1,families:[familyId],expiresAt:f.now()+30*86400000}],lineageOutbox:[{familyId:'older-family',lineageId:'older-lineage',enqueuedAt:f.now()-1}]}),ref={owner:target.id,lineageId,familyId};
+ assert.equal(await f.identity.linkedLineageLive(ref),true);
+ await f.admin.suspend({owner:target.id},member.context);let stored=await f.repository.get(target.id);assert.deepEqual(stored.linkedLineage,[]);assert.deepEqual(stored.lineageOutbox.map(x=>x.familyId),['older-family',familyId]);assert.equal(await f.identity.linkedLineageLive(ref),false);
+ await f.admin.reactivate({owner:target.id},member.context);assert.equal(await f.identity.linkedLineageLive(ref),false);assert.deepEqual((await f.repository.get(target.id)).lineageOutbox,stored.lineageOutbox);
+});
+
 both('suspension, step-up freshness, runtime reservations and per-actor rate limits',async f=>{
  const boot=await f.claimBoot(await f.deploy()),member=await f.makeAdmin(boot,'ops'),ordinary=await f.user({sessions:[{id:'s1',hash:'h',csrfToken:'c',expiresAt:start+86400000,createdAt:start}]});
  await f.admin.suspend({owner:ordinary.id},member.context);let stored=await f.repository.get(ordinary.id);assert.equal(stored.status,'suspended');assert.deepEqual(stored.sessions,[]);

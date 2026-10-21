@@ -7,12 +7,16 @@ export function exact(value,keys){if(!object(value)||Object.keys(value).some(key
 export function https(value){try{const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password||url.hash||url.href!==value&&url.origin!==value)fail('invalid_args','Canonical HTTPS URL required.');return url;}catch{fail('invalid_args','Canonical HTTPS URL required.');}}
 export function strings(value,max=64){if(!Array.isArray(value)||value.length>max||new Set(value).size!==value.length||value.some(x=>!boundedString(x,2048)))fail('invalid_args','Bounded distinct strings required.');return value;}
 export function validateSchema(schema,url){
-  exact(schema,['id','title','description','publisher','fields']);if(schema.id!==url||!boundedString(schema.title,200)||!boundedString(schema.description,2000))fail('invalid_schema');https(schema.publisher);
-  if(!object(schema.fields)||!Object.keys(schema.fields).length||Object.keys(schema.fields).length>32)fail('invalid_schema');
-  for(const [name,field] of Object.entries(schema.fields)){
+  if(!object(schema))fail('invalid_schema');https(url);if(schema.id!==url||!boundedString(schema.title,200)||!boundedString(schema.description,2000))fail('invalid_schema');https(schema.publisher);
+  validateFields(schema.fields);return structuredClone(schema);
+}
+// Shared bounded field subset; declaration option metadata may omit titles.
+export function validateFields(fields,{allowEmpty=false,optionalTitle=false}={}){
+  if(!object(fields)||!allowEmpty&&!Object.keys(fields).length||Object.keys(fields).length>32)fail('invalid_schema');
+  for(const [name,field] of Object.entries(fields)){
     if(!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(name))fail('invalid_schema');
     exact(field,['title','description','type','cardinality','contracts','values','minLength','maxLength','minimum','maximum']);
-    if(!boundedString(field.title,200)||field.description!==undefined&&!boundedString(field.description,1000)||!['string','boolean','integer','number','enum','url','resource'].includes(field.type))fail('invalid_schema');
+    if((!optionalTitle||field.title!==undefined)&&!boundedString(field.title,200)||field.description!==undefined&&!boundedString(field.description,1000)||!['string','boolean','integer','number','enum','url','resource'].includes(field.type))fail('invalid_schema');
     const cardinality=field.cardinality??{min:1,max:1};exact(cardinality,['min','max']);if(!Number.isSafeInteger(cardinality.min)||!Number.isSafeInteger(cardinality.max)||cardinality.min<0||cardinality.max<1||cardinality.max>16||cardinality.min>cardinality.max)fail('invalid_schema');
     if(field.type==='resource'){strings(field.contracts,16);if(!field.contracts.length)fail('invalid_schema');field.contracts.forEach(https);}
     else if(field.contracts!==undefined)fail('invalid_schema');
@@ -21,7 +25,7 @@ export function validateSchema(schema,url){
     else if(field.minLength!==undefined||field.maxLength!==undefined)fail('invalid_schema');
     if(['integer','number'].includes(field.type)){if(!Number.isFinite(field.minimum)||!Number.isFinite(field.maximum)||field.minimum>field.maximum||Math.abs(field.minimum)>Number.MAX_SAFE_INTEGER||Math.abs(field.maximum)>Number.MAX_SAFE_INTEGER)fail('invalid_schema');}else if(field.minimum!==undefined||field.maximum!==undefined)fail('invalid_schema');
   }
-  return structuredClone(schema);
+  return structuredClone(fields);
 }
 export function validateValue(field,value,validateURL=https){
   const {min,max}=field.cardinality??{min:1,max:1};const values=max===1?[value]:value;if(!Array.isArray(values)||values.length<min||values.length>max)fail('invalid_preferences');

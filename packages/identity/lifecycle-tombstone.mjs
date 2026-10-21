@@ -1,3 +1,4 @@
+import {revokeAllLineage} from './linked-approval.mjs';
 import {AdminService} from './admin.mjs';
 import {isUUID as uuid} from '../core/primitives.mjs';
 
@@ -24,6 +25,7 @@ export function lifecycleIdentityPort(repository,{clock=()=>Date.now()}={}){
     if(assignmentId!==undefined&&account.assignmentId!==assignmentId)throw Object.assign(new Error('Account assignment changed.'),{code:'lifecycle_assignment_changed',status:409});
     if(account.status==='deleted')return true;
     const now=clock(),next=Object.fromEntries(RETAINED.filter(key=>account[key]!==undefined).map(key=>[key,structuredClone(account[key])]));
+    revokeAllLineage(account,now);if(account.lineageOutbox?.length)next.lineageOutbox=account.lineageOutbox;
     Object.assign(next,{status:'deleted',deletedAt:now,revision:account.revision+1,sessions:[],credentials:[],challenges:[],emailChallenges:[],passwordHash:null,recoveryHash:null,audit:[{event:'account-deleted-inactive',at:now}]});
     if(await repository.compareAndSwap(owner,account.revision,next))return true;
    }

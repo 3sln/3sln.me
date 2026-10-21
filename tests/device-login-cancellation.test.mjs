@@ -16,7 +16,7 @@ async function fixture() {
   let now = 1700000000000;
   const repository = new Repository(), deviceRequests = new Repository();
   const service = new IdentityService({ repository, deviceRequests, clock: () => now,
-    config: { origin: context.origin, rpID: 'bindle.example', termsVersion: 'test' },
+    config: { origin: context.origin, rpID: 'bindle.example', termsVersion: 'test', linkedEphemeralKey: true },
     turnstile: { verify: async () => true }, rateLimiter: { check: async () => true }, webauthn: {}, passwordHasher: {} });
   const account = { id: service.crypto.id(), handle: 'alice', revision: 0, status: 'active', credentials: [], sessions: [], createdAt: now };
   const phone = await service.session(account, { label: 'Phone' });

@@ -23,7 +23,7 @@ class DeviceRepository {
   async create(value) { if (this.records.has(value.id) || [...this.records.values()].some(record => record.userCodeHash === value.userCodeHash)) return false; this.records.set(value.id, structuredClone(value)); return true; }
   async compareAndSwap(id, revision, value) { if (this.records.get(id)?.revision !== revision) return false; this.records.set(id, structuredClone(value)); return true; }
 }
-const config = { origin: 'https://3sln.example', rpID: '3sln.example', rpName: '3sln', termsVersion: '2026-10-11' };
+const config = { origin: 'https://3sln.example', rpID: '3sln.example', rpName: '3sln', termsVersion: '2026-10-11', linkedCodeKey: 'test-linked-code-key-0001' };
 const context = { origin: config.origin, remoteIP: '192.0.2.1' };
 const signup = { handle: 'alice', method: 'password', password: 'correct horse battery staple', termsAccepted: true, termsVersion: config.termsVersion, turnstileToken: 'verified' };
 async function fixture() {
@@ -298,7 +298,8 @@ test('device denial, cancellation, expiry and revoked approving sessions never i
   const cancelled = await create(); await service.cancelDeviceLogin(cancelled, context); assert.deepEqual(await service.pollDeviceLogin(cancelled, context), { status: 'access_denied' });
   const expired = await create(); advance(300000); assert.deepEqual(await service.pollDeviceLogin(expired, context), { status: 'expired_token' });
   await assert.rejects(service.deviceRequest(expired, ownerContext), { code: 'invalid_device_request' });
-  const revoked = await create(); await service.approveDeviceLogin({ ...revoked, accountHandle: 'alice', approved: true }, ownerContext);
+  // Approval needs credential evidence from the last 5 minutes (linked approval LA-7), so the owner steps up again.
+  const revoked = await create(); await service.stepUp({ method: 'password', password: signup.password }, ownerContext); await service.approveDeviceLogin({ ...revoked, accountHandle: 'alice', approved: true }, ownerContext);
   await service.logout({}, ownerContext); advance(5000); assert.deepEqual(await service.pollDeviceLogin(revoked, context), { status: 'access_denied' });
 });
 

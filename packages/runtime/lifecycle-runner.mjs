@@ -1,5 +1,5 @@
 import {AccountLifecycle} from './account-lifecycle.mjs';
-import {dispatchLifecycleNotice} from '../messaging/dispatcher.mjs';
+import {dispatchLifecycleNotice} from './lifecycle-notices.mjs';
 import {key} from '../messaging/store.mjs';
 import {accountRemovalProtection,rememberEverPaid,everPaidEvent} from '../identity/lifecycle-protection.mjs';
 import {everPaidReview} from './lifecycle-finance.mjs';

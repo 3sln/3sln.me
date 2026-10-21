@@ -5,7 +5,7 @@ import {build} from 'esbuild';
 import {createServer} from 'node:http';
 import {normalizeMessageForm,messageFormFingerprint} from '../../packages/messaging/form-policy.mjs';
 import {launch} from './browser.mjs';
-const policy=await readFile(new URL('../../packages/messaging/form-policy.mjs',import.meta.url),'utf8'),moduleSource=(await readFile(new URL('../../apps/web/src/providers/message-frame.mjs',import.meta.url),'utf8')).replace('../../../../packages/messaging/form-policy.mjs','/assets/form-policy.mjs'),sanitizer=(await build({entryPoints:['scripts/message-sanitizer.mjs'],bundle:true,write:false,format:'esm',platform:'browser'})).outputFiles[0].text;
+const policy=(await build({entryPoints:['packages/messaging/form-policy.mjs'],bundle:true,write:false,format:'esm',platform:'browser'})).outputFiles[0].text,moduleSource=(await readFile(new URL('../../apps/web/src/providers/message-frame.mjs',import.meta.url),'utf8')).replace('../../../../packages/messaging/form-policy.mjs','/assets/form-policy.mjs'),sanitizer=(await build({entryPoints:['scripts/message-sanitizer.mjs'],bundle:true,write:false,format:'esm',platform:'browser'})).outputFiles[0].text;
 const controller=(await build({entryPoints:['scripts/message-frame-controller.mjs'],bundle:true,write:false,format:'esm',platform:'browser'})).outputFiles[0].text;
 async function frameFixture(t){
  const browser=await launch();t.after(()=>browser.close());const context=await browser.newContext(),requests=[];

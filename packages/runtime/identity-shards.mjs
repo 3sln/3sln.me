@@ -24,6 +24,29 @@ function releasableOnboarding(row, entry, now) {
     && value.digest === entry.digest && value.expiresAt === entry.expiresAt && Number.isSafeInteger(value.expiresAt) && value.expiresAt + ONBOARDING_RELEASE_GRACE_MS <= now
     && value.marker?.handle === entry.handle && entry.handle !== BOOT_HANDLE && !isFreeHandle(entry.handle);
 }
+// Ordered expiry index shared by the sharded Worker and local Node request stores.
+const DEVICE_EXPIRY='identity-device-expiry/';
+export async function indexDeviceExpiry(tx,target,expiresAt,claim){
+ if(!Number.isSafeInteger(expiresAt))throw new TypeError('Invalid device expiry');
+ await tx.put(`${DEVICE_EXPIRY}${String(expiresAt).padStart(16,'0')}/${encodeURIComponent(target)}`,{target,expiresAt,...claim===undefined?{}:{claim}});
+ const alarm=await tx.getAlarm?.();if(tx.setAlarm&&(!alarm||alarm>expiresAt))await tx.setAlarm(expiresAt);
+}
+export async function sweepDeviceExpiry(metadata,{now=Date.now(),limit=64}={}){
+ if(!Number.isSafeInteger(now)||!Number.isInteger(limit)||limit<1||limit>256)throw new TypeError('Invalid device sweep');
+ return metadata.transaction(async tx=>{
+  const rows=await tx.list({prefix:DEVICE_EXPIRY,limit});let deleted=0,seen=0,next=null;
+  for(const [key,entry]of rows){
+   if(entry.expiresAt>now){next=Math.min(next??Infinity,entry.expiresAt);break;}seen++;
+   const value=await tx.get(entry.target);
+   if(entry.claim!==undefined){if(typeof entry.claim==='string'?value===entry.claim:value?.owner===entry.claim.owner&&value?.token===entry.claim.token){await tx.delete(entry.target);deleted++;}}
+   else if(value){const expiry=Math.max(value.expiresAt??0,value.value?.expiresAt??0,value.pending?.value?.expiresAt??0);if(expiry<=now){await tx.delete(entry.target);deleted++;}else{await indexDeviceExpiry(tx,entry.target,expiry);next=Math.min(next??Infinity,expiry);}}
+   await tx.delete(key);
+  }
+  if(seen===limit)next=Math.min(next??Infinity,now+1000);
+  if(next!==null&&tx.setAlarm){const alarm=await tx.getAlarm?.();if(!alarm||alarm>next||alarm<=now)await tx.setAlarm(next);}
+  return {deleted,next};
+ });
+}
 const MAX_HANDLE_NUMBER = MAX_FREE_HANDLE_NUMBER;
 function namespaceIdentity(owner, assignmentId) {
   if (typeof owner !== 'string' || !owner || owner.length > 128 || assignmentId !== undefined && (typeof assignmentId !== 'string' || !assignmentId || assignmentId.length > 128)) throw new TypeError('Invalid handle allocation identity');
@@ -39,7 +62,7 @@ const sameClaim = (a, b) => Boolean(a && b && a.owner === b.owner && a.token ===
 const sameLink = (a,b) => a.kind === b.kind && a.value === b.value && sameClaim(a,b);
 const linksFor = (kind, value) => kind === 'account'
   ? [{kind:'handle', value:value.handle}, ...(value.verifiedEmail ? [{kind:'email', value:value.verifiedEmail}] : [])]
-  : [{kind:'device-code', value:value.userCodeHash}];
+  : [{kind:'device-code', value:value.userCodeHash, expiresAt:value.pendingUntil??value.expiresAt}];
 
 // These short transactions are the only cross-request atomic sections. They
 // never perform RPC, so no distributed lock or global coordinator is required.
@@ -56,14 +79,14 @@ export class IdentityShardStorage {
       if (state.result?.token === token) return state.result.committed ? 'committed' : false;
       if (state.pending || (revision === null ? state.value !== null : state.value?.revision !== revision)) return false;
       if (value.id !== id || value.revision !== (revision === null ? 0 : revision + 1)) return false;
-      if (state.value && (kind === 'account' ? value.handle !== state.value.handle || value.assignmentId !== state.value.assignmentId || !sameSystemIdentity(value.systemIdentity,state.value.systemIdentity)||!sameOnboardingIdentity(value.onboardingIdentity,state.value.onboardingIdentity) : value.userCodeHash !== state.value.userCodeHash || value.expiresAt !== state.value.expiresAt)) return false;
+      if (state.value && (kind === 'account' ? value.handle !== state.value.handle || value.assignmentId !== state.value.assignmentId || !sameSystemIdentity(value.systemIdentity,state.value.systemIdentity)||!sameOnboardingIdentity(value.onboardingIdentity,state.value.onboardingIdentity) : value.userCodeHash !== state.value.userCodeHash || value.pendingUntil !== state.value.pendingUntil || value.kind !== state.value.kind || !value.kind && value.expiresAt !== state.value.expiresAt)) return false;
       const links = linksFor(kind,value).map(link => state.links.find(old => old.kind === link.kind && old.value === link.value) || {...link,owner:id,token});
       // The overwhelmingly common session/auth CAS never touches a lookup shard.
       if (state.value && links.length === state.links.length && links.every(link => state.links.includes(link))) {
-        await tx.put(key,{value,links,namespaceBound:state.namespaceBound,result:{token,committed:true}}); return 'committed';
+        await tx.put(key,{value,links,namespaceBound:state.namespaceBound,result:{token,committed:true}});if(kind==='device')await indexDeviceExpiry(tx,key,value.expiresAt); return 'committed';
       }
       state.pending = {token, value, links, oldLinks:state.links, phase:'prepared'};
-      await tx.put(key,state); return 'prepared';
+      await tx.put(key,state);if(kind==='device')await indexDeviceExpiry(tx,key,value.expiresAt); return 'prepared';
     });
   }
   async settle(kind,id,token,commit) {
@@ -87,7 +110,7 @@ export class IdentityShardStorage {
     return this.metadata.transaction(async tx => {
       const key=lookupKey(kind,value),old=await tx.get(key);
       if(old)return old;
-      await tx.put(key,claim);return claim;
+      await tx.put(key,claim);if(kind==='device-code'&&Number.isSafeInteger(claim.expiresAt))await indexDeviceExpiry(tx,key,claim.expiresAt,claim);return claim;
     });
   }
   async release(kind,value,claim) {

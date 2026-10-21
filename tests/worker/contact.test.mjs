@@ -1,4 +1,7 @@
 import test from 'node:test';
+import {request as httpRequest} from 'node:http';
+import {Readable} from 'node:stream';
+import {CoreHeaders} from 'miniflare';
 import assert from 'node:assert/strict';
 import { createHarness } from './harness.mjs';
 import { authored } from '../link-helpers.mjs';
@@ -23,7 +26,19 @@ async function mint(url,headers={}){return h.mf.dispatchFetch(url,{headers:{Acce
 // The sender's own provider signs; the browser-equivalent POSTs credentialless multipart.
 const sign=async input=>{const response=await h.request('/api/links/envelope',{method:'POST',headers:{...senderHeaders(),'CF-Connecting-IP':`192.0.2.${network++%250}`},value:input});assert.equal(response.status,200,await response.clone().text());return response.json();};
 const message=(url,options)=>authored(sign,url,{text:'Hello from a sender',subject:'<img src=x onerror=alert(1)>',...options});
-async function send(url,body,headers={}){body??=await message(url);return h.mf.dispatchFetch(url,{method:'POST',body:body.bytes,headers:{'Content-Type':body.contentType,'CF-Connecting-IP':`192.0.2.${network++%250}`,...(body.bytes.byteLength>1500000?{Connection:'close'}:{}),...headers}});}
+// Undici rejects a valid early 413 if a concurrent upload write gets EPIPE. Use an HTTP
+// client that stops uploading on response; still require the complete status and error body.
+async function oversizedUpload(url,{body,headers}){
+ const runtime=await h.mf.ready,target=new URL(url),source=body instanceof ReadableStream?Readable.fromWeb(body):Readable.from([body]);
+ return new Promise((resolve,reject)=>{
+  let responding=false;const request=httpRequest(new URL(target.pathname+target.search,runtime),{method:'POST',agent:false,headers:{...headers,[CoreHeaders.ORIGINAL_URL]:url}},response=>{
+   responding=true;source.unpipe(request);source.destroy();request.end();const chunks=[];response.on('data',chunk=>chunks.push(chunk));response.on('error',reject);response.on('end',()=>resolve(new Response(Buffer.concat(chunks),{status:response.statusCode,headers:response.headers})));
+  });
+  request.on('error',error=>{if(!responding||error.code!=='EPIPE')reject(error);});source.on('error',reject);source.pipe(request);
+ });
+}
+async function send(url,body,headers={}){body??=await message(url);const init={method:'POST',body:body.bytes,headers:{'Content-Type':body.contentType,'CF-Connecting-IP':`192.0.2.${network++%250}`,...headers}};return body.bytes.byteLength>1500000?oversizedUpload(url,init):h.mf.dispatchFetch(url,init);}
+
 const rpc=(token,body)=>h.request('/bindle/rpc',{method:'POST',headers:{Authorization:'Bearer '+token,'CF-Connecting-IP':`198.51.100.${network++%250}`},value:rpcDeliveryRequest(body.envelope,base64url(body.body))});
 const decode=token=>JSON.parse(Buffer.from(token.split('.')[1],'base64url'));
 const anonymous=()=>{const result=new FormData();for(const [k,v]of Object.entries({collection,mimeType:'text/plain',idempotencyKey:crypto.randomUUID()}))result.append(k,v);result.append('message',new Blob(['anonymous'],{type:'text/plain'}),'hello.txt');return result;};
@@ -87,9 +102,9 @@ test('Worker rejects malformed multipart, ambiguous credentials, wrong media and
  assert.equal((await send(issued.url,body,{Authorization:'Bearer a.b.c'})).status,400);
  assert.equal((await send(issued.url,body,{'Idempotency-Key':crypto.randomUUID()})).status,400);
  const wrongType=text.replace('Content-Type: text/plain\r\n\r\nHello','Content-Type: text/html\r\n\r\nHello');assert.equal((await send(issued.url,{bytes:new TextEncoder().encode(wrongType),contentType:body.contentType})).status,415);
- const huge={contentType:body.contentType,bytes:new Uint8Array(1600000).fill(120)};assert.equal((await send(issued.url,huge)).status,413);
+ const huge={contentType:body.contentType,bytes:new Uint8Array(1600000).fill(120)},hugeResponse=await send(issued.url,huge);assert.equal(hugeResponse.status,413);assert.equal((await hugeResponse.json()).error,'too_large');
  const encoder=new TextEncoder();let remaining=20;const streamed=new ReadableStream({async pull(controller){await new Promise(resolve=>setTimeout(resolve,5));if(remaining--===20)controller.enqueue(encoder.encode('--bounded\r\nContent-Disposition: form-data; name="message"; filename="large.txt"\r\nContent-Type: text/plain\r\n\r\n'));else if(remaining>=0)controller.enqueue(new Uint8Array(100000).fill(120));else{controller.enqueue(encoder.encode('\r\n--bounded--\r\n'));controller.close();}}});
- const streamedResponse=await h.mf.dispatchFetch(issued.url,{method:'POST',body:streamed,duplex:'half',headers:{'Content-Type':'multipart/form-data; boundary=bounded','CF-Connecting-IP':'198.51.100.9',Connection:'close'}});assert.equal(streamedResponse.status,413);assert.equal((await streamedResponse.json()).error,'too_large');
+ const streamedResponse=await oversizedUpload(issued.url,{method:'POST',body:streamed,duplex:'half',headers:{'Content-Type':'multipart/form-data; boundary=bounded','CF-Connecting-IP':'198.51.100.9'}});assert.equal(streamedResponse.status,413);assert.equal((await streamedResponse.json()).error,'too_large');
 });
 
 test('Worker live quarantine suppresses notifications and revocation rejects mint, delivery and RPC',async()=>{

@@ -1836,3 +1836,96 @@ Coordinator decision:
 - An owner step-up route plus an inline "Confirm it's you" prompt replaces forced sign-out/sign-in.
 
 Being implemented together with the flows-test and ui-chaos-scale timing fixes. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-20 — Integrated roadmap; Wave 0 committed; Wave 1 started
+
+The [integrated implementation roadmap](docs/architecture/implementation-roadmap.md) merges the extensibility, BindleBox, linked-approval, activity and app-engine slice plans into seven dependency-ordered waves. It uses prefixed slice IDs, append-only registries, single owners per file per wave, and default-off flags. BB-CUT is the only irreversible step (message data reset; tag before it). Engine migrations ENG-2/3/4/5 are cancelled: messaging domains are built engine-first inside BindleBox.
+
+Wave 0 (commit c86e0ae):
+- six default-off flags;
+- the BindleBox test glob;
+- an append-only storage resource-method dispatch registry;
+- core spec amendments AMD-C1–C11 applied to the specs (code work tracked under EXT slices);
+- linked-approval decisions recorded.
+
+Gates: core 1324, Worker 53, UI-state 216, Worker dry run pass.
+
+Wave 1 streams in flight:
+- Codex: EXT-X1 slot validation, EXT-X9a conformance fixture, LA6 SDK device helper, LA4 approval page (mock-first), BB-C2 records/content move, BB-B0 BindleBox skeleton.
+- Claude: LA1 identity core, IDKEYS-1 key registry, EXT-X5 brokering keys/JWKS.
+
+BB-B1 protocol follows B0.
+User decision (2026-10-20): the peer messaging interop spec is named "Bindle Messaging" (descriptive), separate from the messaging app product name. App name pending: coordinator recommends "Parley", with "3sln Messages" as the plain fallback; no trademark search done. A mechanical rename of `bindlebox` docs and packages follows the app-name decision, after the current wave lands.
+
+EXT-X5 landed (provisional): `packages/federation/signing.mjs` provides purpose-separated ES256 brokering keys (invoke, describe, discover, event), sealed at rest with an HKDF/AES-GCM key derived from `KEY_ENCRYPTION_KEY`. Each purpose has a published standby key, and retired keys stay at least 630 s. RFC 9068 `at+jwt` minting runs at most 300 s (60 s for discover/describe), with low-s-only verification. A flag-gated `/oauth/brokering/jwks` route and a provisional `brokering_jwks_uri` appear only with `BROKERING_ENABLED`. [Review](docs/release/brokering-keys-review.md): 2 medium and 4 low findings fixed. Pending: integrator wiring of the `brokering` option into `handleFederation`, the X8 move of `brokering_jwks_uri` into `brokered-resources.v1`, a key-compromise runbook with CDN purge. Reviewer ___ Date ___ Outcome ___.
+
+IDKEYS-1 (BB-C0) landed: `packages/identity/keys.mjs`, an engine-first `IdentityKeyRegistry` with Ensure, Rotate (CAS on `expectedKid`), Revoke and legacy Register; queries by kid, current key and history; `verifyKeyContinuity`; and a `resolveIdentityKey` directory hook. Signing keys keep `contact-key/` records for compatibility; encryption keys get their own. Key states only move forward (active → retired → revoked). `contact-tokens.mjs` delegates to and re-exports the registry, and `account/identity.mjs` runs on the engine. 13 tests including 25 seeded chaos runs and a rejected pre-rotation recovery file. [Review](docs/release/identity-keys-review.md): 6 findings fixed. Rotation stays internal (no route) until C1a moves link minting to the current key. An open race in `packages/conversations/runtime.mjs` is outside scope; that module is deleted at BB-CUT, and its replacement must not repeat the race. Core 1403/1403, Worker 53/53. Reviewer ___ Date ___ Outcome ___.
+
+Wave 1 Codex streams landed. Each passes its own suite; cross-stream integration is pending:
+- **EXT-X1 slot validation:** `packages/federation/extensions.mjs`, fragment validator tolerance per AMD-C1, digest pinning, policy semantics, engine wrappers flag-gated and unmounted; 19 tests.
+- **EXT-X9a:** reusable engine-backed integration server fixture `tests/fixtures/integration-server.mjs` (webhooks, discovery, token stubs, invalidation); 6 tests plus 6 conformance todos.
+- **LA6 SDK device helper:** `packages/sdk/src/device.mjs` with RFC 8628 polling, DPoP and cancellation. Transport injection is required because Node fetch adds a forbidden header; identity hints require a trusted `expectedSubject`. 25 harness tests; `.example` CLI examples.
+- **LA4 approval page:** `apps/web/src/{bl,ui}/approve.mjs` plus catalogue, built mock-first; 13 browser checks across widths, languages and themes, including same-tab sign-in and step-up. Legacy QR review page removed; unmounted pending LA3.
+- **BB-C2 pure move:** `packages/core/records.mjs`, `packages/content/*`, `runtime/lifecycle-notices.mjs`, with re-exports.
+- **BB-B0 skeleton:** `packages/bindlebox-engine/*`, harness and seeded network simulator, import-boundary test, `scripts/bindlebox.mjs`; 9 tests.
+
+Known cross-stream breakages to reconcile:
+- UI-state/device-login tests asserting the removed review page;
+- e2e fixtures serving form-policy without its moved dependency;
+- link HTTP 404 assertions;
+- a key-registry ordering assertion;
+- a DOM storage check;
+- an intermittent Worker EPIPE.
+
+BB-B1 protocol started.
+
+## 2026-10-20 — Event buses, rich consent and incremental authorization (user direction)
+
+- **Event buses in core.** An integration can request read, write or readwrite access to an event bus identified by URI. A bus manifest describes the bus, its purpose and its schema. As with preference fragments, the user can see who has access to each bus, what kind of access, the bus's purpose, and in human terms what that access lets an app do.
+- **Consent screens.** Integration consent is a guided walkthrough of exactly what the user is signing up for: what each requested access or grant lets the app do. Not too verbose, but not lacking the detail needed to understand it.
+- **Incremental authorization.** Apps can request new permissions, privileges and preference fragments lazily, on demand, through a redirect or through the isolated 3sln.me custom elements and islands. Unconfigured fragments must be filled in before consent, so the request lets the user fill them in.
+- **Configuration requests.** Apps can ask to open a preference fragment, or a single field, for the user to edit, for example to request a particular configuration. The user must actually configure it or accept the app's suggested configuration.
+- **Request suppression.** The user can choose never to let an app make a given request again, to prevent spammy behavior.
+
+Design delegated (`docs/spec/events.md`, `docs/spec/incremental-authorization.md`, `docs/architecture/consent-experience.md`). Reviewer ___ Date ___ Outcome ___.
+
+LA1 landed: `packages/identity/linked-approval.mjs` holds one record type for session and app requests.
+- Codes are base-20 with an HMAC index (`LINKED_CODE_KEY` or `KEY_ENCRYPTION_KEY`) and are looked up only when signed in.
+- Guess budgets per account, per network and globally (sized to live codes); polls never write; consumption is single-use; "Continue as" on the requesting screen.
+- App credentials 30 d / 7 d idle; atomic lineage revocation with an outbox.
+- Contract in linked-approval §10.1: browser `LinkedApprovalAction`/`LinkedResolveQuery`, and an unrouted system `LinkedSystemAction` for LA2 with `LinkedLineageQuery` checked on every refresh, failing closed.
+- New operations return `not_found` unless `DEVICE_AUTHORIZATION_ENABLED` is on. Legacy `/api/auth/device/*` aliases run on the new core with the flag off.
+
+25 tests including chaos interleavings; core 1428/1428, Worker 53/53. Review S3, S4, S6, S7, S8 fixed and S5 partly fixed. Open:
+- **S1:** admin suspension and lifecycle tombstones clear sessions without revoking lineage, so an app could return after reactivation. Must land before LA2 issues app credentials.
+- **S2:** no physical deletion of linked-approval records yet.
+
+Integration pass started. Reviewer ___ Date ___ Outcome ___.
+
+User direction (2026-10-20): integration/app credential lifetimes should not be aggressive, since users can revoke manually; apps refresh automatically, involving the user only after very long disuse. Coordinator decision (provisional), superseding the 30 d absolute / 7 d idle app lifetime:
+- access tokens of at most 5 minutes;
+- DPoP-bound refresh tokens rotated on every use with reuse detection;
+- live grant/account checks on every refresh, so revocation and suspension stay immediate;
+- no absolute lifetime for an app connection;
+- idle expiry of 180 days by default (host-configurable);
+- one fresh step-up at approval only.
+Device session approvals keep session semantics, capped by the approving session. To be applied across `auth.md`, `device-authorization.md`, `linked-approval.md`, `packages/federation/app-sessions.mjs` and the linked-approval core after the Wave 1 integration pass. Reviewer ___ Date ___ Outcome ___.
+
+## 2026-10-20 — Event buses, consent walkthrough and incremental authorization (design rev 2)
+
+[Events](docs/spec/events.md), [incremental authorization](docs/spec/incremental-authorization.md), [consent experience](docs/architecture/consent-experience.md), [two-lens review](docs/release/events-consent-review.md). All findings were addressed in revision 2; the fixes have not been independently re-reviewed.
+
+- **Buses reuse slots.** A bus manifest is a one-occupant slot with a required `bus` member. The occupant is a resource implementing a new `event-bus/v1` contract, and read/write/readwrite access is an ordinary fragment grant, so revocation and access listings come for free.
+- **Hosting** is the owner's choice: 3sln.me (immediate revocation, push available) or an integration (pull only, every publish checked live).
+- **Delivery.** Push is a data-free doorbell on the integration event channel, with one pending doorbell per subscriber. Reads are cursor-based with long-polling; SSE deferred.
+- **Ordering.** One total order per bus; retention gaps are always reported; new readers start at approval unless the owner opts into history.
+- **Cost.** Publishing draws a separate event allowance, so feeds never block owner writes. Per-feed byte caps, a daily long-poll budget, and empty reads are charged.
+- **New intents** `grant-more` and `configure` go through the authorization entry. Results are granted / partial (with the full current grant) / declined, or configured / unchanged.
+- **`configure` never changes permissions.** Suggestions cover plain fields only, each accepted individually; URL, email/host and cross-app-received fields need their own confirmation.
+- **Tokens** are issued only when access was actually added.
+- **Suppression is invisible to apps,** which see only a decline. Blocking requires one armed click, and decline cooldowns (24 h / 7 d / 30 d) count only real owner decisions.
+- **Consent copy** comes from the 3sln.me reviewed catalogue, then the named contract publisher, never the app. The app's reason is shown as its own claim. Four risk tiers, never conveyed by color alone.
+
+Slices EV/IA/CX are added to the roadmap; AMD-C12–C20 are proposed and unsigned. Reviewer ___ Date ___ Outcome ___.
+
+BB-B1 landed: `packages/bindlebox-protocol`, a pure, deterministic Bindle Messaging v1 library (Web Crypto only, no I/O, clock or randomness). It covers envelope, genesis, invitation-response, receipt and descriptor shapes for all kinds and 11 record types; digests, event IDs and domain-separated signers; delegation certificate parsing/verification with injected directory/status ports; receipts returning `unknown` on any doubt; pair-gate credentials, audience freezing and author-keyed replay; strict delivery/multicast/RPC parsers; failure classification. 21 fixed signed vectors plus multipart, multicast and pair-token vectors; seeded fuzzing caught one bug. Core 1470 (6 todo), BindleBox suite 44 including the import boundary. [Review](docs/release/bindlebox-protocol-review.md): BR-1 high (a signed `identityURI` could redirect the status check and bypass revocation; now pinned to the directory value), BR-2/3 medium and BR-4–10 low, all fixed. Spec items for the design owner: `secret-share` should require a status check; envelopes are signed per recipient; multicast results lack per-context status; gap/introduction liveness. Reviewer ___ Date ___ Outcome ___.

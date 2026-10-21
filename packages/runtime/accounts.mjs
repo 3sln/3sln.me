@@ -28,7 +28,7 @@ import {BeamService} from '../beaming/index.mjs';
 import {BeamContacts} from '../beaming/contacts.mjs';
 import {ContactTokenService,ContactEndpointService,MessagingService,NotificationService} from '../../packages/messaging/index.mjs';
 import {key} from '../../packages/messaging/store.mjs';
-import {IdentityShardStorage} from './identity-shards.mjs';
+import {indexDeviceExpiry,sweepDeviceExpiry,IdentityShardStorage} from './identity-shards.mjs';
 import {StorageError} from '../storage/policy.mjs';
 import {StorageQuota} from './storage-quota.mjs';
 import {AccountStorageWriteBudget} from './storage-write-budget.mjs';
@@ -132,15 +132,15 @@ export class IdentityRepository {
   }
   // Identity storage alarm: release expired, never-redeemed onboarding reservations.
   // A failing sweep (for example an unreadable name policy) releases nothing and retries hourly.
-  async alarm(){try{await this.shardOnboardingSweep({now:Date.now()});}catch{await this.metadata.setAlarm(Date.now()+3600000);}}
+  async alarm(){try{await this.shardOnboardingSweep({now:Date.now()});await sweepDeviceExpiry(this.metadata);}catch{await this.metadata.setAlarm(Date.now()+3600000);}}
   async lifecycleCandidates({cursor,limit=100}={}) {
     const rows=await this.metadata.list({prefix:'account/',startAfter:cursor,limit});
     return {accounts:[...rows].map(([path,a])=>({cursor:path,id:a.id,status:a.status,createdAt:a.createdAt,lastActiveAt:a.lastActiveAt,verifiedEmail:Boolean(a.verifiedEmail)})),cursor:rows.size===limit?[...rows.keys()].at(-1):null};
   }
-  async createDevice(record){return this.metadata.transaction(async tx=>{const oldId=await tx.get(`device-code/${record.userCodeHash}`);if(oldId){const old=await tx.get(`device/${oldId}`);if(old&&old.expiresAt>Date.now())return false;await tx.delete(`device/${oldId}`);}if(await tx.get(`device/${record.id}`))return false;await tx.put(`device/${record.id}`,record);await tx.put(`device-code/${record.userCodeHash}`,record.id);return true;});}
+  async createDevice(record){return this.metadata.transaction(async tx=>{const oldId=await tx.get(`device-code/${record.userCodeHash}`);if(oldId){const old=await tx.get(`device/${oldId}`);if(old&&old.expiresAt>Date.now())return false;await tx.delete(`device/${oldId}`);}if(await tx.get(`device/${record.id}`))return false;await tx.put(`device/${record.id}`,record);await tx.put(`device-code/${record.userCodeHash}`,record.id);await indexDeviceExpiry(tx,`device/${record.id}`,record.expiresAt);await indexDeviceExpiry(tx,`device-code/${record.userCodeHash}`,record.pendingUntil??record.expiresAt,record.id);return true;});}
   async getDevice(id){return this.metadata.get(`device/${id}`);}
   async findDeviceByCode(code){const id=await this.metadata.get(`device-code/${code}`);return id?this.getDevice(id):null;}
-  async compareAndSwapDevice(id,revision,record){return this.metadata.transaction(async tx=>{const old=await tx.get(`device/${id}`);if(!old||old.revision!==revision)return false;await tx.put(`device/${id}`,record);return true;});}
+  async compareAndSwapDevice(id,revision,record){return this.metadata.transaction(async tx=>{const old=await tx.get(`device/${id}`);if(!old||old.revision!==revision)return false;await tx.put(`device/${id}`,record);await indexDeviceExpiry(tx,`device/${id}`,record.expiresAt);return true;});}
 }
 
 export class FixedWindowGuard {

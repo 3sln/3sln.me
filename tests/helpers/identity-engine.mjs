@@ -6,7 +6,7 @@ import { ShardedIdentityRepository, IdentityShardStorage, IDENTITY_LAYOUT } from
 import { createHash } from 'node:crypto';
 import { fakeClock } from './chaos.mjs';
 
-export const config = { origin: 'https://3sln.example', rpID: '3sln.example', rpName: '3sln', termsVersion: '2026-10-11' };
+export const config = { origin: 'https://3sln.example', rpID: '3sln.example', rpName: '3sln', termsVersion: '2026-10-11', linkedCodeKey: 'test-linked-code-key-0001' };
 export const context = { origin: config.origin, remoteIP: '192.0.2.1' };
 export const PASSWORD = 'correct horse battery staple';
 export const signupInput = (overrides = {}) => ({ handle: 'alice', method: 'password', password: PASSWORD, termsAccepted: true, termsVersion: config.termsVersion, turnstileToken: 'verified', ...overrides });

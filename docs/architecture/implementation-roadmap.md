@@ -135,3 +135,14 @@ The linked-approval decisions are recorded in [§15](linked-approval.md#15-open-
 ## Deployability
 
 Every wave ends green with flags off, which means a deployable `check:worker` plus a local Worker run. W1–W5 add only unreferenced packages, flag-gated routes, or pure moves with re-exports. BB-CUT is the only non-reversible step.
+
+## Additions: events, consent and incremental authorization (2026-10-20)
+
+From [consent experience](consent-experience.md), [events](../spec/events.md) and [incremental authorization](../spec/incremental-authorization.md). Slices use the prefixes EV (events), IA (incremental authorization) and CX (consent experience).
+
+- **Wave 2:** CX-1 risk/wording model, EV-1 bus manifest validation.
+- **Wave 3:** IA-1 `grant-more`/`configure` backend, IA-2 suppression and rate limits, EV-2 bus engine, CX-2 consent walkthrough, IA-3 SDK helpers.
+- **Wave 4:** EV-3 push doorbells (after EXT-X6), IA-4 embedded request element.
+- **Wave 5:** EV-4 integration-hosted bus conformance, CX-3 access views (with EXT-X11).
+
+Proposed spec amendments AMD-C12–C20; two new default-off flags.

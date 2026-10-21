@@ -4,6 +4,7 @@ import {systemMarker,systemBadge,sameSystemIdentity} from './system-bootstrap.mj
 import {normalizeHandle,validatePaidHandle,isReservedHandle} from './handles.mjs';
 import { IdentityCrypto, secureEqual } from './crypto.mjs';
 import { DeviceLogin } from './device-login.mjs';
+import { LinkedApproval, MemoryLinkedLimits, pruneLineage, revokeLineage, revokeAllLineage } from './linked-approval.mjs';
 
 export class IdentityFault extends Error {
   constructor(code, message = 'The account request could not be completed.') { super(message); this.code = code; }
@@ -38,14 +39,16 @@ const publicCredentials = account => account.credentials.map(({ id, label, devic
 /** Platform-independent account policy. Repository must implement linearizable
  * create and compareAndSwap; an in-memory repository is only a test resource. */
 export class IdentityService {
-  constructor({ repository, deviceRequests, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, config }) {
+  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, config }) {
     if (!repository || !turnstile || !rateLimiter || !webauthn || !passwordHasher || !config?.termsVersion) throw new TypeError('Identity resources and terms version are required');
     const origin = new URL(config.origin);
     if (origin.origin !== config.origin || origin.hostname !== config.rpID || (origin.protocol !== 'https:' && !(config.allowInsecureLocalhost && origin.protocol === 'http:' && origin.hostname === 'localhost'))) throw new TypeError('Exact RP origin is required');
     this.repository = repository; this.crypto = new IdentityCrypto(crypto); this.clock = clock;
     this.turnstile = turnstile; this.rateLimiter = rateLimiter; this.webauthn = webauthn; this.passwordHasher = passwordHasher;
     this.pushTransport=pushTransport;this.mailer = mailer; this.identityBackup = identityBackup; this.paidHandleEligibility=paidHandleEligibility;
-    this.deviceRequests = deviceRequests;
+    // `linkedApprovals` is the renamed `deviceRequests` repository (create/get/findByUserCode/compareAndSwap).
+    // `linkedLimits` is the durable window port for budgets; `linkedPollLimits` the non-durable poll limiter.
+    this.deviceRequests = this.linkedApprovals = linkedApprovals; this.linkedLimits = linkedLimits ?? new MemoryLinkedLimits(clock); this.linkedPollLimits = linkedPollLimits ?? new MemoryLinkedLimits(clock); this.approvalNotices = approvalNotices;
     this.setupBilling = setupBilling;this.systemBootstrap=systemBootstrap;this.onboarding=onboarding;this.resolveIdentityBadges=resolveIdentityBadges??defaultBadgeResolver;this.reservedHandle=reservedHandle;
     this.config = { rpName: '3sln.me', sessionTtlMs: 86400000, pendingTtlMs: 1800000, challengeTtlMs: 300000, ...config };
     if (!(this.config.sessionTtlMs > 0 && this.config.sessionTtlMs <= 86400000)) throw new TypeError('Sessions must expire within 24 hours');
@@ -81,8 +84,12 @@ export class IdentityService {
   async session(account, { label, credentialId, source = 'credential', activationCredentialAt, parentSessionId, expiresAt: cap = Infinity } = {}) {
     const sessionToken = `${account.id}.${this.crypto.random()}`; const csrfToken = this.crypto.random();
     const expiresAt = Math.min(this.clock() + this.config.sessionTtlMs, cap);
-    await this.pruneSessions(account, s => s.expiresAt <= this.clock());
-    while(account.sessions.length>=10){const target=account.sessions.find(s=>s.id!==parentSessionId&&!account.sessions.some(child=>child.parentSessionId===s.id))??account.sessions.find(s=>s.id!==parentSessionId);if(!target)fail('conflict');await this.pruneSessions(account,s=>s===target);}
+    await this.pruneSessions(account, s => s.expiresAt <= this.clock(), { natural: true });
+    // Eviction never ends the new session's own ancestry, prefers sessions with no derived sessions or apps, and
+    // cascades like any explicit termination (architecture §7.4).
+    const protectedIds=new Set();for(let id=parentSessionId;id&&!protectedIds.has(id);id=account.sessions.find(s=>s.id===id)?.parentSessionId)protectedIds.add(id);
+    const busy=s=>account.sessions.some(child=>child.parentSessionId===s.id)||(account.linkedLineage??[]).some(entry=>entry.sessions.includes(s.id));
+    while(account.sessions.length>=10){const target=account.sessions.find(s=>!protectedIds.has(s.id)&&!busy(s))??account.sessions.find(s=>!protectedIds.has(s.id));if(!target)fail('conflict');await this.pruneSessions(account,s=>s===target);}
     account.sessions = [...account.sessions, {
       id: this.crypto.id(), label: safeLabel(label), credentialId, source, parentSessionId, ...source==='activation'&&Number.isSafeInteger(activationCredentialAt)?{activationCredentialAt}:{},
       hash: await this.crypto.hash('session', sessionToken), csrfToken, expiresAt, createdAt: this.clock(), lastUsedAt: this.clock() }];
@@ -101,10 +108,15 @@ export class IdentityService {
     return { account, session };
   }
   authAt(session){return Math.max(session.source==='activation'&&Number.isSafeInteger(session.activationCredentialAt)&&session.activationCredentialAt<=this.clock()?session.activationCredentialAt:-Infinity,session.source==='credential'&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=this.clock()?session.createdAt:-Infinity,Number.isSafeInteger(session.stepUpAt)&&session.stepUpAt<=this.clock()?session.stepUpAt:-Infinity);}
-  async pruneSessions(account,remove){
-    const removed=new Set();for(const session of account.sessions)if(remove(session))removed.add(await this.sessionID(session));
-    let changed=true;while(changed){changed=false;for(const session of account.sessions)if(session.parentSessionId&&removed.has(session.parentSessionId)){const id=await this.sessionID(session);if(!removed.has(id)){removed.add(id);changed=true;}}}
+  /** Removes sessions and their transitive descendants. Removing a still-live session is an explicit termination
+   * in every mode: approval lineage through it ends and its app families enter the revocation outbox in this same
+   * account CAS. Already-expired sessions end naturally and keep their lineage until E (deterministic whether or
+   * not expiry pruning ran first). `natural` only documents the expiry-pruning caller. */
+  async pruneSessions(account,remove,{natural=false}={}){
+    const now=this.clock(),removed=new Set(),explicit=new Set();for(const session of account.sessions)if(remove(session)){const id=await this.sessionID(session);removed.add(id);if(session.expiresAt>now)explicit.add(id);}
+    let changed=true;while(changed){changed=false;for(const session of account.sessions)if(session.parentSessionId&&removed.has(session.parentSessionId)){const id=await this.sessionID(session);if(!removed.has(id)){removed.add(id);if(session.expiresAt>now)explicit.add(id);changed=true;}}}
     account.sessions=(await Promise.all(account.sessions.map(async session=>({session,id:await this.sessionID(session)})))).filter(item=>!removed.has(item.id)).map(item=>item.session);
+    pruneLineage(account,now);if(explicit.size)revokeLineage(account,explicit,now);
   }
   async recent(context) {
     const result = await this.authorized(context, true);
@@ -323,7 +335,7 @@ export class IdentityService {
     if (!resumed) {
       account.recoveryResumeHash = account.recoveryHash;
       account.recoveryResumeBackupVersion=account.recoveryBackupVersion||1;
-      account.status = 'recovering'; account.recoveryHash = null; account.credentials = []; account.passwordHash = null; account.sessions = []; account.emailChallenges = [];
+      account.status = 'recovering'; account.recoveryHash = null; account.credentials = []; account.passwordHash = null; account.sessions = []; revokeAllLineage(account, this.clock()); account.emailChallenges = [];
     }
     // Resumption only rotates the limited setup authority; completed replacement
     // credentials and the replacement recovery file remain intact.
@@ -343,10 +355,10 @@ export class IdentityService {
       account.revision = revision + 1;
       await this.repository.compareAndSwap(account.id, revision, account);
     }
-    return { account: await this.projectAccount(account), csrfToken: session.csrfToken, expiresAt: session.expiresAt,sessionContext:await this.sessionID(session),
+    return { account: await this.projectAccount(account), csrfToken: session.csrfToken, expiresAt: session.expiresAt,sessionContext:await this.sessionID(session),signOutImpact:await this.signOutImpact(account,session),
       credentials: publicCredentials(account),
       devices: await Promise.all(account.sessions.filter(s => s.expiresAt > this.clock()).map(async s => ({
-        id: await this.sessionID(s), label: s.label || 'Browser session', createdAt: s.createdAt,
+        id: await this.sessionID(s), label: s.label || 'Browser session', createdAt: s.createdAt, ...s.parentSessionId?{approvedFrom:s.parentSessionId}:{},
         lastUsedAt: s === session ? this.clock() : s.lastUsedAt || s.createdAt, expiresAt: s.expiresAt, current: s === session }))),
       audit: account.audit.slice(-20) };
   }
@@ -405,7 +417,26 @@ export class IdentityService {
     const keep=new Set([await this.sessionID(session)]);let parent=session.parentSessionId;while(parent&&!keep.has(parent)){keep.add(parent);parent=account.sessions.find(s=>s.id===parent)?.parentSessionId;}const before=account.sessions.filter(s=>s.expiresAt>this.clock()).length;const ids=new Map(await Promise.all(account.sessions.map(async s=>[s,await this.sessionID(s)])));await this.pruneSessions(account,s=>!keep.has(ids.get(s)));const count=before-account.sessions.filter(s=>s.expiresAt>this.clock()).length; this.audit(account, 'other-device-sessions-revoked');
     await this.save(account, revision); return { revoked: count };
   }
+  /** What ordinary sign-out of `session` also ends, for the sign-out warning (architecture §7.4). */
+  async signOutImpact(account,session){const now=this.clock(),chain=new Set([await this.sessionID(session)]);let changed=true;while(changed){changed=false;for(const s of account.sessions)if(s.parentSessionId&&chain.has(s.parentSessionId)&&s.expiresAt>now&&!chain.has(s.id)){chain.add(s.id);changed=true;}}return {sessions:chain.size-1,apps:(account.linkedLineage??[]).filter(entry=>entry.expiresAt>now&&entry.sessions.some(id=>chain.has(id))).length};}
+  linkedFlow() { return this.linkedApproval ||= new LinkedApproval(this, IdentityFault); }
   deviceFlow() { return this.deviceLogin ||= new DeviceLogin(this, IdentityFault); }
+  // Linked approval (packages/identity/linked-approval.mjs; contract in linked-approval.md §10.1). Gated by
+  // config.deviceAuthorizationEnabled. The system operations below are for the federation engine and are never routed.
+  async linkedStart(input, context) { return this.linkedFlow().start(input, context); }
+  async linkedResolve(input, context) { return this.linkedFlow().resolve(input, context); }
+  async linkedApprove(input, context) { return this.linkedFlow().approve(input, context); }
+  async linkedDeny(input, context) { return this.linkedFlow().deny(input, context); }
+  async linkedPoll(input, context) { return this.linkedFlow().poll(input, context); }
+  async linkedAccept(input, context) { return this.linkedFlow().accept(input, context); }
+  async linkedCancel(input, context) { this.linkedFlow().enabled(); return this.linkedFlow().cancel(input, context); }
+  async linkedStartApp(input, context) { return this.linkedFlow().startApp(input, context); }
+  async linkedRedeem(input, context) { return this.linkedFlow().redeem(input, context); }
+  async linkedCancelApp(input) { return this.linkedFlow().cancelApp(input); }
+  async linkedLineageLive(input) { return this.linkedFlow().lineageLive(input); }
+  async linkedLineageRevoke(input) { return this.linkedFlow().lineageRevoke(input); }
+  async linkedOutbox(input) { return this.linkedFlow().outbox(input); }
+  async linkedOutboxAck(input) { return this.linkedFlow().outboxAck(input); }
   async createDeviceLogin(input, context) { return this.deviceFlow().create(input, context); }
   async deviceRequest(input, context) { return this.deviceFlow().inspect(input, context); }
   async approveDeviceLogin(input, context) { return this.deviceFlow().approve(input, context); }

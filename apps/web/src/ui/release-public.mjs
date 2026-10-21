@@ -1,15 +1,14 @@
 import {contactPage} from './release-contact.mjs';
-import { h,fire,badge,logo,field,checkbox,helpers } from './release-primitives.mjs';
+import { h,badge,logo,helpers } from './release-primitives.mjs';
 export default function publicPage(state){
   const {btn,form,alerts}=helpers(state),route=state.route;
   let content;
   if(route.kind==='contact')content=contactPage(state);
   else if(route.kind==='unsubscribe')content=h('div',badge('YOUR NOTIFICATIONS'),h('h2',state.unsubscribed?'A little quieter.':'Turn off this notification channel?'),h('p',state.unsubscribed?'You are unsubscribed. This link has turned off the channel it belongs to.':'Confirm to stop notifications for the channel included in this link. You do not need to sign in.').classes('muted'),alerts(),!state.unsubscribed?btn('Unsubscribe',{kind:'unsubscribe'},'button primary'):null);
   else if(route.kind==='device'){
-    const account=state.session?.account;
-    content=h('div',badge('NEW DEVICE SIGN-IN'),h('h2',state.deviceApproved?'Device approved.':state.deviceDenied?'Request denied.':'Is this your screen?'),alerts(),state.deviceApproved?h('p','Return to the requesting screen. It will finish signing in shortly.').classes('security-note'):state.deviceDenied?h('p','This screen cannot sign in with this request.').classes('security-note'):h('div',h('p','Only enter a code from a device in front of you. Never enter a code someone sent you.').classes('security-note'),
-      account?h('div',h('p','You are approving access to ',h('strong',`${account.handle}@${state.config.handleOriginHost??state.brand.host}`),'.'),form([field('code','Type the code shown on the requesting screen','text',{required:true,maxLength:16,autocomplete:'off',autocapitalize:'characters',spellcheck:false,placeholder:'Enter the code from your TV'}),checkbox('approved','I can see the requesting device and want it to access my account.'),h('button','Deny request').props({type:'button',disabled:state.busy||state.offline}).classes('button','danger-button').on({click:event=>fire(event.currentTarget,'deny-device',{form:event.currentTarget.closest('form')})})],{kind:'approve-device'},'Approve this device')):h('div',h('p','Sign in on this phone first, then return here to review the request. Keep this page open.').classes('muted'),h('div',h('a','Open sign in').props({href:'/console?signin=1',target:'_blank',rel:'noopener'}).classes('button','primary'),btn('Check signed-in session',{kind:'recheck-session'},'button secondary')).classes('buttons'))
-    ));
+    // LA3 supplies the HTTP redirect. Until then this retired review surface cannot make decisions.
+    const id=/^[a-f0-9-]{36}$/.test(route.requestId??'')?route.requestId:null;
+    content=h('div',h('h2','Approve a sign-in'),h('a','Continue').props({href:'/approve'+(id?'#r='+encodeURIComponent(id):'')}).classes('button','primary'));
   }else content=h('div',badge(route.emailLogin?'EMAIL SIGN-IN':'EMAIL VERIFICATION'),h('h2',state.emailConfirmed?'Email confirmed.':route.emailLogin?'Confirm your sign-in.':'Link this email to your account?'),h('p',route.emailLogin?'Continue only if you requested this sign-in link.':'Confirm only if you requested this email link for the account currently signed in.').classes('muted'),alerts(),!state.emailConfirmed?btn(route.emailLogin?'Confirm & sign in':'Confirm email link',{kind:'confirm-email'},'button primary',!route.emailLogin&&!state.session?.account):null,!route.emailLogin&&!state.session?.account?h('p','Sign in to the destination account before confirming this email link.').classes('security-note'):null);
   return h('div',h('header',logo(state),h('a','Back to my space').props({href:'/console'}).classes('button','secondary')).classes('landing-nav'),h('main',h('section',content).classes('auth-card')).classes('public-main'));
 }

@@ -60,6 +60,7 @@ export const PROVIDERS = Object.freeze({
   automation: row('account', 'domain', 'planned', 'Browser automation records.'),
   federation: row('edge', 'domain', 'planned', 'Federation authority, client directory and entries.'),
   admin: row('edge', 'domain', 'planned', 'AdminService (boot, reserved names, client blocks).'),
+  extensions: row('edge', 'domain', 'planned', 'EXT-X1: unmounted slot/declaration validation and provider-wide digest pins; EXTENSIONS_ENABLED required.'),
 });
 
 export const systemClock = Object.freeze({ now: () => Date.now() });

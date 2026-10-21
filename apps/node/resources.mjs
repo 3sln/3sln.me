@@ -1,3 +1,4 @@
+import {brokeringKeys,brokeringEnabled} from '../../packages/federation/signing.mjs';
 import {activePopulationPort} from '../../packages/runtime/active-population.mjs';
 import {configuredFormOrigins} from '../../packages/apps/form-fetch-policy.mjs';
 import {createNodeFormFetch} from '../../packages/apps/node-form-fetch.mjs';
@@ -17,6 +18,7 @@ import {metadataClientHost,clientSite} from '../../packages/federation/client-me
 import {digest} from '../../packages/messaging/store.mjs';
 import {ENTRY_SHARDS,entryShard,remoteShard} from '../../packages/federation/authorization-entries.mjs';
 import {AdminStorage} from '../../packages/identity/admin-store.mjs';
+import {MemoryLinkedLimits} from '../../packages/identity/linked-approval.mjs';
 import {lifecycleIdentityPort,lifecycleAdminHoldPort} from '../../packages/identity/lifecycle-tombstone.mjs';
 import {lifecycleMode} from '../../packages/runtime/lifecycle-runner.mjs';
 import {LifecycleSweep} from '../../packages/runtime/lifecycle-scheduler.mjs';
@@ -62,8 +64,10 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  await mkdir(directory,{recursive:true,mode:0o700});await mkdir(join(directory,'accounts'),{recursive:true,mode:0o700});await mkdir(join(directory,'abuse'),{recursive:true,mode:0o700});
  const catalogDb=new SqliteMetadata(join(directory,'plan-catalog.sqlite')),catalogRegistry=new PlanCatalogRegistry({metadata:catalogDb,config}),catalog=cachedCatalogPort(catalogRegistry);
  const identities=new SqliteMetadata(join(directory,'identities.sqlite'));const repository=new IdentityRepository({metadata:identities,config});identities.onAlarm=()=>repository.alarm();{const alarm=await identities.getAlarm();if(alarm)identities.arm(alarm);}
- const deviceDb=new SqliteMetadata(join(directory,'devices.sqlite'));const deviceRepo=new IdentityRepository({metadata:deviceDb});
+ const deviceDb=new SqliteMetadata(join(directory,'devices.sqlite'));const deviceRepo=new IdentityRepository({metadata:deviceDb});deviceDb.onAlarm=()=>deviceRepo.alarm();{const alarm=await deviceDb.getAlarm();if(alarm)deviceDb.arm(alarm);}
  const deviceRequests={create:r=>deviceRepo.createDevice(r),get:id=>deviceRepo.getDevice(id),findByUserCode:code=>deviceRepo.findDeviceByCode(code),compareAndSwap:(id,revision,r)=>deviceRepo.compareAndSwapDevice(id,revision,r)};
+ // Linked approval: `deviceRequests` is also the `linkedApprovals` repository; budgets use the durable abuse windows, poll intervals a non-durable limiter.
+ const linkedPollLimits=new MemoryLinkedLimits();let linkedLimits;
  const blobs=new FileBucket(join(directory,'blobs')),archives=new FileBucket(join(directory,'archives'));const accountMap=new Map(),guardMap=new Map();
  // Lifecycle ports exist only when LIFECYCLE_ENABLED. FileBucket has no storage classes, so cold tiering reports unsupported.
  let adminStore;const lifecycleConfig=lifecycleMode(config)==='off'?{}:{LIFECYCLE_IDENTITY:lifecycleIdentityPort(repository),LIFECYCLE_ADMIN_HOLD:owner=>lifecycleAdminHoldPort({store:adminStore,repository})(owner),LIFECYCLE_MAIL:mailer??null,LIFECYCLE_PUSH:createPushTransport(config),LIFECYCLE_COLD_STORAGE_SUPPORTED:false};
@@ -88,6 +92,7 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  // must give equivalent guarantees.
  const clientDirectory=federationClientDirectory(config,clientMetadataEnabled(config)?{fetch:typeof config.CLIENT_METADATA_FETCH==='function'?config.CLIENT_METADATA_FETCH:createNodeClientMetadataFetch(),limiter:abuse,blocked:host=>adminClientBlocked(adminStore,host)}:{});
  const federation=federationAuthority({config,repository,directory:clientDirectory,shard:owner=>{if(!federationMap.has(owner)){const metadata=new SqliteMetadata(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`));const implementation=new FederationController({...federationControllerOptions({config,repository,accounts,owner}),metadata:federationMetadata(metadata)});metadata.onAlarm=async()=>{const result=await implementation.cleanup();if(result.remaining)await metadata.setAlarm(result.nextAlarmAt);};metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});const controller=new Proxy(implementation,{get:(target,method)=>typeof target[method]==='function'?async(...args)=>{const result=await target[method](...args);if(!['ready','manifest','cleanup'].includes(method)&&!await metadata.getAlarm())await metadata.setAlarm(Date.now()+600000);return result;}:target[method]});federationMap.set(owner,{metadata,controller});}return federationMap.get(owner).controller;}});
+ const brokeringDb=brokeringEnabled(config)?new SqliteMetadata(join(directory,'federation','brokering-v1.sqlite')):null,brokering=brokeringDb?{enabled:true,...brokeringKeys({issuer:config.APP_ORIGIN,secret:config.KEY_ENCRYPTION_KEY,metadata:federationMetadata(brokeringDb)})}:undefined;
  // The pre-owner authorization-entry store, sharded by entry ID like the MCP stores (one SQLite file per shard, each
  // pruned by its own alarm); null unless FEDERATION_ENTRY_ENABLED. packages/runtime/http.mjs mounts the provider
  // session-ending hook, so end-session is offered.
@@ -109,5 +114,6 @@ export async function nodeResources({directory,config,formTransport,mailer}){
   lifecycleDb.onAlarm=()=>run('alarm');{const alarm=await lifecycleDb.getAlarm();if(alarm)lifecycleDb.arm(alarm);}
   lifecycleTimers=[setTimeout(()=>run('startup'),60000),setInterval(()=>run('cron'),6*3600000)];for(const timer of lifecycleTimers)timer.unref();
  }
- return {repository,deviceRequests,accounts,abuse,population,assets,mcp,federation,federationEntries:federationEntryStore,adminStore,catalog,close(){for(const timer of lifecycleTimers)clearTimeout(timer);lifecycleDb?.close();catalogDb.close();adminDb.close();for(const {db}of entryShards.values())db.close();identities.close();deviceDb.close();for(const {metadata}of accountMap.values())metadata.close();for(const {metadata}of guardMap.values())metadata.close();for(const {metadata}of mcpMap.values())metadata.close();for(const {metadata}of federationMap.values())metadata.close();}};
+ linkedLimits={consume:(key,window)=>abuse.consume('linked-v1:'+key,window)};
+ return {repository,deviceRequests,linkedLimits,linkedPollLimits,accounts,abuse,population,assets,mcp,federation,brokering,federationEntries:federationEntryStore,adminStore,catalog,close(){brokeringDb?.close();for(const timer of lifecycleTimers)clearTimeout(timer);lifecycleDb?.close();catalogDb.close();adminDb.close();for(const {db}of entryShards.values())db.close();identities.close();deviceDb.close();for(const {metadata}of accountMap.values())metadata.close();for(const {metadata}of guardMap.values())metadata.close();for(const {metadata}of mcpMap.values())metadata.close();for(const {metadata}of federationMap.values())metadata.close();}};
 }

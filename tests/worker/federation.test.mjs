@@ -44,3 +44,14 @@ test('actual Worker signed uploads share the unified activity cap, return Retry-
  const rows=await f.h.accounts.get(f.h.accounts.idFromName(f.owner)).rows(),meter=rows.find(([key])=>key==='storage-write/v1')[1];assert.equal(meter.foreground.used,3);const bucket=await f.h.mf.getR2Bucket('BLOBS'),objects=await bucket.list({prefix:'objects/'+f.owner+'/'});assert.equal(objects.objects.length,1);
  const read=(await f.json(await f.rpc(ref.token,ref.id,'get',{key:'one'}))).result;assert.equal(read.dataBase64,'eA==');assert.equal((await upload(second)).status,429);assert.equal((await bucket.list({prefix:'objects/'+f.owner+'/'})).objects.length,1);
 });
+
+test('actual Worker brokering keys are provider-wide, persistent and absent with the default-off flag',async t=>{
+ const clients=JSON.stringify([{id:clientId,name:'Broker fixture',origin:appOrigin,redirectUris:[redirectUri]}]);
+ for(const flag of ['false','true']){
+  const h=await createHarness({bindings:{FEDERATION_ENABLED:'true',FEDERATION_CLIENTS:clients,BROKERING_ENABLED:flag}});try{
+   const response=await h.request('/oauth/brokering/jwks');assert.equal(response.status,flag==='true'?200:404);const manifest=await(await h.request('/.well-known/bindle/manifest.json')).json();
+   if(flag==='false'){assert.equal(manifest.brokering_jwks_uri,undefined);continue;}
+   const jwks=await response.json();assert.equal(jwks.keys.length,8);assert.ok(jwks.keys.every(k=>!k.d));assert.equal(manifest.brokering_jwks_uri,h.origin+'/oauth/brokering/jwks');assert.deepEqual(await(await h.request('/oauth/brokering/jwks')).json(),jwks);
+  }finally{await h.close();}
+ }
+});
