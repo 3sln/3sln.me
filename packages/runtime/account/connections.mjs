@@ -23,10 +23,15 @@ import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {AppConnections} from '../../apps/connections.mjs';
 import {connectionsProvider,integrationsEnabled,CONNECTION_OPERATIONS,CONNECTION_OWNER_OPERATIONS,SlotOccupant,SeverAccountConnections,ConnectionCascades,ConnectionCascadeDone} from '../../app/domains/connections.mjs';
 import {StorageError} from '../../storage/policy.mjs';
+import {CLASSIFIER_INTEGRATION} from './classifier.mjs'; // EXT-X10 registry entry
+import {GOOGLE_DRIVE_INTEGRATION} from '../../storage/google-drive-integration.mjs'; // EXT-X10 registry entry
 
 export const CONNECTION_ENGINE_OPERATIONS=operations(...CONNECTION_OPERATIONS);
 // Provider-authored built-in integrations by id -> {name, manifest}; append-only (X10 adds Drive and the classifier).
-export const BUILT_IN_INTEGRATIONS=Object.freeze({});
+export const BUILT_IN_INTEGRATIONS=Object.freeze({
+ classifier:CLASSIFIER_INTEGRATION, // EXT-X10: offered only; never connected or assigned automatically
+ 'google-drive':GOOGLE_DRIVE_INTEGRATION, // EXT-X10: upstream connector remains unchanged
+});
 const engines=new WeakMap();
 function connectionsEngine(c){
  let engine=engines.get(c);
@@ -59,7 +64,7 @@ export const methods={
    if(!integrationsEnabled(this.config)||!Operation)throw new StorageError('not_found','Not found.',404);
    await this.warm(owner);await this.connectionsDrain(owner);
    const result=await run(this,Operation,{actor:{kind:'owner',owner,...Number.isSafeInteger(authTime)?{authTime}:{}},...id===undefined?{}:{id},...input===undefined?{}:{input:shape(input)}});
-   await this.connectionsDrain(owner);return result;
+   await this.connectionsDrain(owner);if(!(Operation.prototype instanceof AppQuery))await this.integrationEventsKick(owner);return result;
   },
   async connectionsSystem(owner,{operation,input}={}){
    const Operation=typeof operation==='string'&&Object.hasOwn(CONNECTION_ENGINE_OPERATIONS,operation)?CONNECTION_ENGINE_OPERATIONS[operation]:null;
@@ -67,7 +72,7 @@ export const methods={
    await this.warm(owner);
    const result=await run(this,Operation,{actor:{kind:'system',owner},...input===undefined?{}:{input:shape(input)}});
    if(!['connections.cascades','connections.cascade-done','connections.outbox','connections.occupant'].includes(operation))await this.connectionsDrain(owner);
-   return result;
+   if(!(Operation.prototype instanceof AppQuery))await this.integrationEventsKick(owner);return result;
   },
   // LINK_SLOT_OCCUPANT ({owner, slot}) -> {clientId, generation, cnx} | null (packages/links/engine.mjs).
   async linkSlotOccupant(query){const o=await exclusiveOccupant(this,query);return o&&{clientId:o.clientId,connection:o.connection,generation:o.generation,cnx:o.cnx};},
@@ -78,7 +83,7 @@ export const methods={
   async connectionsSeverAccount(owner,{reason='suspended'}={}){
    if(!integrationsEnabled(this.config)||!await bound(this,owner))return {severed:0};
    const result=await run(this,SeverAccountConnections,{actor:{kind:'system',owner},input:{reason}});
-   await this.connectionsDrain(owner);return result;
+   await this.connectionsDrain(owner);await this.integrationEventsKick(owner);return result;
   },
   // Applies pending cascade rows in order; stops at the first failure, which stays durable for the next call.
   async connectionsDrain(owner){

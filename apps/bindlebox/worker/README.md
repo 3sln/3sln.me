@@ -120,3 +120,54 @@ other workstreams' changes landed. Full `test:e2e`: 176 pass, 3 fail (`tests/e2e
 `tests/e2e/ui-adversarial.test.mjs` cases), 4 WebKit environment skips. B8 did not edit other workstreams' files
 to fix these failures. No commit, release, secret provisioning or deployment was performed; all Wrangler
 verification used `--dry-run`.
+
+## Wave 4 integration (2026-10-21, provisional)
+
+Both shells now mount the B9 dodo/ngin client at `/`, its bounded owner API at
+`/api/web/operation`, and an authenticated `/api/web/session` projection. Asset builds emit
+`.output/bindlebox-public`; the separate Worker binds that directory as `ASSETS`. The standalone
+shell accepts an existing ordinary app credential and keeps it in memory. An existing SDK host
+may instead dispatch the same-document `bindlebox-session` event with `{token:async()=>token}`.
+No cookie, JSON owner or demo actor authenticates the client.
+
+The new trusted service methods are:
+
+- `objectStorage({owner,method,args})`: dispatches the owner's consented `object-storage/v1`
+  resource, preserving absent/version conditions and bounded object bytes. It is used for
+  archive objects and encrypted staged message bodies.
+- `archiveKeys({owner,method,input})`: `current` returns `{kid,publicJwk}`; `unwrap` returns
+  one object's content key after authenticating the live occupant connection and verifying
+  its fresh proof; `attest` checks occupancy and proof for takeover. This service must retain
+  old encryption keys, log accesses and never return raw ECDH output or private keys.
+- `resolveContact({owner,id,principal,link})`: returns live directory-verified
+  `{principal:{issuer,subject,identityURI},keyId,ingress}` from the contact's identity and
+  messaging descriptor. The shell independently verifies the stored contact meta signature
+  with the resolved identity key and rejects a changed principal. Browsers select stored
+  contact IDs; they never provide trusted key or ingress tuples.
+
+`createMailbox` now composes the B6 archive provider. Configured storage and key-holder ports
+activate archive controls, checkpoint alarms (15 minutes) and reclamation. Failed checkpoints
+retain a one-minute durable retry. The existing default-off `BINDLEBOX_ENABLED` gate still
+controls every route and operation. These interfaces are implemented locally; no external
+adapter or production key holder has been configured or verified.
+
+Node's `localTestArchiveKeys:true` option (CLI `BINDLEBOX_LOCAL_TEST_KEY_HOLDER=1`) selects
+`createLocalTestKeyHolder` explicitly for disposable local development. It requires the
+current authorization connection, delegate key and fresh archive proof. Its identity encryption
+key lives only in this process: restarting loses access to those test archives. Production
+must supply the durable, connection-authenticated `archiveKeys` service described above; the
+local helper is never selected by Worker or by default.
+
+Archive imports persist an admission hold before archive reads and takeover. Link,
+conversation, return-control and public-intake ingress refuse custody until control rows commit;
+resumes retain the hold across failures. Old envelopes absent from the restored replay set are
+refused at the checkpoint boundary. Preserved envelopes and genesis proofs are reverified at
+historical signing time before any imported row commits; invalid signatures reject the import.
+Legacy and capability-redacted rows carry `imported.verified:false`. This does not validate every
+unsigned archived control-field schema; the previous occupant remains a trust boundary.
+
+Large BB-B2 bodies are split into AES-GCM ciphertext objects with random body keys and IVs.
+The body key remains only in mailbox metadata and the sealed archive. Owner body reads verify
+each part and the signed content digest. Raw plaintext is never staged in user storage.
+
+Reviewer ___ Date ___ Outcome ___. These integration choices remain provisional.

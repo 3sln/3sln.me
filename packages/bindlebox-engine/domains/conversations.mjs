@@ -1,3 +1,4 @@
+import {requireRestored} from '../store/restore.mjs';
 import {projectIncoming} from '../store/item-index.mjs';
 // BB-B4 conversations (spec §6, §7.1, §7.4, §8.2; architecture §7, §9.5, §16). Option A, provisional pending user
 // confirmation (DEVLOG 2026-10-20): a shared secret gate, independently signed author events, each owner's
@@ -238,7 +239,7 @@ async function submitOp(ctx,op){
   if(allowed.length)await send(allowed);
  }
  // The outbox now holds the delivery; secret parts and init envelopes (which embed the secret) leave this row (BB4-S2).
- await store.transaction(async tx=>{const cur=await tx.get(C.op(op.operationId));cur.submitted=true;if(cur.secret||cur.type==='conversation-init'){cur.secret=null;cur.prepared=null;}await tx.put(C.op(op.operationId),cur);});
+ await store.transaction(async tx=>{const cur=await tx.get(C.op(op.operationId));if(CONTENT_TYPES.has(op.type)&&prepared[0]){const ev=await tx.get(C.event(op.cid,op.eventId));await tx.put(C.event(op.cid,op.eventId),{...ev,envelope:prepared[0].envelope});}cur.submitted=true;if(cur.secret||cur.type==='conversation-init'){cur.secret=null;cur.prepared=null;}await tx.put(C.op(op.operationId),cur);});
  return {...opView(op),submitted:true};
 }
 
@@ -397,7 +398,7 @@ export class ConversationsCreate extends MailboxAction {
   const op=await store.transaction(async tx=>{
    const existing=await tx.get(C.op(operationId));if(existing)return existing;
    await projectRoom(tx,room,now);await tx.put(C.room(cid),room);await tx.put(C.secret(cid,epoch),Array.from(secret));
-   await tx.put(C.event(cid,genesisDigest),{eventId:genesisDigest,type:'genesis',author:{principal:principal(signer.author.principal),keyId:signer.author.keyId,jkt:signer.jkt},parents:[],previous:null,content,createdAt:now,receivedAt:now,own:true,revisions:[],retracted:null,quarantined:false});
+   await tx.put(C.event(cid,genesisDigest),{signedGenesis:genesis,eventId:genesisDigest,type:'genesis',author:{principal:principal(signer.author.principal),keyId:signer.author.keyId,jkt:signer.jkt},parents:[],previous:null,content,createdAt:now,receivedAt:now,own:true,revisions:[],retracted:null,quarantined:false});
    await tx.put(C.body(cid,genesisDigest),Array.from(body));
    for(const i of invitees){
     await tx.put(C.invite(cid,i.principal),{principal:i.principal,nonce:i.nonce,incarnation:i.incarnation,expiresAt,route:i.route,response:null});
@@ -471,7 +472,7 @@ export class ConversationsAccept extends MailboxAction {
    const room={id:cid,role:'invitee',state:'active',subject:g.subject,createdAt:g.createdAt,creator:{principal:creator,keyId:g.creator.keyId},participants:g.participants,genesisDigest,genesisEpoch:g.secretEpoch,secretDigest:g.secretDigest,acceptListed,epochs:{[g.secretEpoch]:{until:null,digest:g.secretDigest}},current:g.secretEpoch,maxParticipants:settings.maxParticipants,heads:[genesisDigest],lastOwn:null,placeholders:0,gap:false,awaitingSecret:false,itemId};
    await projectRoom(tx,room,now);await tx.put(C.room(cid),room);await tx.put(C.secret(cid,g.secretEpoch),Array.from(secret));
    const body=await tx.get(KEYS.body(itemId));
-   await tx.put(C.event(cid,genesisDigest),{eventId:genesisDigest,type:'genesis',author:{principal:creator,keyId:g.creator.keyId,jkt:P.jktOf(g.creator.delegate)},parents:[],previous:null,content:g.content,createdAt:g.createdAt,receivedAt:now,own:false,revisions:[],retracted:null,quarantined:false});
+   await tx.put(C.event(cid,genesisDigest),{signedGenesis:c.genesis,eventId:genesisDigest,type:'genesis',author:{principal:creator,keyId:g.creator.keyId,jkt:P.jktOf(g.creator.delegate)},parents:[],previous:null,content:g.content,createdAt:g.createdAt,receivedAt:now,own:false,revisions:[],retracted:null,quarantined:false});
    if(body)await tx.put(C.body(cid,genesisDigest),Array.from(body));
    await putPeer(tx,room,{principal:g.creator.principal,keyId:g.creator.keyId,state:'accepted',inbound,outbound:c.creatorBinding,ready:false,epoch:g.secretEpoch,generation:1,via:'invitation',acceptedAt:now},config,now);
    for(const x of g.participants)if(!same(x.principal,creator)&&!same(x.principal,config.principal))await putPeer(tx,room,{principal:x.principal,keyId:x.keyId,state:'listed',inbound:null,outbound:null,ready:true,generation:0,via:'genesis'},config,now);
@@ -487,6 +488,7 @@ export class ConversationsRespond extends MailboxAction {
  async run({conversations:h,directory,clock}){
   actorOwner(this.actor,['ingress']);const store=h.store,now=clock.now(),{token:t,body,contentType}=this.input??{};
   if(typeof t!=='string'||!(body instanceof Uint8Array)||!/^application\/json(?:\s*;\s*charset=(?:utf-8|"utf-8"))?$/i.test(contentType??''))protocol('malformed');
+  await requireRestored(store);
   const route=await store.get(C.route(t));if(!route)protocol('not_authorized');
   const v=await P.validateInvitationResponse(P.strictJSON(body,{maxBytes:P.LIMITS.maxInvitationResponseBytes}));
   const room=await store.get(C.room(route.cid)),invite=await store.get(C.invite(route.cid,route.principal));
@@ -498,7 +500,7 @@ export class ConversationsRespond extends MailboxAction {
   const verified=await P.verifyInvitationResponse(v,{invitation,resolveKey:ports.resolveKey,status:ports.status,now});
   const config=await readConfig(store);
   return store.transaction(async tx=>{
-   const inv=await tx.get(C.invite(room.id,route.principal));if(P.invitationDecision(inv.response,digest)==='replay')return inv.response.result;
+   await requireRestored(tx);const inv=await tx.get(C.invite(room.id,route.principal));if(P.invitationDecision(inv.response,digest)==='replay')return inv.response.result;
    const live=await tx.get(C.room(room.id));if(!live||live.state!=='active'||await tx.get(KEYS.block(route.principal)))protocol('not_authorized');
    const peer=await tx.get(C.peer(room.id,route.principal));let state='declined';
    if(verified.decision==='accept'){
@@ -518,7 +520,7 @@ export class ConversationsReceive extends MailboxAction {
  async run({conversations:h,directory,delegateKeys,clock}){
   actorOwner(this.actor,['ingress']);const store=h.store,now=clock.now(),config=await readConfig(store),settings=await settingsOf(store),me=config.principal;
   const {contentType,body,authorization,idempotencyKey,ingress}=this.input??{};
-  if(ingress!==config.ingress)protocol('ingress_moved');
+  await requireRestored(store);if(ingress!==config.ingress)protocol('ingress_moved');
   const credential=P.parseCredential(authorization),delivery=await P.parseDelivery(contentType,body,{idempotencyKey}),envelope=delivery.envelope,p=envelope.payload;
   if(p.kind!=='conversation-record')protocol('not_authorized');
   P.checkCredentialKind(envelope,credential);
@@ -527,6 +529,7 @@ export class ConversationsReceive extends MailboxAction {
   const early=await admitGate(store,gate);
   P.checkWindow(envelope,now);
   const replayId=await P.sha256(globalThis.crypto,P.replayKey(envelope)),prior=await store.get(C.replay(replayId));
+  await requireRestored(store,{envelope,replay:!!prior});
   // Owner-level pre-check only (no author identity yet, so it is not an oracle) before any crypto.
   if(!prior)chargeAllowance(await store.get(ALLOWANCE_KEY),{now,check:true});
   const learned=[],ports=verificationPorts({directory,store,now,learned});let verified;
@@ -538,7 +541,7 @@ export class ConversationsReceive extends MailboxAction {
   const signer=await receiptSnapshot(delegateKeys,config,settings,now);
   const receipt=await P.signReceipt(await P.receiptPayload(envelope,{recipient:me,ingress:config.ingress,receivedAt:now,bodyDigest:delivery.bodyDigest}),signer);
   return store.transaction(async tx=>{
-   const {room,peer,mode}=await admitGate(tx,gate);if(mode==='defer')protocol('recipient_unavailable',{retryAfter:30});
+   await requireRestored(tx,{envelope,replay:!!await tx.get(C.replay(replayId))});const {room,peer,mode}=await admitGate(tx,gate);if(mode==='defer')protocol('recipient_unavailable',{retryAfter:30});
    if(await tx.get(KEYS.revoked(a.jkt)))protocol('author_unverifiable',{revoked:true});
    const prior=await tx.get(C.replay(replayId)),outcome=P.replayDecision(prior,{payloadDigest:delivery.payloadDigest,eventId:verified.eventId});
    if(outcome==='replay')return {receipt:prior.receipt,replay:true};
@@ -556,7 +559,7 @@ export class ConversationsReceive extends MailboxAction {
    if(!front&&((await tx.list({prefix:C.frontiers(cid)})).size>=CONVERSATION_LIMITS.peers*4||(await tx.list({prefix:`conv/frontier/${cid}/${pk(author)}/`})).size>=8))protocol('rate_limited',{retryAfter:3600});
    // Every admitted record is charged (control records at zero bytes), so no record type grows rows without bound.
    await tx.put(ALLOWANCE_KEY,chargeAllowance(await tx.get(ALLOWANCE_KEY),{now,key:`${cid}|${pk(author)}`,bytes:delivery.body?.byteLength??0}));
-   const ev={eventId:verified.eventId,type:r.type,author:{principal:principal(a.principal),keyId:a.keyId,jkt:a.jkt},counter:r.counter,stream:r.stream,previous:r.previous,parents:r.parents,epoch:r.epoch,target:r.target??null,content:p.content,createdAt:p.createdAt,receivedAt:now,own:false,revisions:[],retracted:null,quarantined:false,continuation:!front&&r.counter===1&&r.previous!==null,...p.resendOf?{resendOf:p.resendOf}:{}};
+   const ev={envelope,eventId:verified.eventId,type:r.type,author:{principal:principal(a.principal),keyId:a.keyId,jkt:a.jkt},counter:r.counter,stream:r.stream,previous:r.previous,parents:r.parents,epoch:r.epoch,target:r.target??null,content:p.content,createdAt:p.createdAt,receivedAt:now,own:false,revisions:[],retracted:null,quarantined:false,continuation:!front&&r.counter===1&&r.previous!==null,...p.resendOf?{resendOf:p.resendOf}:{}};
    await tx.put(C.event(cid,ev.eventId),ev);if(delivery.body&&BODY_TYPES.has(r.type))await tx.put(C.body(cid,ev.eventId),Array.from(delivery.body));
    const args={room,peer,author,r,ev,verified,delivery,credential,mode,config,now};
    switch(r.type){
@@ -757,16 +760,18 @@ export class ConversationsSweep extends MailboxAction {
 // ---- Views. No secret, pair token, incarnation or credential is ever returned.
 const peerView=(p,room)=>({principal:principal(p.principal),state:p.state,via:p.via??null,ready:p.ready!==false,epoch:p.epoch??null,rotationDisagreement:p.state==='accepted'&&p.epoch!=null&&p.epoch!==room.current,limitsDiffer:Boolean(p.outbound?.limits&&p.outbound.limits.maxParticipants!==room.maxParticipants),awaitingHello:Boolean(p.awaitingHello),offered:p.state==='pending'||p.state==='proposed',proposedBy:p.proposedBy??null});
 const roomView=room=>({id:room.id,role:room.role,state:room.state,subject:room.subject,createdAt:room.createdAt,creator:principal(room.creator.principal),proposedParticipants:room.participants.map(x=>principal(x.principal)),rosterVerified:false,acceptListed:room.acceptListed,epoch:room.current,epochs:Object.keys(room.epochs).length,awaitingSecret:Boolean(room.awaitingSecret),secretConflict:Boolean(room.secretConflict),maxParticipants:room.maxParticipants,gap:Boolean(room.gap),placeholders:room.placeholders});
-async function timeline(store,room){
+async function timeline(store,room,{limit=40,offset}={}){
+ if(!Number.isSafeInteger(limit)||limit<1||limit>100||offset!==undefined&&(!Number.isSafeInteger(offset)||offset<0))invalid('Choose a timeline page.');
  const rows=[...(await store.list({prefix:C.events(room.id)})).values()],ids=orderEvents(rows),byId=new Map(rows.map(r=>[r.eventId,r])),pos=new Map(ids.map((id,i)=>[id,i]));
  const text=async id=>{const b=await store.get(C.body(room.id,id));return b?td.decode(Uint8Array.from(b)):null;},out=[];
- for(const id of ids){
-  const e=byId.get(id);if(!['message','genesis'].includes(e.type)||e.quarantined)continue;
+ const visible=ids.filter(id=>['message','genesis'].includes(byId.get(id).type)&&!byId.get(id).quarantined),start=offset??Math.floor(Math.max(0,visible.length-1)/limit)*limit;
+ for(const id of visible.slice(start,start+limit)){
+  const e=byId.get(id);
   const revisions=(e.revisions??[]).map(r=>byId.get(r)).filter(r=>r&&!r.quarantined).sort((a,b)=>pos.get(a.eventId)-pos.get(b.eventId));
   const deleted=(e.retractions??[]).some(id=>byId.get(id)&&!byId.get(id).quarantined);
-  out.push({eventId:id,type:e.type,author:principal(e.author.principal),own:e.own,createdAt:e.createdAt,text:deleted?null:await text((revisions.at(-1)??e).eventId),edited:revisions.length>0,deleted,deletedNote:deleted?(e.own?'Deleted for people whose apps accepted the deletion':'Deleted by the sender'):null,history:await Promise.all([e,...revisions].map(async r=>({eventId:r.eventId,text:await text(r.eventId)}))),...e.resendOf?{resent:true}:{}});
+  out.push({eventId:id,type:e.type,author:principal(e.author.principal),own:e.own,createdAt:e.createdAt,text:deleted?null:await text((revisions.at(-1)??e).eventId),edited:revisions.length>0,deleted,deletedNote:deleted?(e.own?'Deleted for people whose apps accepted the deletion':'Deleted by the sender'):null,historyTruncated:revisions.length>19,history:await Promise.all([e,...revisions].slice(-20).map(async r=>({eventId:r.eventId,text:await text(r.eventId)}))),...e.resendOf?{resent:true}:{}});
  }
- return {timeline:out,quarantined:rows.filter(r=>r.quarantined).length};
+ return {timeline:out,pagination:{offset:start,limit,total:visible.length,previous:start>0?Math.max(0,start-limit):null,next:start+limit<visible.length?start+limit:null},quarantined:rows.filter(r=>r.quarantined).length};
 }
 export class ConversationsList extends MailboxQuery {
  static operation='conversations.list';static deps=['conversations'];static refreshOn=['conversations-changed'];
@@ -778,7 +783,7 @@ export class ConversationsGet extends MailboxQuery {
   actorOwner(this.actor);const store=h.store,cid=cidOf(this.input?.conversationId),room=await store.get(C.room(cid));if(!room)fault('not_found','Conversation not found.',404);
   const peers=[...(await store.list({prefix:C.peers(cid)})).values()],rotations=[...(await store.list({prefix:C.rotations(cid)})).values()],pending=rotations.filter(r=>r.state==='pending');
   const streams=[...(await store.list({prefix:C.frontiers(cid)})).values()].filter(f=>f.quarantined).length,response=await store.get(C.response(cid));
-  return {...roomView(room),...await timeline(store,room),peers:peers.map(p=>peerView(p,room)),someCannotSeeEveryone:peers.some(p=>peerView(p,room).limitsDiffer),rotations:rotations.map(r=>({epoch:r.epoch,proposer:r.proposer,state:r.state,at:r.at})),rotationConflict:pending.length>1,quarantinedStreams:streams,invitationResponse:response?{state:response.state,attempts:response.attempts}:null};
+  return {...roomView(room),...await timeline(store,room,this.input),peers:peers.map(p=>peerView(p,room)),someCannotSeeEveryone:peers.some(p=>peerView(p,room).limitsDiffer),rotations:rotations.map(r=>({epoch:r.epoch,proposer:r.proposer,state:r.state,at:r.at})),rotationConflict:pending.length>1,quarantinedStreams:streams,invitationResponse:response?{state:response.state,attempts:response.attempts}:null};
  }
 }
 // Honest per-recipient status of one own event (architecture §9.4–§9.5): the outbox states over the frozen audience,

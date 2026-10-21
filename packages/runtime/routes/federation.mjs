@@ -204,7 +204,7 @@ async function embedShell(request,env,url){
  let ancestors=[];try{ancestors=[...new Set((client?.redirectUris??[]).map(uri=>new URL(uri).origin))].filter(origin=>(/^https:\/\/[A-Za-z0-9.:[\]-]+$/.test(origin)||env.LOCAL_DEVELOPMENT==='true'&&/^http:\/\/[A-Za-z0-9.:[\]-]+$/.test(origin)));}catch{ancestors=[];}
  // Plain-HTTP parents (tamperable on the network path) never frame islands outside local development (serving review S3).
  const built=ancestors.length?await embedShellBuild(env):null;
- const body=built?fillShell(built.template,shellConfig({issuer:env.APP_ORIGIN,clientId:client.id,origins:ancestors,build:built.build})):INERT_ISLAND;
+ const body=built?fillShell(built.template,shellConfig({issuer:env.APP_ORIGIN,clientId:client.id,origins:ancestors,build:built.build,incremental:env.INCREMENTAL_AUTHORIZATION?.mounted===true})):INERT_ISLAND;
  const policy=built?shellPolicy({issuer:env.APP_ORIGIN,ancestors,scripts:built.build.scripts}):`default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors ${ancestors.length?ancestors.join(' '):"'none'"}`;
  const tag='"'+[...new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(policy+'\0'+body)))].map(b=>b.toString(16).padStart(2,'0')).join('')+'"';
  const headers=new Headers({...embedHeaders,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':policy,'Cache-Control':built||!client?'private, max-age=300':'no-store',ETag:tag,'Origin-Agent-Cluster':'?1','Cross-Origin-Embedder-Policy':'require-corp','Cross-Origin-Resource-Policy':'cross-origin'});

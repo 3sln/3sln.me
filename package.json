@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:request": "node --test tests/browser/request-element-engine.mjs tests/browser/request-element-sdk.mjs && node --test tests/browser/request-element-browser.mjs",
     "test:consent": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/consent-engine.mjs tests/browser/consent-entry.mjs tests/browser/consent-provider.mjs && node --test tests/browser/consent-browser.mjs",
     "test:devices": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/devices-engine.mjs tests/browser/devices-notices.mjs && node --test tests/browser/devices-browser.mjs",
     "test:activity": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/activity-engine.mjs tests/browser/activity-contract.mjs && node --test tests/browser/activity-browser.mjs",
@@ -14,6 +15,7 @@
     "test:dom": "node --experimental-loader ./tests/browser/loader.mjs tests/browser/smoke.mjs",
     "dev:demo": "node apps/server/server.mjs",
     "engine": "node --no-warnings scripts/engine.mjs",
+    "test:bindlebox:web": "node --test tests/bindlebox/browser/client-engine.test.mjs tests/bindlebox/browser/client-browser.test.mjs",
     "test:bindlebox": "node --test tests/bindlebox/*.test.mjs",
     "build:assets": "node scripts/build-assets.mjs",
     "dev:worker": "npm run build:assets && wrangler dev --config wrangler.local.jsonc --port 8787",

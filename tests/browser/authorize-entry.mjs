@@ -220,3 +220,13 @@ test('anonymous cancel, framed documents and expired entries reveal nothing',asy
  const framed=harness({framed:true,routes:[]});await until(()=>framed.root.querySelector('main')?.dataset.phase==='framed');assert.deepEqual(framed.calls,[],'a framed document makes no request');assert.equal(framed.root.querySelectorAll('button').length,0);framed.page.dispose();
  const gone=harness({routes:[[`GET /api/oauth/entries/${entryId}`,()=>json({error:'invalid_request',message:'This sign-in expired. Start again from the application.'},400)]]});await until(()=>gone.root.querySelector('main')?.dataset.phase==='expired');assert.match(gone.root.textContent,/This sign-in has expired/);assert.equal(gone.calls.length,1);gone.page.dispose();
 });
+
+
+for(const intent of ['grant-more','configure'])test(`IA-4 ${intent}: the attested popup sends no claim and retains exact-origin callback fallback`,async()=>{
+ const state='s'.repeat(43),result={...intent==='grant-more'?{code:'ia1.'+'c'.repeat(43)}:{result:'configured'},state,iss:issuer},posts=[],nav=[],target=new EventTarget();
+ const opener={postMessage(data,origin){posts.push({data,origin});queueMicrotask(()=>{const event=new Event('message');Object.assign(event,{data:{v:1,type:'bindle-embed-ack',entry:entryId},source:opener,origin:embed});target.dispatchEvent(event);});}};
+ const browser={origin:issuer,win:Object.assign(target,{opener}),close:()=>nav.push('closed'),assign:href=>nav.push(href)},entry={intent,redirectUri:app+'/callback'},model={mode:'embed',entry,entryId},deps={model,secrets:{embedOrigin:embed},browser},ctx={engineFeed:new EventTarget()},action=new entryLogic.EntryAction('deliver');
+ await action.deliver(deps,ctx,result,'completed');assert.deepEqual(nav,['closed']);assert.deepEqual(posts,[{data:{v:1,type:'bindle-embed-done',entry:entryId,...result},origin:embed}]);
+ await assert.rejects(action.deliver(deps,ctx,{...result,claim:'k'.repeat(43)},'completed'),{code:'callback_mismatch'});
+ browser.win.opener=null;nav.length=0;await action.deliver(deps,ctx,result,'completed');const callback=new URL(nav[0]);assert.equal(callback.origin,app);assert.equal(callback.searchParams.get('state'),state);assert.equal(callback.searchParams.has('claim'),false);assert.equal(callback.searchParams.has(intent==='grant-more'?'result':'code'),false);
+});

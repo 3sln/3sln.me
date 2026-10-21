@@ -149,8 +149,12 @@ test('DOM click preserves popup activation and uses the existing callback relay'
 });
 test('incremental code and ngin stay outside the static first-render element bundle',async()=>{
  const result=await build({entryPoints:['packages/sdk/src/define.mjs'],bundle:true,write:false,format:'esm',splitting:true,outdir:'.output/ia-sdk-budget',metafile:true,logLevel:'silent'});
- assert.equal(Object.keys(result.metafile.inputs).some(path=>path.endsWith('/incremental.mjs')),false);
- assert.equal(Object.keys(result.metafile.inputs).some(path=>path.startsWith('vendor/ngin/')),false);
+ const outputs=result.metafile.outputs,entry=Object.keys(outputs).find(path=>outputs[path].entryPoint==='packages/sdk/src/define.mjs'),seen=new Set(),inputs=new Set();
+ function visit(path){assert(outputs[path],`Missing SDK output ${path}`);if(seen.has(path))return;seen.add(path);for(const input of Object.keys(outputs[path]?.inputs??{}))inputs.add(input);for(const link of outputs[path]?.imports??[])if(link.kind==='import-statement'&&!link.external)visit(link.path);}
+ visit(entry);assert(inputs.size>0);
+ assert.equal([...inputs].some(path=>path.endsWith('/incremental.mjs')),false);
+ assert.equal([...inputs].some(path=>path.startsWith('vendor/ngin/')),false);
+ assert(Object.keys(result.metafile.inputs).some(path=>path.endsWith('/incremental.mjs')),'standard registration retains the opt-in lazy engine');
 });
 test('DPoP outcome-only exchange retries one nonce challenge and releases its unused key',async()=>{
  const proofs=[];let tries=0;

@@ -1,0 +1,8 @@
+{
+ "id":"https://3sln.me/artefacts/slots/item-classifier/v1",
+ "title":"Item classifier",
+ "description":"Answers typed questions about an incoming item. Model evidence never authorizes an action.",
+ "publisher":"https://3sln.me",
+ "fields":{"occupants":{"title":"Classifiers","type":"resource","cardinality":{"min":0,"max":4},"contracts":["https://spec.bindle.example/contracts/decision-model/v1"]}},
+ "slot":{"v":1,"field":"occupants","selection":"ordered","failover":"pre-dispatch","consumers":["application","provider"],"options":{"occupant":{"label":{"type":"string","maxLength":64}},"consumer":{}}}
+}

@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {openStore,frameKey,thumbprint,saveCredential,listCredentials,readGeneration,deleteCredentials} from '../apps/embed/src/keys.mjs';
-import {embedAPI,createEntry,restoreAll,normalizeView} from '../apps/embed/src/restore.mjs';
+import {embedAPI,createEntry,createRequestEntry,restoreAll,normalizeView} from '../apps/embed/src/restore.mjs';
 import {createElection} from '../apps/embed/src/worker/leader.mjs';
 import {validateBus} from '../apps/embed/src/worker/bus.mjs';
 import {monogramPNG,transparentPNG,rasterKind,reencodeAvatar} from '../apps/embed/src/worker/avatar.mjs';
@@ -190,4 +190,15 @@ test('worker review fixes: forget during a bfcache resume is queued; unknown-sub
   assert.equal(events.find(e=>e.id===2)?.ok,true,'queued until the store reopened (IMPL-1)');
   assert.deepEqual((await listCredentials(store,{issuer,clientId})).map(r=>r.id),['k'.repeat(24)],'a subject-less record matches any subject-scoped forget (IMPL-2)');
   assert.equal(opened,2);await worker({op:'pagehide'});
+});
+
+
+test('IA-4 worker creates subject-constrained incremental entries with its frame key and no login binding',async t=>{
+ const subject=issuer+'/entities/owner',events=[],store=await openStore({indexedDB:undefined}),calls=[],fetch=async(url,init)=>{calls.push({url,...init,body:JSON.parse(init.body)});return Response.json({entryId:'e'.repeat(43)});},worker=createIslandWorker({post:m=>events.push(m),storeFactory:async()=>store,crypto:webcrypto,fetch,indexedDB:undefined,BroadcastChannel:undefined,locks:undefined});
+ t.after(()=>worker({op:'pagehide'}));await worker({id:1,op:'start',args:{config:{issuer,clientId,origin:embedOrigin},instance:'R'.repeat(22),role:'none'}});
+ for(const intent of ['grant-more','configure']){
+  const prepare={v:1,type:'prepare-request',intent,redirectUri,state:'s'.repeat(43),...intent==='grant-more'?{challenge:'c'.repeat(43),requests:[{fragment:'https://tasks.example/settings/v1',purpose:'Settings',fields:['day']}]}:{target:{fragment:'https://tasks.example/settings/v1',fields:['day']},suggestion:{values:{day:'monday'}}}};
+  await worker({id:2,op:'createRequestEntry',args:{prepare,subjectConstraint:subject}});assert.equal(events.at(-1).value,'e'.repeat(43));const call=calls.at(-1);assert.equal(call.url,issuer+'/api/oauth/entries');assert.equal(call.credentials,'omit');assert.equal(call.body.delivery,'embed-popup');assert.equal(call.body.subjectConstraint,subject);assert.equal(call.body.intent,intent);assert.equal(call.body.embedJkt,(await frameKey(store,{issuer,clientId,crypto:webcrypto})).jkt);assert.equal(call.body.v,undefined);assert.equal(call.body.type,undefined);assert.equal(call.body.challengeMethod,intent==='grant-more'?'S256':undefined);
+ }
+ assert.deepEqual(await listCredentials(store,{issuer,clientId}),[]);assert.equal(calls.length,2,'request worker starts no restore or election');
 });

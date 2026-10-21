@@ -93,6 +93,7 @@ export class BeginIncrementalAuthorization extends IncrementalAction {
   if(!io.enabled)throw coded('incremental-disabled');
   const {intent,presentation='redirect',signal,uiLocales,colorScheme}=this.input,input=validate(intent,this.input.request??{});
   if(!intents.includes(intent)||!['redirect','popup'].includes(presentation))throw coded('invalid_request');
+  if(this.input.prepareOnly===true&&presentation!=='popup')throw coded('invalid_request');
   const session=io.client.session;if(!session)throw coded('no-session');
   const epoch=state.generation,generation=io.client.generation,loginGeneration=io.client.loginGeneration,stopped=AbortSignal.any([dispatchSignal,...signal?[signal]:[]]),active=()=>{check(stopped);if(epoch!==state.generation||io.client.generation!==generation||io.client.loginGeneration!==loginGeneration||!same(io.client.session,{issuer:session.issuer,subjectConstraint:session.subject}))throw coded('canceled');};
   active();await io.client.discoverHost(new URL(session.issuer).host,{signal:stopped});active();
@@ -103,9 +104,12 @@ export class BeginIncrementalAuthorization extends IncrementalAction {
   // deliberately leaves that exchange unbound, as the ordinary SDK flow does.
   const key=intent==='grant-more'&&declared.base.dpop&&(presentation==='popup'||io.client.keyStore)?await createKey(io.crypto):null;
   const body={clientId,redirectUri:io.client.redirectUri,state:stateKey,intent,subjectConstraint:session.subject,presentation,...input,...challenge?{challenge,challengeMethod:'S256'}:{},...key?{dpopJkt:key.jkt}:{},...uiLocales?.length?{uiLocales}:{},...['light','dark'].includes(colorScheme)?{colorScheme}:{}};
-  const response=await io.client.fetcher(declared.entry.endpoint,{method:'POST',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(body),signal:AbortSignal.any([stopped,AbortSignal.timeout(15000)])}),json=await boundedJSON(response).catch(()=>null);active();
-  if(!response.ok)throw failure(response,json,io,session.issuer);
-  if(typeof json?.entryId!=='string'||! /^[A-Za-z0-9_-]{16,128}$/.test(json.entryId))throw coded('network-error');
+  // IA-4: preparation creates only local PKCE/state. The frame creates the entry after its own activation.
+  let json;if(this.input.prepareOnly!==true){
+   const response=await io.client.fetcher(declared.entry.endpoint,{method:'POST',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(body),signal:AbortSignal.any([stopped,AbortSignal.timeout(15000)])});json=await boundedJSON(response).catch(()=>null);active();
+   if(!response.ok)throw failure(response,json,io,session.issuer);
+   if(typeof json?.entryId!=='string'||! /^[A-Za-z0-9_-]{16,128}$/.test(json.entryId))throw coded('network-error');
+  }
   const record={...body,...verifier?{verifier}:{},issuer:session.issuer,tokenEndpoint:declared.manifest.token_endpoint,rpcEndpoint:declared.manifest.rpc_endpoint,preferencesContract:declared.manifest.preferences_contract,revocationEndpoint:declared.manifest.revocation_endpoint,expiresAt:io.clock()+600000,previousGrants:state.grants.get(grantKey(io.client))??session.granted_fragments??[],sessionDeadline:session.refreshExpiresAt??session.expiresAt,authTime:session.auth_time,loginGeneration};
   try{
    if(key){io.client.dpopKeys.set(key.jkt,key);if(presentation==='redirect')await io.client.keyStore.put(`${io.client.storageKey}:${key.jkt}`,key);}
@@ -116,6 +120,7 @@ export class BeginIncrementalAuthorization extends IncrementalAction {
    if(presentation==='redirect'){try{io.client.storage.setItem(recordKey(io,stateKey),JSON.stringify(record));}catch{throw coded('storage-unavailable');}}
   }catch(error){discard(state,io,stateKey,record);throw error;}
   state.pending.set(stateKey,record);state.result=null;
+  if(this.input.prepareOnly===true)return {issuer:session.issuer,state:stateKey,prepare:{v:1,type:'prepare-request',intent,redirectUri:body.redirectUri,state:stateKey,...input,...challenge?{challenge}:{},...key?{dpopJkt:key.jkt}:{},...uiLocales?.length?{uiLocales}:{},...body.colorScheme?{colorScheme:body.colorScheme}:{}}};
   const authorization=new URL(declared.manifest.authorization_endpoint);authorization.searchParams.set('entry',json.entryId);
   return {issuer:session.issuer,state:stateKey,authorizationUrl:authorization.href};
  }

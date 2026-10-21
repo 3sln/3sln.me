@@ -28,8 +28,11 @@ import * as identity from './identity.mjs';
 import * as links from './links.mjs';
 import * as connections from './connections.mjs';
 import * as events from './events.mjs';
+import {account as integrations} from '../routes/integrations.mjs';
+import * as integrationEvents from '../integration-events.mjs';
+import * as classifier from './classifier.mjs';
 
-export const ACCOUNT_SLICES=Object.freeze({views,messages,contacts,delivery,conversations,storage,billing,search,lifecycle,notifications,beams,automation,identity,links,connections,events});
+export const ACCOUNT_SLICES=Object.freeze({views,messages,contacts,delivery,conversations,storage,billing,search,lifecycle,notifications,beams,automation,identity,links,connections,events,integrations,integrationEvents,classifier});
 
 /** Installs every slice's methods; a name defined twice (by two slices, or by a slice and the core) is a programming error. */
 export function installAccountMethods(prototype,slices=ACCOUNT_SLICES){

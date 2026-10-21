@@ -15,6 +15,7 @@ export class MailboxPing extends MailboxAction {
 export const MAILBOX_OPERATIONS=operations(MailboxPing,...CONVERSATION_OPERATIONS,...CONTACT_OPERATIONS,...RECEIVE_OPERATIONS,...INTAKE_OPERATIONS,...DELEGATION_OPERATIONS,...SEND_OPERATIONS,...OUTBOX_OPERATIONS,...EVENT_OPERATIONS,
  ...VIEW_OPERATIONS,...RULE_OPERATIONS,...TAG_OPERATIONS,...CLASSIFY_OPERATIONS, // BB-B5
  ...BRIDGE_OPERATIONS, // BB-B7
+ ...ARCHIVE_OPERATIONS, // BB-B6
 );
 
 // BB-B5 append-only domain registration.
@@ -25,3 +26,6 @@ import {CLASSIFY_OPERATIONS} from './domains/classify.mjs';
 
 // BB-B7 append-only domain registration.
 import {BRIDGE_OPERATIONS} from './domains/bridge.mjs';
+
+// BB-B6 append-only domain registration.
+import {ARCHIVE_OPERATIONS} from './domains/archive.mjs';

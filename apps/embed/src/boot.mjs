@@ -18,6 +18,7 @@ import {createFlows} from './parts/flow.mjs';
 import {avatarPart} from './parts/avatar.mjs';
 import {accountSwitcherPart} from './parts/account-switcher.mjs';
 import {signInPart} from './parts/sign-in.mjs';
+import {requestPart} from './parts/request.mjs';
 
 const origin=value=>{try{return new URL(value).origin===value&&value.startsWith('https://')?value:null;}catch{return null;}};
 /** The non-executable per-client config block. Anything unexpected makes the island inert. */
@@ -54,15 +55,15 @@ export function bootIsland({win=globalThis.window,doc=globalThis.document}={}){
     const instance=btoa(String.fromCharCode(...win.crypto.getRandomValues(new Uint8Array(16)))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
     const client=createWorkerClient(new win.Worker(policy.scriptURL(config.worker),{type:'module',name:'bindle-island'}));
     client.on(event=>{if(event.event==='views'){model.views=event.views;changed();}else if(event.event==='sessions')held=Array.isArray(event.tokens)?event.tokens.filter(token=>typeof token==='string'&&/^[\x21-\x7e]{1,512}$/.test(token)).slice(0,8):[];});
-    await client.call('start',{config:{issuer:config.issuer,clientId:config.clientId,origin:embedOrigin},instance,role:part==='sign-in'?'none':'member',bucket:model.bucket,scheme:model.scheme,visible:doc.visibilityState!=='hidden'});
+    await client.call('start',{config:{issuer:config.issuer,clientId:config.clientId,origin:embedOrigin},instance,role:['sign-in','request'].includes(part)?'none':'member',bucket:model.bucket,scheme:model.scheme,visible:doc.visibilityState!=='hidden'});
     if(deferredForget){await client.call('forget',deferredForget).catch(()=>{});deferredForget=null;}
     services.client=client;return client;
   })();
   // ngin engine: one model, one view query, actions for inbound state and forget.
   class IslandView extends Query{static deps=['model'];boot({model:m},{notify,engineFeed}){this.feed=engineFeed;this.on=()=>notify({...m});engineFeed.addEventListener('island-changed',this.on);this.on();}kill(){this.feed.removeEventListener('island-changed',this.on);}}
   class ApplyState extends Action{static deps=['model'];constructor(message){super();this.message=message;}async execute({model:m},{engineFeed}){applyState(m,this.message);engineFeed.dispatchEvent(new Event('island-changed'));}}
-  // P10: a sign-in island touches no storage before activation, so it defers forget until its worker exists.
-  class Forget extends Action{static deps=['model'];constructor(message){super();this.message=message;}async execute(){const args=this.message.subject!==undefined?{subject:this.message.subject}:{};if(part==='sign-in'&&!pendingClient){deferredForget=!deferredForget||deferredForget.subject!==undefined&&deferredForget.subject===args.subject?args:{};return;}try{await(await worker()).call('forget',args);}catch{}}}
+  // Sign-in and request controls touch no storage before activation, so forget waits for their worker.
+  class Forget extends Action{static deps=['model'];constructor(message){super();this.message=message;}async execute(){const args=this.message.subject!==undefined?{subject:this.message.subject}:{};if(['sign-in','request'].includes(part)&&!pendingClient){deferredForget=!deferredForget||deferredForget.subject!==undefined&&deferredForget.subject===args.subject?args:{};return;}try{await(await worker()).call('forget',args);}catch{}}}
   const engine=new Engine({providers:{model:Provider.fromSingleton(model)}});
   const changed=()=>engine.feed.dispatchEvent(new Event('island-changed'));
   let ticket=0;
@@ -79,18 +80,20 @@ export function bootIsland({win=globalThis.window,doc=globalThis.document}={}){
   const arming=createArming({win,doc,onChange:armed=>{model.armed=armed;paint();}});
   const openProvider=()=>{try{win.open(config.manage,'_blank','noopener,noreferrer');}catch{}};
   const startFlow=createFlows({model,send,worker,issuer:config.issuer,clientId:config.clientId,fedcm:config.fedcm,win,doc,refresh:changed});
-  const context={model,t:(s,v)=>l10n.t(s,v),host,arming,worker,send,swap,nextTicket,startFlow,openProvider,refresh:changed,doc,win};
-  const view=part==='avatar'?avatarPart(context):part==='sign-in'?signInPart(context):accountSwitcherPart(context);
+  const context={model,issuer:config.issuer,enabled:part==='request'&&config.parts.includes('request'),t:(s,v)=>l10n.t(s,v),host,arming,worker,send,swap,nextTicket,startFlow,openProvider,refresh:changed,doc,win};
+  const view=part==='avatar'?avatarPart(context):part==='sign-in'?signInPart(context):part==='request'?requestPart(context):accountSwitcherPart(context);
   function applyState(m,message){
     switch(message.type){
       case 'theme':if(message.seq>=(m.themeSeq??-1)){m.themeSeq=message.seq;m.tokenInput=message.tokens;m.tokens=theme.apply(message.tokens,m.scheme);}break;
-      case 'props':if(message.props.seq>=(m.propsSeq??-1)){m.propsSeq=message.props.seq;const {seq,...props}=message.props;m.props=props;}break;
+      case 'props':if(message.props.seq>=(m.propsSeq??-1)){m.propsSeq=message.props.seq;const {seq,...props}=message.props;if(part==='request'&&m.props.kind!==props.kind){m.requestAbort?.abort();m.requestPrepare=null;}m.props=props;}break;
       case 'locale':l10n=createIslandLocalization(message.lang);paint();break;
       case 'scheme':m.scheme=message.colorScheme;m.tokens=theme.apply(m.tokenInput??{},m.scheme);paint();services.client?.notify('scheme',m.scheme);view.update();break;
-      case 'session':m.subject=message.subject;view.update();break;
+      case 'session':if(part==='request'){view.apply(message);break;}m.subject=message.subject;view.update();break;
+      case 'prepare-request':if(part==='request')view.apply(message);break;
       case 'prepare':{const {type,...inputs}=message;m.prepare=inputs;break;}
     }
   }
+  view.engine?.feed.addEventListener('request-changed',changed);
   engine.query(new IslandView()).subscribe(()=>{reconcile(root,[view.view(model)]);});
   function onInit(event){
     if(event.source!==win.parent||!config.origins.includes(event.origin)||event.ports?.length!==1)return;
@@ -102,7 +105,7 @@ export function bootIsland({win=globalThis.window,doc=globalThis.document}={}){
     services.channel=createChannel(event.ports[0],{part,version,issuer:config.issuer,origins:config.origins,onState:message=>engine.dispatch(new ApplyState(message)),onForget:message=>engine.dispatch(new Forget(message))});
     // `ready` precedes any storage access, leader election or credentialed request, and is identical in every state.
     services.channel.send(readyMessage({part,version,issuer:config.issuer}));model.live=true;changed();
-    if(part!=='sign-in'){view.start();registerServiceWorker();}
+    if(!['sign-in','request'].includes(part)){view.start();registerServiceWorker();}
   }
   function registerServiceWorker(){if(!config.sw||!win.navigator.serviceWorker)return;try{win.navigator.serviceWorker.register(policy.scriptURL(config.sw),{scope:'/embed'}).catch(()=>{});}catch{}}
   win.addEventListener('message',onInit);

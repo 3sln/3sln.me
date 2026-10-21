@@ -18,6 +18,7 @@ import {createManifestDeclarationProvider,ManifestDeclarations,withManifestDecla
 import {ClientDirectory,CLIENT_METADATA_FEATURE,clientSite} from '../federation/client-metadata.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
 import {MESSAGING_ADDRESS_DECLARATION,LINKS_CONTRACT} from '../links/types.mjs';
+import {ITEM_CLASSIFIER_MANIFEST} from '../apps/connections.mjs';
 
 export const messagingAddressMounted=config=>config.BINDLEBOX_ENABLED==='true'&&config.INTEGRATIONS_ENABLED==='true'&&typeof config.MESSAGING_DESCRIBE==='function';
 export const BROKERING_STORE='bindle-brokering-v1';
@@ -33,7 +34,7 @@ export const FEDERATION_LAYOUT='bindle-federation-v1';
 export const MANIFEST_DECLARATIONS=Object.freeze([
  {flag:'CLIENT_METADATA_ENABLED',mounted:c=>c.target==='authority'&&c.directory?.enabled===true,declare:()=>({features:{[CLIENT_METADATA_FEATURE]:{}}})},
  {flag:'FEDERATION_ENTRY_ENABLED',mounted:c=>c.target==='entries'&&!!c.entries,declare:c=>entryManifest(c.issuer,{intents:c.entries.intents()})},
- {flag:'FEDERATION_ENTRY_ENABLED',mounted:c=>c.target==='entries'&&c.components===true&&!!c.entries?.embedOrigin&&c.entries.dpop===true,declare:c=>componentsDeclaration(componentsProfile(c.config))},
+ {flag:'FEDERATION_ENTRY_ENABLED',mounted:c=>c.target==='entries'&&c.components===true&&!!c.entries?.embedOrigin&&c.entries.dpop===true,declare:c=>componentsDeclaration(componentsProfile(c.config),{incremental:c.entries?.incremental?.mounted===true})},
  // LA3: RFC 8628 members plus the feature, only where the adapter mounted the device endpoint, the device_code token
  // branch, DPoP RPC and cancellation (runtime/device-grant.mjs). DPoP algorithms and revocation_endpoint are already
  // base authority members whenever that mount is possible.
@@ -52,6 +53,13 @@ export function federationEntryManifest(config,entries,{components=false,mounts=
 const routed=/^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.[A-Za-z0-9_-]{43}$/;
 const fail=(code,message)=>{throw Object.assign(new Error(message),{code});};
 export function federationConfig(value,fallback){if(value===undefined||value==='')return structuredClone(fallback);return typeof value==='string'?JSON.parse(value):structuredClone(value);}
+/** X10's recognized immutable slot joins reviewed fragments only while its implementation is enabled. */
+export function federationSchemas(config){
+ const schemas=federationConfig(config.FEDERATION_SCHEMAS,{});
+ if(!schemas||Array.isArray(schemas)||typeof schemas!=='object'||Object.keys(schemas).length>100)throw new TypeError('Invalid reviewed fragment registry.');
+ if([true,'true'].includes(config.INTEGRATIONS_ENABLED)&&[true,'true'].includes(config.EXTENSIONS_ENABLED))schemas[ITEM_CLASSIFIER_MANIFEST.id]=structuredClone(ITEM_CLASSIFIER_MANIFEST);
+ return schemas;
+}
 export function federationClients(config){const clients=federationConfig(config.FEDERATION_CLIENTS,[]);if(!Array.isArray(clients)||clients.length>100)throw new TypeError('At most 100 reviewed federation clients can be configured.');for(const client of clients){if(typeof client?.id!=='string'||client.id.length>200||typeof client.name!=='string'||!client.name.trim()||client.name.length>100)throw new TypeError('Reviewed clients require a URL ID of at most 200 characters and name of at most 100 characters.');}return clients;}
 /** `client-id-metadata.v1` is opt-in (CLIENT_METADATA_ENABLED=true, default false) and is declared only where an
  * SSRF-safe egress port is injected as well (docs/spec/federation-implementation.md). */
@@ -74,7 +82,7 @@ export const sessionAuthTime=session=>Math.max((session?.source??'credential')==
  * state has no fleet-wide lock; routing identifiers never grant authority. */
 export function federationControllerOptions({config,repository,accounts,owner,manifestMounts={},incremental}){
  if(!UUID.test(owner))throw new TypeError('A stable UUID identity is required.');
- const issuer=config.APP_ORIGIN,subject=`${issuer}/entities/${owner}`,schemas=federationConfig(config.FEDERATION_SCHEMAS,{});
+ const issuer=config.APP_ORIGIN,subject=`${issuer}/entities/${owner}`,schemas=federationSchemas(config);
  if(!schemas||Array.isArray(schemas)||typeof schemas!=='object'||Object.keys(schemas).length>100)throw new TypeError('Invalid reviewed fragment registry.');
  const identity=new IdentityService({repository,crypto,turnstile:{verify:unsupported},rateLimiter:{check:unsupported},webauthn:{verifyRegistration:unsupported,verifyAuthentication:unsupported},passwordHasher:{hash:unsupported,verify:unsupported},config:{origin:issuer,rpID:config.RP_ID??new URL(issuer).hostname,termsVersion:config.TERMS_VERSION??'2026-10-11',allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true'}});
  const account=federationAccount(accounts,owner);
@@ -95,6 +103,7 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
    if(!current||current.status!=='active')fail('unauthorized','Application authorization is no longer active.');
    if(config.ACTIVITY_V2_ENABLED==='true')descriptors.push({id:`${subject}/activity`,label:'Activity from this app',provider:'bindle',contracts:{[ACTIVITY_CONTRACT]:ACTIVITY_METHODS},generation:owner,limits:{maxRequestBytes:16384,maxResultBytes:1024,txRetentionSeconds:86400}});
    if(config.EVENT_BUSES_ENABLED==='true')descriptors.push(...await account.eventBusDescriptors(owner));
+   if([true,'true'].includes(config.INTEGRATIONS_ENABLED)&&[true,'true'].includes(config.EXTENSIONS_ENABLED))descriptors.push(...await account.classifierDescriptors(owner));
    if(config.BINDLEBOX_ENABLED==='true')descriptors.push({id:`${subject}/links`,label:'Contact links',provider:'bindle',contracts:{[LINKS_CONTRACT]:['issue','revoke','rotate','evaluate','list','changes']},generation:owner});
    descriptors.push({id:`${subject}/app-messages`,label:'Messages from this app',provider:'bindle',contracts:{[APP_NOTIFICATIONS]:['createOwn']},generation:owner,limits:{maxRequestBytes:16384,maxResultBytes:1024,txRetentionSeconds:86400}});descriptors.push({id:`${subject}/profile`,label:'Identity profile',provider:'identity',alias:'@profile',contracts:{[PROFILE]:['read']},generation:owner,preview:{entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null}});return descriptors;
   },
@@ -108,7 +117,7 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
  * session-ending hook (packages/runtime/http.mjs), which is what lets the store accept and advertise end-session. */
 export function federationEntries({config,store,shard,authority,endSession=false,clock,directory,manifestMounts={},incremental}){
  if(config.FEDERATION_ENTRY_ENABLED!=='true')return null;
- const schemas=federationConfig(config.FEDERATION_SCHEMAS,{});
+ const schemas=federationSchemas(config);
  const entries=new AuthorizationEntries({store,shard,issuer:config.APP_ORIGIN,clients:federationClients(config),authority,...directory?{directory}:{},clientMetadata:clientMetadataEnabled(config),embedOrigin:componentsProfile(config)?.embedOrigin,dpop:!!federationDpopSecret(config),...clock?{clock}:{},pinSchema:async url=>{if(!Object.hasOwn(schemas,url))fail('untrusted_schema_host','This fragment has not been registered with this provider.');return {digest:await digest(crypto,canonical(schemas[url]))};},endSession:endSession===true,incremental});
  entries.manifest=options=>federationEntryManifest(config,entries,{...options,mounts:manifestMounts});return entries;
 }
@@ -121,7 +130,7 @@ export const ENTRY_METHODS=['admit','admitHost','create','view','documentPolicy'
  * the same records. `endSession` mirrors the adapter's session-ending hook. */
 export function federationEntriesRemote({config,invoke,endSession=false,directory,manifestMounts={},incremental}){
  if(config.FEDERATION_ENTRY_ENABLED!=='true')return null;
- const facade={issuer:config.APP_ORIGIN,clients:new Map(federationClients(config).map(client=>[client.id,client])),directory,clientMetadata:!!directory?.enabled,embedOrigin:componentsProfile(config)?.embedOrigin,dpop:!!federationDpopSecret(config),intents:()=>[...ENTRY_INTENTS.filter(intent=>intent!=='end-session'||endSession===true),...incremental?.mounted===true?['grant-more','configure']:[]],manifest:options=>federationEntryManifest(config,facade,{...options,mounts:manifestMounts})};
+ const facade={incremental,issuer:config.APP_ORIGIN,clients:new Map(federationClients(config).map(client=>[client.id,client])),directory,clientMetadata:!!directory?.enabled,embedOrigin:componentsProfile(config)?.embedOrigin,dpop:!!federationDpopSecret(config),intents:()=>[...ENTRY_INTENTS.filter(intent=>intent!=='end-session'||endSession===true),...incremental?.mounted===true?['grant-more','configure']:[]],manifest:options=>federationEntryManifest(config,facade,{...options,mounts:manifestMounts})};
  const call=async(shard,method,args)=>{const envelope=await invoke(shard,method,args);if(!envelope.ok)throw Object.assign(new Error(envelope.error.message),envelope.error);return envelope.result;};
  facade.admit=async input=>call(await remoteShard(crypto,input?.remote),'admit',[input]);
  facade.create=async(input,context={})=>{

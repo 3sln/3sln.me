@@ -4,6 +4,7 @@ import {OBLIGATION_STATES} from '../../../packages/bindlebox-protocol/index.mjs'
 // its lease and its recovery alarm durable. Keep renewal and queue wakeups on the DO's single alarm.
 export async function nextWake(tx,now){
  const due=[];for(const task of (await tx.list({prefix:'bb:send:task/'})).values()){if(!OBLIGATION_STATES[task.state]?.final)due.push(Math.max(now+1,task.nextAttemptAt??now,task.lease?.until??0));const cleanup=taskCleanupAt(task);if(cleanup!==null)due.push(Math.max(now+1,cleanup));}
+ if(await tx.get('shell:archive-enabled')&&(await tx.get('shell:authorization'))?.active&&!(await tx.get('archive/hold'))){const state=await tx.get('archive/state');if(!state?.fenced)due.push(Math.max(now+1,await tx.get('shell:archive-retry')??0,(state?.lastCheckpointAt??await tx.get('shell:archive-started')??now)+15*60000));}
  const renewal=await tx.get('shell:renewal');if(renewal?.at)due.push(Math.max(now+1,renewal.at));
  if((await tx.list({prefix:'edge-outbox/'})).size||(await tx.list({prefix:'conv-edge-outbox/'})).size)due.push(now+60000);
  if((await tx.get('shell:authorization'))?.active){

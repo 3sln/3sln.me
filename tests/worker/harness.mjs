@@ -19,6 +19,7 @@ export class TestDirectory extends IdentityDirectory {
   async passwordVector(password, encoded){const hasher=createWorkerArgon2Hasher();return {match:await hasher.verify(password,encoded),wrong:await hasher.verify(password+'wrong',encoded)};}
 }
 export class TestAccount extends AccountObject {
+  async wave4Composition({mint,event}={}){const c=this.controller.config;return {ports:{event:typeof c.INTEGRATION_EVENT_PORTS?.signer?.sign==='function',egress:typeof c.INTEGRATION_EVENT_PORTS?.egress?.send==='function',snapshot:c.INTEGRATION_EVENT_PORTS?.snapshot?.available===false,mint:typeof c.BROKERING_MINT==='function',discovery:typeof c.INTEGRATION_EGRESS?.send==='function',describe:typeof c.MESSAGING_DESCRIBE==='function',grant:typeof c.INTEGRATION_EVENT_PORTS?.doorbellGrant==='function'},...mint?{mint:await c.BROKERING_MINT(mint)}:{},...event?{event:await c.INTEGRATION_EVENT_PORTS.signer.sign('event',event)}:{}};}
   async seed(owner, records){await this.warm(owner);for(const [key,value]of records)await this.ctx.storage.put(key,value);}
   async rows(){return [...await this.ctx.storage.list()];}
   async blobReadCounter(){this.blobReads=0;const original=this.originalBlobGet??=this.controller.blobs.get.bind(this.controller.blobs);this.controller.blobs.get=(...args)=>{this.blobReads++;return original(...args);};}

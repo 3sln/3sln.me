@@ -40,12 +40,12 @@
    "digest": "sha256-zjvZ9Xfi0N0aCdYy571oXgxAWmHskfzKyogww3iTU2g"
   },
   {
-   "slot": "https://spec.bindle.example/slots/item-classifier/v1",
+   "slot": "https://3sln.me/artefacts/slots/item-classifier/v1",
    "role": "consumer",
    "ref": "triage",
    "purpose": "Sort incoming messages.",
    "required": false,
-   "digest": "sha256--Ox--Hr1Oc6aoOKqZdz1_XqZwtNuDIeY1Z3toHuUpZY"
+   "digest": "sha256-uiak-vi3aGLmCqkl4Q8FF22mnEr2lWRtxEXSXmvySiY"
   }
  ]
 }

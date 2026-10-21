@@ -13,7 +13,7 @@ import {json,body} from './shared.mjs';
 
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const only=(request,...methods)=>methods.includes(request.method)?null:json({error:'method_not_allowed',message:'This operation does not support that request method.'},405,{Allow:methods.join(', ')});
-const ACTIONS={purge:['POST','events.purge'],retention:['PUT','events.retention'],history:['PUT','events.history'],features:['PUT','events.feature']};
+const ACTIONS={purge:['POST','events.purge'],retention:['PUT','events.retention'],history:['PUT','events.history'],features:['PUT','events.feature'],push:['PUT','events.push'],subscriptions:['GET','events.subscriptions']};
 
 export const stages={
  async owner({request,env,path,object,id}){
@@ -31,6 +31,6 @@ export const stages={
   if(action===undefined){const refused=only(request,'GET','DELETE');if(refused)return refused;return json(await call(request.method==='GET'?'events.bus':'events.delete',{id:bus}));}
   if(!Object.hasOwn(ACTIONS,action))return;
   const [method,operation]=ACTIONS[action],refused=only(request,method);if(refused)return refused;
-  await admit();const input=await body(request,4096);return json(await call(operation,{id:bus,input}));
+  await admit();const input=request.method==='GET'?undefined:await body(request,4096);return json(await call(operation,{id:bus,input}));
  },
 };

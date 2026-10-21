@@ -235,6 +235,14 @@ export class EntryAction extends Action {
  async deliver(deps,ctx,result,outcome){
   const {model,secrets,browser}=deps,entry=model.entry,issuer=browser.origin;
   if(model.mode==='embed'){
+   if(INCREMENTAL_INTENTS.includes(entry.intent)){
+    if(!exactKeys(result,[entry.intent==='grant-more'?'code':'result','state','iss'])||typeof result.state!=='string'||!/^[A-Za-z0-9._~-]{16,512}$/.test(result.state)||result.iss!==issuer||entry.intent==='grant-more'&&(!CODE.test(result.code??'')||typeof result.code!=='string')||entry.intent==='configure'&&!['configured','unchanged'].includes(result.result)||result.claim!==undefined)fail('callback_mismatch','The callback origin does not match this application.');
+    phase(model,'returning');model.outcome=outcome;changed(ctx);
+    if(await deliverToOpener({win:browser.win,embedOrigin:secrets.embedOrigin,entryId:model.entryId,result})){phase(model,'closed');changed(ctx);browser.close();return;}
+    try{browser.win.opener=null;}catch{}
+    const fallback=new URL(entry.redirectUri);for(const [k,v] of Object.entries({...entry.intent==='grant-more'?{code:result.code}:{result:result.result},state:result.state,iss:result.iss}))fallback.searchParams.set(k,v);
+    browser.assign(callbackTarget(fallback.href,entry.redirectUri,issuer,entry.intent==='grant-more'?['code','state','iss']:['result','state','iss']).href);return;
+   }
    if(typeof result.code==='string'){
     if(!CODE.test(result.code)||typeof result.claim!=='string'||!CLAIM.test(result.claim)||result.iss!==issuer||typeof result.state!=='string')fail('callback_mismatch','The callback origin does not match this application.');
     phase(model,'returning');model.outcome=outcome;changed(ctx);

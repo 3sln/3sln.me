@@ -16,11 +16,12 @@ export const PARTS=freeze({
   avatar:{versions:[1],interactive:false,inbound:COMMON_INBOUND,outbound:['ready'],props:{}},
   'account-switcher':{versions:[1],interactive:true,inbound:[...COMMON_INBOUND,'prepare'],outbound:['ready','flow','code','select','escape','dismiss'],props:{density:['regular','compact'],actions:['use-another','manage','remove']}},
   'sign-in':{versions:[1],interactive:true,inbound:[...COMMON_INBOUND,'prepare'],outbound:['ready','flow','code'],props:{label:['continue','sign-in','sign-up'],variant:['filled','outline']}},
+  request:{versions:[1],interactive:true,inbound:[...COMMON_INBOUND,'prepare-request'],outbound:['ready','flow','code'],props:{kind:['grant-more','configure'],label:['review-access','review-settings'],variant:['filled','outline']}},
 });
 export const PART_NAMES=freeze(Object.keys(PARTS));
 /** State messages are last-value-wins; session and forget are never rate-limited (profile §5.2). */
-export const STATE_TYPES=freeze(['theme','locale','scheme','props','session','prepare']);
-export const UNLIMITED_TYPES=freeze(['theme','locale','scheme','props','session','prepare','forget']);
+export const STATE_TYPES=freeze(['theme','locale','scheme','props','session','prepare','prepare-request']);
+export const UNLIMITED_TYPES=freeze(['theme','locale','scheme','props','session','prepare','prepare-request','forget']);
 export const FLOW_OUTCOMES=freeze(['completed','canceled','popup-blocked','unavailable']);
 export const LIMITS=freeze({init:8192,prepare:8192,code:4096,other:2048,tokens:16,url:2048,lang:35,loginHint:320,uiLocales:4,requests:32,depth:8,ratePerSecond:10,violations:3,violationWindowMs:60000,handshakeMs:3000});
 export const AVATAR_BUCKETS=freeze([64,128,256,512]);

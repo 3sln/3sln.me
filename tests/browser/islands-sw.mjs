@@ -129,7 +129,7 @@ for(const name of ['chromium','firefox'])test(`islands service worker in ${name}
     let served=true;try{await page.waitForFunction(()=>window.ready===3,null,{timeout:15000});}catch{served=false;}
     await context.setOffline(false);offline=false;
     assert.equal(served,true,'the cached shell rendered and answered the handshake while offline');
-    const frame=island(page);assert.ok(await frame.evaluate(()=>!!document.getElementById('config')&&document.querySelectorAll('.part').length===3));
+    const frame=island(page);assert.ok(await frame.evaluate(()=>{const config=JSON.parse(document.getElementById('config').textContent);return config.parts.length===3&&!config.parts.includes('request')&&document.getElementById('request.v1')?.childElementCount===0;}),'the cached shell keeps the three advertised parts; incremental requests stay inert while disabled');
   });
 
   assert.deepEqual(errors,[]);

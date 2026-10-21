@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
+import {frameKey,openStore} from '../apps/embed/src/keys.mjs';
 import {MemoryMessagingStore} from '../packages/messaging/store.mjs';
 import {AuthorizationEntries} from '../packages/federation/authorization-entries.mjs';
 import {handleAuthorizationEntry,ENTRY_TOKEN_HEADER} from '../packages/runtime/federation-entry-http.mjs';
@@ -17,13 +18,13 @@ function stack({flag=true,limits}={}){
  const port=incrementalRunner({config:{...config,INCREMENTAL_AUTH_ENABLED:flag?'true':'false'},incremental:f.incremental,clock:{now:f.time}});
  const sessions=new Set([`${owner}.${'s'.repeat(43)}`,`${otherOwner}.${'s'.repeat(43)}`]);
  const begun=[],authority={begun,entryIdentity:async(context,id)=>{if(!sessions.has(context?.sessionToken))throw Object.assign(new Error('Sign in.'),{code:'unauthorized'});return {subject:`${issuer}/entities/${id}`,authTime:f.time()};},beginEntryAuthorization:async(context,input)=>{begun.push(structuredClone(input.entry.requests));return {requestId:input.requestId};},approve:async()=>({redirectUri:`${tasks.redirectUris[0]}?code=login-code&state=s&iss=${encodeURIComponent(issuer)}`})};
- const entries=new AuthorizationEntries({store:new MemoryMessagingStore(),issuer,clients:[tasks],authority,crypto:webcrypto,clock:f.time,dpop:true,incremental:port});
+ const entries=new AuthorizationEntries({store:new MemoryMessagingStore(),issuer,clients:[tasks],authority,embedOrigin:'https://embed.provider.example',crypto:webcrypto,clock:f.time,dpop:true,incremental:port});
  const fetch=async(url,{method='GET',headers={},body}={})=>{const request=new Request(url,{method,headers,...body!==undefined?{body}:{}});return await handleIncrementalToken(request,{port,issuer,proofs:{verify:async proof=>proof==='valid-proof'?'k'.repeat(43):null}})??await handleAuthorizationEntry(request,{entries,issuer,remote:async()=>'remote-1',ownerContext:async r=>({sessionToken:r.headers.get('X-Test-Session')??undefined})});};
  const post=(url,body,headers={})=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body)});
  return {f,port,entries,fetch,post,authority};
 }
 const session=(id=owner)=>`${id}.${'s'.repeat(43)}`;
-async function create(s,overrides={}){const verifier=b64(48),body={clientId:tasks.id,redirectUri:tasks.redirectUris[0],challenge:pkce(verifier),challengeMethod:'S256',state:b64(24),intent:'grant-more',subjectConstraint:subject,requests:[calRequest()],presentation:'redirect',...overrides};for(const [k,v] of Object.entries(body))if(v===undefined)delete body[k];const response=await s.post(`${issuer}/api/oauth/entries`,body,{Origin:tasks.origin});return {response,json:await response.json(),verifier,body};}
+async function create(s,overrides={}){const verifier=b64(48),body={clientId:tasks.id,redirectUri:tasks.redirectUris[0],challenge:pkce(verifier),challengeMethod:'S256',state:b64(24),intent:'grant-more',subjectConstraint:subject,requests:[calRequest()],presentation:'redirect',...overrides};for(const [k,v] of Object.entries(body))if(v===undefined)delete body[k];const response=await s.post(`${issuer}/api/oauth/entries`,body,{Origin:overrides.delivery?'https://embed.provider.example':tasks.origin});return {response,json:await response.json(),verifier,body};}
 async function page(s,entryId,id=owner){const view=await (await s.fetch(`${issuer}/api/oauth/entries/${entryId}`,{headers:{'Sec-Fetch-Site':'same-origin'}})).json();const headers={Origin:issuer,'Sec-Fetch-Site':'same-origin',[ENTRY_TOKEN_HEADER]:view.pageToken,'X-Test-Session':session(id)};const selected=await s.post(`${issuer}/api/oauth/entries/${entryId}/select`,{nonce:view.entry.nonce},headers);return {view,headers,selected:await selected.json(),status:selected.status,decide:body=>s.post(`${issuer}/api/oauth/entries/${entryId}/decision`,{nonce:view.entry.nonce,...body},headers)};}
 const token=(s,{code,verifier,proof,clientId=tasks.id})=>s.fetch(`${issuer}/oauth/token`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded',...proof?{DPoP:proof}:{}},body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:tasks.redirectUris[0],client_id:clientId,code_verifier:verifier}).toString()});
 
@@ -146,4 +147,25 @@ test('IA-R2: wider methods, new resources and buses, alternating intents and cap
  const fourth=await login(s,[loginRequest({methods:{calendar:{[CALENDAR]:['readEvents','createEvent']}}})]),p=await page(s,fourth.json.entryId);
  assert.deepEqual(s.authority.begun.at(-1)[0].methods,{calendar:{[CALENDAR]:['readEvents']}},'over the cap a login delta is pre-declined');assert.deepEqual(p.selected.incrementalLogin.predeclined,[CAL]);
  assert.equal((await create(s)).response.status,429,'and grant-more is limited by the same counters');
+});
+
+
+test('IA-4: attested incremental popups deliver only code/result, state and issuer; plain fallback keeps the callback',async()=>{
+ const embed='https://embed.provider.example',profile='https://3sln.me/artefacts/profiles/components/v1';
+ assert.equal(stack({flag:false}).entries.manifest({components:true}).profiles[profile].parts.request,undefined);
+ assert.deepEqual(stack().entries.manifest({components:true}).profiles[profile].parts.request,{versions:[1]});
+ for(const intent of ['grant-more','configure']){
+  const s=stack(),key=await frameKey(await openStore({indexedDB:undefined}),{issuer,clientId:tasks.id,crypto:webcrypto,clock:s.f.time}),extra=intent==='configure'?{requests:undefined,challenge:undefined,challengeMethod:undefined,target:{fragment:SUMMARY}}:{};
+  const {response,json,body}=await create(s,{...extra,intent,presentation:'popup',delivery:'embed-popup',embedJkt:key.jkt});assert.equal(response.status,201);
+  const view=await s.entries.view(json.entryId),p={token:view.pageToken},challenge=await s.entries.challenge(json.entryId,p),{pageSecret}=await s.entries.verify(json.entryId,{proof:await key.embedProof({issuer,entry:json.entryId,challenge:challenge.challenge})},p);
+  const context={sessionToken:session()};await assert.rejects(s.entries.select(json.entryId,context,{nonce:view.entry.nonce},p),{code:'embed_attestation_required'});
+  await s.entries.select(json.entryId,context,{nonce:view.entry.nonce,pageSecret},p);s.f.time.advance(1500);
+  const done=await s.entries.decide(json.entryId,context,{nonce:view.entry.nonce,pageSecret,denied:true},p);
+  assert.deepEqual(Object.keys(done).sort(),[intent==='grant-more'?'code':'result','iss','state'].sort());assert.equal(done.state,body.state);assert.equal(done.iss,issuer);if(intent==='configure')assert.equal(done.result,'unchanged');
+  assert.equal(s.f.p.calls.commit,0,'incremental decline never adds an embed binding or grant');
+  const fallback=stack(),plain=await create(fallback,{...extra,intent,presentation:'popup',delivery:'embed-popup',embedJkt:key.jkt}),pv=await fallback.entries.view(plain.json.entryId),pp={token:pv.pageToken};await fallback.entries.declarePlain(plain.json.entryId,pp);
+  await fallback.entries.select(plain.json.entryId,context,{nonce:pv.entry.nonce,plain:true},pp);fallback.f.time.advance(1500);
+  const redirected=await fallback.entries.decide(plain.json.entryId,context,{nonce:pv.entry.nonce,plain:true,denied:true},pp);assert.equal(new URL(redirected.redirectUri).origin,tasks.origin);
+ }
+ const off=stack({flag:false});assert.equal((await create(off,{presentation:'popup',delivery:'embed-popup',embedJkt:'k'.repeat(43)})).response.status,400);
 });

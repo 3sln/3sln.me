@@ -12,7 +12,7 @@ export function shellBuild(value){
  return Object.freeze({worker:value.worker,sw:value.sw,scripts:Object.freeze([...value.scripts])});
 }
 /** The non-executable per-client config block read by apps/embed/src/boot.mjs `readConfig`. */
-export function shellConfig({issuer,clientId,origins,parts=Object.keys(COMPONENTS_PARTS),build}){
+export function shellConfig({issuer,clientId,origins,incremental=false,parts=[...Object.keys(COMPONENTS_PARTS),...incremental?['request']:[]],build}){
  return {v:1,issuer,clientId,origins:[...origins],parts:[...parts],worker:build.worker,sw:build.sw};
 }
 /** Fills the single config slot. `<` is escaped so no value can close the `<script type="application/json">` block. */

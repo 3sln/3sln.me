@@ -1,3 +1,5 @@
+import {requireRestored} from '../store/restore.mjs';
+import {stageBody,readBody,bodyObjects} from '../store/bodies.mjs';
 import {projectIncoming,removeIncoming} from '../store/item-index.mjs';
 // Receive path for link kinds (spec §4.5, §7.1, §8; architecture §11). Cheapest refusal first:
 //  edge: credential grammar and the edge index (handleIngress, before any mailbox work);
@@ -91,6 +93,7 @@ export class ReceiveDeliver extends MailboxAction {
  async run({receive,directory,delegateKeys,providerLink,userStorage,random,clock}){
   actorOwner(this.actor,['ingress']);
   const {contentType,body,authorization,idempotencyKey,ingress}=this.input??{},store=receive.store,now=clock.now(),config=await readConfig(store);
+  await requireRestored(store);
   if(ingress!==config.ingress)protocol('ingress_moved');
   // Credential and parent: exact stored header/claims segments, no crypto (§4.5 steps 1-3).
   const credential=P.parseCredential(authorization);
@@ -105,6 +108,7 @@ export class ReceiveDeliver extends MailboxAction {
   P.checkWindow(envelope,now);
   // Read-only pre-checks before crypto; an already admitted operation is answered as a replay instead.
   const id=await P.sha256(globalThis.crypto,P.replayKey(envelope)),prior=await store.get(KEYS.replay(id));
+  await requireRestored(store,{envelope,replay:!!prior});
   if(!prior){ownerExhausted(await store.get(KEYS.budget),{now,plan:config.plan});checkRefusals(store,p.author.principal,now);}
   // Owner meta signature under an active owner key from the directory; a stored-claims match alone is not validity.
   const learned=[],ports=verificationPorts({directory,store,now,learned});
@@ -127,8 +131,9 @@ export class ReceiveDeliver extends MailboxAction {
    const receipt=await P.signReceipt(await P.receiptPayload(envelope,{recipient:config.principal,ingress:config.ingress,receivedAt:now,bodyDigest:delivery.bodyDigest}),signer);
    // Large bodies go to the owner's storage resource first, under a key unique to this attempt so no attempt can
    // overwrite an admitted body (review BB2-R2); otherwise into the bounded hot allowance.
-   if(!prior&&delivery.body&&bytes>=BOUNDS.inlineBodyBytes&&userStorage&&typeof userStorage.put==='function'){const key=`bindlebox/v1/items/${id}/${random.uuid()}`;try{await userStorage.put(key,delivery.body);staged={storage:'user',key};}catch{staged=null;}}
+   if(!prior&&delivery.body&&bytes>=BOUNDS.inlineBodyBytes&&userStorage&&typeof userStorage.put==='function'){const key=`bindlebox/v1/items/${id}/${random.uuid()}`;try{staged=await stageBody(userStorage,key,delivery.body);}catch{staged=null;}}
    const result=await store.transaction(async tx=>{
+    await requireRestored(tx,{envelope,replay:!!await tx.get(KEYS.replay(id))});
     const prior=await tx.get(KEYS.replay(id)),outcome=P.replayDecision(prior,{payloadDigest:delivery.payloadDigest});
     // Live authorization is rechecked inside the commit, for replays too: a link revoked, a principal blocked or a
     // key learned revoked after the checks above never yields a receipt.
@@ -153,22 +158,22 @@ export class ReceiveDeliver extends MailboxAction {
     await tx.put(KEYS.parent(live.jti),{...live,usage:plan.usage,quota:plan.quota});if(decision)await tx.put(decision.key,decision.value);
     return {receipt,replay:false,committed:true};
    });
-   if(!result.committed&&staged)await discard(userStorage,store,staged.key);
+   if(!result.committed&&staged)await discard(userStorage,store,staged);
    return {receipt:result.receipt,replay:result.replay};
   }catch(error){
-   if(staged)await discard(userStorage,store,staged.key);
+   if(staged)await discard(userStorage,store,staged);
    if(COUNTED.has(error?.code))countRefusal(store,principal,now);
    throw error;
   }
  }
 }
 // A staged body that no committed item references is deleted now, or queued for the storage sweep if that fails.
-async function discard(userStorage,store,key){
- try{if(typeof userStorage?.delete!=='function')throw new Error();await userStorage.delete(key);}catch{await store.transaction(tx=>tx.put(`storage-gc/${encodeURIComponent(key)}`,{key})).catch(()=>{});}
+async function discard(userStorage,store,ref){for(const key of bodyObjects(ref)){
+ try{if(typeof userStorage?.delete!=='function')throw new Error();await userStorage.delete(key);}catch{await store.transaction(tx=>tx.put(`storage-gc/${encodeURIComponent(key)}`,{key})).catch(()=>{});}}
 }
 
 // Owner listing of admitted items. Pending, rejected and quarantined items never appear here (see intake queries).
-const itemView=i=>({id:i.id,origin:i.origin,kind:i.kind,author:i.origin==='native'?{principal:i.author.principal,verified:true}:{asserted:i.asserted,verified:false},subject:i.subject,content:i.content,receivedAt:i.receivedAt,state:i.state,request:i.request,priority:i.priority??'normal',tags:i.tags,tagHistory:i.tagHistory,quarantined:Boolean(i.quarantined)});
+const itemView=i=>({id:i.id,origin:i.origin,kind:i.kind,author:i.origin==='native'?{principal:i.author.principal,verified:i.imported?.verified!==false}:{asserted:i.asserted,verified:false},subject:i.subject,content:i.content,receivedAt:i.receivedAt,state:i.state,request:i.request,priority:i.priority??'normal',tags:i.tags,tagHistory:i.tagHistory,quarantined:Boolean(i.quarantined)});
 export class ReceiveItems extends MailboxQuery {
  static operation='receive.items';static deps=['receive'];static refreshOn=['incoming-changed'];
  async fetch({receive}){actorOwner(this.actor);const items=[...(await receive.store.list({prefix:'item/'})).values()];return {items:items.filter(i=>!i.quarantined&&(i.state==='inbox'||i.state==='request')).sort((a,b)=>(a.priority==='low')-(b.priority==='low')||b.receivedAt-a.receivedAt).map(itemView),quarantined:items.filter(i=>i.quarantined).map(itemView)};}
@@ -182,7 +187,18 @@ export class ReceiveSweep extends MailboxAction {
   return receive.store.transaction(async tx=>{let dropped=0,decisions=0;for(const [key,entry] of await tx.list({prefix:'replay/'}))if(entry.retainUntil<now){await tx.delete(key);dropped++;}for(const [key,row] of await tx.list({prefix:'decision/'}))if(row.until<=now){await tx.delete(key);decisions++;}return {dropped,decisions};});
  }
 }
-export const RECEIVE_OPERATIONS=[ReceiveConfigure,ReceiveDeliver,ReceiveItems,ReceiveSweep];
+export class ReceiveBody extends MailboxQuery {
+ static operation='receive.body';static deps=['receive','userStorage'];
+ async fetch({receive,userStorage}){
+  actorOwner(this.actor);const id=this.input?.id;if(typeof id!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(id))fault('invalid_input','Choose an item.',400);
+  const item=await receive.store.get(KEYS.item(id));if(!item||item.quarantined)fault('not_found','Item unavailable.',404);
+  const body=item.bodyRef?.storage==='user'?await readBody(userStorage,item.bodyRef):await receive.store.get(KEYS.body(id));
+  if(!body){const parts=(item.message?.parts??[]).filter(p=>p.mimeType==='text/plain').map(p=>P.fromBase64url(p.dataBase64url)),bytes=new Uint8Array(Math.min(65536,parts.reduce((n,p)=>n+p.length,0)));let at=0;for(const p of parts){const part=p.subarray(0,bytes.length-at);bytes.set(part,at);at+=part.length;}return {id,text:parts.length?new TextDecoder().decode(bytes):null,truncated:parts.reduce((n,p)=>n+p.length,0)>65536};}
+  const bytes=Uint8Array.from(body);if(item.content&&P.jcs(await P.contentDescriptor(item.content.mimeType,bytes))!==P.jcs(item.content))fault('body_unavailable','Body digest mismatch.',503);
+  return {id,text:item.content?.mimeType?.startsWith('text/')?new TextDecoder().decode(bytes.subarray(0,65536)):null,truncated:bytes.length>65536};
+ }
+}
+export const RECEIVE_OPERATIONS=[ReceiveConfigure,ReceiveDeliver,ReceiveItems,ReceiveSweep,ReceiveBody];
 
 // Edge adapter (placement `edge`): framing bound and edge-index credential check before any mailbox is woken, then
 // one `receive.deliver` dispatch to the routed owner's mailbox. Bodies are {error, message} with fixed messages;

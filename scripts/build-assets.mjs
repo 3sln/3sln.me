@@ -197,3 +197,8 @@ if(privateAssets.length<7)throw Error('Host administration modules were not foun
 await generateServiceWorker(result,{out:outputRoot,privateAssets,publicAssets:['/icon.svg','/generic-icon.svg','/branding/3sln-avatar.png','/branding/3sln-lockup.svg','/branding/3sln-lockup-ondark.svg','/demo.css']});
 console.log(`Public build ${result.buildId}: ${result.modules.size} individually addressed modules, 3 isolated worker modules, 2 standalone SDK entries, complete import-map graph verified.`);
 console.log(`Islands build ${embedBuildId}: ${embedGraph.length} modules under /${EMBED_ROOT}/, standalone island worker, import-map graph verified; shell ${shellBytes} bytes gzip (design budget 2048).`);
+
+// BindleBox has its own default-off host and asset binding.
+await mkdir(resolve('.output/bindlebox-public'),{recursive:true});
+await checkModules({entryPoints:['apps/bindlebox/web/boot.mjs'],outfile:resolve('.output/bindlebox-public/app.mjs'),bundle:true,format:'esm',platform:'browser',target:'es2022',minify:config.minifyJs!==false});
+await cp('apps/bindlebox/web/styles.css',resolve('.output/bindlebox-public/styles.css'));

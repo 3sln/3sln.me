@@ -1,3 +1,5 @@
+import {createWebHTTP} from '../web/http.mjs';
+import {webShell} from '../web/shell.mjs';
 import {handleIngress,ingressError} from '../../../packages/bindlebox-engine/domains/receive.mjs';
 import {LIMITS,strictJSON,ProtocolFault,parseRPC,MAILBOX_CONTRACT,INTAKE_CONTRACT,fromBase64url} from '../../../packages/bindlebox-protocol/index.mjs';
 import {fault,MailboxFault} from '../../../packages/bindlebox-engine/faults.mjs';
@@ -13,10 +15,14 @@ export async function bodyBytes(request,limit=LIMITS.maxRequestBytes){
 export function httpError(error){const known=error instanceof MailboxFault||error instanceof ProtocolFault,status=known&&Number.isSafeInteger(error.status)?error.status:500;return Response.json({error:known?error.code:'internal_error'},{status,headers:{...headers,...status===503?{'Retry-After':'60'}:{}}});}
 // Authentication is a configured, live verifier (ordinary app credentials). Never accept owner/actor from JSON,
 // query parameters or untrusted forwarding headers. Ingress routes only after the capability edge check.
-export function createHTTP({BINDLEBOX_ENABLED=false,authenticate,mailbox,edge,conversationEdge,metadata,services}={}){
+export function createHTTP({BINDLEBOX_ENABLED=false,authenticate,mailbox,edge,conversationEdge,metadata,services,assets,archiveEnabled=typeof services?.objectStorage==='function'&&typeof services?.archiveKeys==='function'}={}){
+ const web=createWebHTTP({BINDLEBOX_ENABLED:enabled(BINDLEBOX_ENABLED),archiveEnabled,authenticate,mailbox});
  return async request=>{
   if(!enabled(BINDLEBOX_ENABLED))return Response.json({error:'not_found'},{status:404,headers});
   const url=new URL(request.url),path=url.pathname;
+  if(request.method==='GET'&&path==='/')return webShell();
+  if(request.method==='GET'&&['/app.mjs','/styles.css'].includes(path)&&assets)return assets(request);
+  const client=await web(request);if(client)return client;
   if((path==='/bindle/ingress'||/^\/bindle\/ingress\/return\/[A-Za-z0-9_-]{32}$/.test(path))&&request.method==='POST')try{
    if(!edge)fault('recipient_unavailable','Ingress index unavailable.',503);
    const wire={url:request.url,method:'POST',headers:Object.fromEntries(request.headers),body:await bodyBytes(request)},deliver=(name)=>async(owner,input)=>(await mailbox(owner)).run(owner,name,{input});

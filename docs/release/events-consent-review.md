@@ -196,3 +196,38 @@ IA integration handoff (owned-module changes deferred to the IA-R2 agent):
 
    A different decision, or `abandon`, gets `decision_in_progress`/`invalid_request` while a decision is committing. A configure save that succeeded before a failure resumes as `configured`, never `unchanged`. Covered by engine tests with fault-injected ports; the real-Node fault path is not exercised, since its lease runs on the system clock.
 3. **Consent marking.** CX consent now shows login deltas on an existing connection as "New access requested by ‹app›" notes (`role="note"`). They are separate from "Already granted to ‹app›" cards, carry a summary status line, use en/es authorize-catalogue strings, and the selection's `incrementalLogin` is validated before render. Browser tests are in `tests/browser/consent-entry.mjs`.
+
+## EV-3 implementation
+
+Status: provisional, 2026-10-21. One independent security reviewer read the EV-3 code without editing it: `packages/events/doorbell.mjs`, the `EV-3` hunks in `packages/runtime/integration-events.mjs`, and `tests/event-doorbell*.test.mjs`. The reviewer looked at data leakage through doorbells, amplification and timing side channels, and confirmed findings with probe scripts built on the test harness. The implementer fixed the findings and added regression tests. The fixes have not been re-reviewed. Sign-off: reviewer ___ / date ___ / outcome ___.
+
+| ID | Sev | Finding | Disposition |
+| --- | --- | --- | --- |
+| EV3-R1 | Med | Doorbells continued after the read grant was revoked unless the unmounted reader-revocation hook ran. The live grant port was optional. The probe showed that `read` was `forbidden` while a `bus-advanced` SET was still sent, which leaked the head and publish timing. | **Fixed (fail closed):** the live grant port (`subscribed` / `INTEGRATION_EVENT_PORTS.doorbellGrant`: read and subscribe still granted under the same read approval) is now mandatory. Without it, subscribe and ring answer `temporarily_unavailable`. The port is consulted at subscribe, at every ring, and by X6 before the lease and again before egress. Tested. |
+| EV3-R1b | Low-Med | Removing only `subscribe`, while keeping read, left the subscription alive, because the read-approval epoch does not change on a reduction. | **Fixed** through the same port, which must check `subscribe`. Tested. The revocation and reduction hooks should still call `eventDoorbellCancel` in the revoking commit (integration hunk). |
+| EV3-R3 | Low-Med | The subscribe caps counted other apps' rows, including dead ones. A refusal therefore revealed other subscribers, and several apps together could exhaust the account cap. | **Partly fixed:** dead rows are reaped before counting, and each connection is capped at 8 subscriptions. Tested. **Residual:** a refusal at the spec's 16-per-bus or 64-per-account cap still shows that the cap was reached by others, as with EV2-S5. |
+| EV3-R4 | Low | Every publish kicked the account alarm, even on buses without subscribers. | **Fixed:** `withDoorbellKick(notifier, kick, {store})` kicks only when the bus has a subscription. Tested. **Residual:** a subscribed bus still wakes the alarm once per publish (at most 120 per minute per bus). The ring's 5 s window bounds sends, but not alarm passes. |
+| EV3-R5 | Hardening | A SET leased before a revoking commit was still sent after it. | **Fixed:** a re-check now runs just before signing. The comment is reworded: a doorbell already being signed or in flight may still arrive. It is data-free (§8 "admitted requests may complete"). Spec §7.2 wording needs review. |
+| EV3-R6a | Hardening | `resource` was not bound to the bus. | **Fixed:** it must equal `${issuer}/entities/${owner}/buses/${bus}`. Tested. |
+| EV3-R6b | Hardening | X6 retries rebuilt the payload without the grant port. | **Fixed:** the port is passed into `doorbellTarget`. |
+| EV3-R6c | Hardening | Coalescing into an in-flight row could hide an advance on Node. | **Fixed:** a coalesced ring leaves the subscription unchanged, so the advance is rung after the ack. |
+
+**Checked with no issue found:**
+- the payload is only `{bus, head}` plus `connection`, `generation` and `seq`;
+- `head` is clipped to the reader floor;
+- stale subscriptions are not resurrected after reconnect, re-approval, bus recreation, suspension, owner pause or dropping `bus-advanced`;
+- the static per-subscription hourly share (31) means the account and per-bus caps can never bind, so the meters give no timing channel between subscribers;
+- the separate X6 doorbell row budget and lowest priority never block owner writes or revocation SETs;
+- meters stay in the event-allowance family;
+- the owner check, owner-only health, connection-bound `unsubscribe`, and flag gating.
+
+**Residual:** X6's shared per-pass send limit lets one integration's slow endpoint delay another's doorbells. This is inherent to X6 and low impact.
+
+**Integration hunks still unwired** (files outside EV-3):
+- `account/events.mjs`: route `subscribe`/`unsubscribe` to `eventDoorbellApp`, wrap the bus notifier with `withDoorbellKick(…, c.integrationEventsKick, {store: c.metadata})`, and call `eventDoorbellCancel` from the reader-revoked hook;
+- compose `INTEGRATION_EVENT_PORTS.doorbellGrant` over federation grants;
+- call `integrationEventsAlarm` from the account alarm (an X6 gate);
+- mount the owner `events.push`/`events.subscriptions` RPC;
+- set descriptor `push: true` in `events/limits.mjs` once these are mounted.
+
+Until then, no app can subscribe, even with both flags on.

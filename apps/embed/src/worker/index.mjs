@@ -3,7 +3,7 @@
 // fetch and raster work. The document only renders what this worker returns. Started only after `ready`
 // (the `sign-in` part starts it only on a user activation, profile P10).
 import {openStore,frameKey,randomId,listCredentials,saveCredential,deleteCredentials,updateCredential,readGeneration,nextTerm} from '../keys.mjs';
-import {embedAPI,createEntry,restoreAll,normalizeView} from '../restore.mjs';
+import {embedAPI,createEntry,createRequestEntry,restoreAll,normalizeView} from '../restore.mjs';
 import {createElection,ELECTION} from './leader.mjs';
 import {monogramPNG,transparentPNG,reencodeAvatar,validBucket} from './avatar.mjs';
 
@@ -134,6 +134,7 @@ export function createIslandWorker({post,storeFactory=openStore,crypto=globalThi
     bucket:value=>{if(validBucket(value)){buckets.set(instance,value);election?.send({type:'hello',instance,avatarBucket:value});if(election?.leading)receive({type:'hello',instance,avatarBucket:value});}},
     render:async({subjects,bucket})=>{if(!Array.isArray(subjects)||subjects.length>9||!validBucket(bucket))throw new TypeError('render');return Promise.all(subjects.map(s=>tile(typeof s==='string'?s:null,bucket)));},
     createEntry:({prepare,delivery})=>createEntry({...scope(),key,prepare,delivery:delivery==='embed-fedcm'?'embed-fedcm':'embed-popup',fetch}),
+    createRequestEntry:({prepare,subjectConstraint})=>createRequestEntry({...scope(),key,prepare,subjectConstraint,fetch}),
     /** The FedCM `params.proof`: a fresh single-use nonce from the embed API, signed with the frame key for this entry. */
     async fedcmProof({entry,assertUrl}){if(typeof entry!=='string'||new URL(assertUrl).origin!==config.issuer)throw new TypeError('fedcm');const {nonce}=await api.nonce();return key.fedcmProof({assertUrl,entry,nonce});},
     proof:({entry,challenge})=>key.embedProof({issuer:config.issuer,entry,challenge}),

@@ -19,7 +19,7 @@ export function componentsProfile(config){
  return {profile:COMPONENTS_PROFILE,embedOrigin};
 }
 /** Profile §2 declaration under the core `profiles` container; `{}` when components are not offered. */
-export function componentsDeclaration(profile,{manageUrl}={}){
+export function componentsDeclaration(profile,{manageUrl,incremental=false}={}){
  if(!profile)return {};
- return {profiles:{[profile.profile]:{embed_origin:profile.embedOrigin,protocol:[...COMPONENTS_PROTOCOL],parts:structuredClone(COMPONENTS_PARTS),credential_binding:['key-binding.v1'],...manageUrl?{manage_url:manageUrl}:{}}}};
+ return {profiles:{[profile.profile]:{embed_origin:profile.embedOrigin,protocol:[...COMPONENTS_PROTOCOL],parts:{...structuredClone(COMPONENTS_PARTS),...incremental?{request:{versions:[1]}}:{}},credential_binding:['key-binding.v1'],...manageUrl?{manage_url:manageUrl}:{}}}};
 }

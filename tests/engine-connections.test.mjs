@@ -331,8 +331,8 @@ test('migration: legacy records read as active/disconnected, are migrated on fir
  assert.equal(reapproved.state,'active');assert.equal(reapproved.integration.kind,'external');
 });
 
-test('the messaging-ingress manifest is the bindlebox spec slot and is the only recognized slot by default', ()=>{
- assert.deepEqual(Object.keys(RECOGNIZED_SLOTS),[MESSAGING_INGRESS_SLOT]);
+test('the recognized slots include the BindleBox ingress and canonical classifier manifests', ()=>{
+ assert.deepEqual(Object.keys(RECOGNIZED_SLOTS),[MESSAGING_INGRESS_SLOT,'https://3sln.me/artefacts/slots/item-classifier/v1']);
  assert.equal(MESSAGING_INGRESS_MANIFEST.slot.selection,'exclusive');assert.deepEqual(MESSAGING_INGRESS_MANIFEST.slot.consumers,['provider']);
  assert.ok(C.CONNECTION_OWNER_OPERATIONS.every(name=>C.CONNECTION_OPERATIONS.some(O=>O.operation===name)));
 });

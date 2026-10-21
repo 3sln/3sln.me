@@ -21,7 +21,7 @@ export const PROVIDERS=Object.freeze({
  rules:row('mailbox','domain','local','Organization rules.',{scoped:true}),
  tags:row('mailbox','domain','local','Tag labels and provenance.',{scoped:true}),
  bridge:row('mailbox','domain','local','BB-B7: bridged public intake (provenance, consumer/channel binding, fingerprint dedup); no egress.',{scoped:true}),
- archive:row('mailbox','domain','planned','Portable archive and writer lease.',{scoped:true}),
+ archive:row('mailbox','domain','local','BB-B6: sealed, signed owner-bucket archive, writer lease, export/import and reclamation (createArchiveProvider; default off).',{scoped:true}),
 });
 const subject=actor=>actor&&typeof actor==='object'?{kind:String(actor.kind),...typeof actor.owner==='string'?{owner:actor.owner}:{}}:null;
 const entry=(ctx,outcome)=>({operation:ctx.action.constructor.operation??ctx.action.constructor.name,actor:subject(ctx.action.actor),outcome,...ctx.error?.code?{code:String(ctx.error.code)}:{}});

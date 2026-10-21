@@ -23,5 +23,5 @@ export const txRetentionSeconds=bus=>Math.max(BUS_LIMITS.journal.minSeconds,Math
 /** Descriptor limits (§4.4). `maxWaitSeconds` is 0 unless the adapter mounted the separate wait object. */
 export function busLimits(bus,{waits=false}={}){
  return {maxRecordBytes:Math.min(bus.spec.max_record_bytes,BUS_LIMITS.maxRecordBytes),retentionSeconds:bus.retentionSeconds,maxRetainedRecords:BUS_LIMITS.maxRetainedRecords,maxRetainedBytes:BUS_LIMITS.maxRetainedBytes,
-  publishPerMinute:BUS_LIMITS.publishPerMinute,maxWaitSeconds:waits?BUS_LIMITS.waits.maxWaitSeconds:0,push:false,txRetentionSeconds:txRetentionSeconds(bus),maxRequestBytes:32768,maxResultBytes:BUS_LIMITS.reads.maxResultBytes+16384};
+  publishPerMinute:BUS_LIMITS.publishPerMinute,maxWaitSeconds:waits?BUS_LIMITS.waits.maxWaitSeconds:0,push:true,txRetentionSeconds:txRetentionSeconds(bus),maxRequestBytes:32768,maxResultBytes:BUS_LIMITS.reads.maxResultBytes+16384};
 }

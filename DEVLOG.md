@@ -2166,3 +2166,65 @@ IA handoff closed:
 - committing decisions journal validated approvals and setup values before saving, so retries after a partial failure resume without redoing work, while a different decision or cancel is refused during the attempt;
 - consent shows login additions on existing connections as "New access requested by ‹app›", separate from "Already granted to ‹app›" (en/es).
 The partial-failure path is exercised with fault-injected ports, not through the real Node ports. Gates: core 1829, Worker 63, UI-state 256, BindleBox 162, consent 24+26, approve 14, DOM, build, dry run.
+
+Wave 3b committed and deployed as c1468d8 (flags off; full browser gate 184 with 4 WebKit skips). Wave 4 started:
+- Codex: EXT-X10 built-in classifier occupant and Drive manifest, BB-B9 BindleBox web UI with cutover browser prerequisites, IA-4 embedded request element.
+- Claude: EXT-X6 integration event outbox (signed SET snapshots), EXT-X7 resource discovery, brokered records and `describe` (unblocking messaging descriptors), BB-B6 encrypted archive in the owner's storage plus app-switch export/import.
+EV-3 push doorbells follow X6.
+
+Wave 4 Codex streams landed:
+- **EXT-X10:** built-in classifier occupant (`packages/runtime/account/classifier.mjs`) over the existing `ai` provider, requiring an explicit `CLASSIFIER_MODEL_VERSION`; slot manifest `docs/artefacts/slots/item-classifier-v1.json`; Google Drive as a built-in integration with existing connector behavior unchanged; 17 tests. Provisional `pre-dispatch` failover, since X4 rejects `any-error` without contract pins. Pending: register the recognized slot, update BindleBox'"'"'s placeholder URL and copy, wire artifact publication and discovery. Live Clef accuracy unverified.
+- **IA-4:** request element modules, an `apps/embed/src/parts/request.mjs` island part, default-off with activation checks, exact-origin popup results and redirect fallback; an IA-3 `prepareOnly` hook; 14 engine tests plus 18 browser checks in Chromium and Firefox. Pending: embed boot/shell/worker/channel wiring, element registration, backend acceptance of embedded incremental delivery.
+- **BB-B9:** default-off BindleBox web client on ngin/dodo (en/es; delivery counts, Retry missing, SSE recovery, drafts, Views, rescue, B6 handoff controls). All six cutover browser prerequisites pass across locales, themes and widths; 41 tests. Pending: shell mounting/B6 port composition, verified contact resolution for new conversations, Rejected body reads. Timeline transfer is unbounded (`apps/bindlebox/web/README.md`).
+
+EXT-X6 landed (provisional, behind `INTEGRATIONS_ENABLED`): `packages/runtime/integration-events.mjs` drains the X4 outbox into coalesced per-connection rows and delivers RFC 8417 SETs signed with the event-purpose brokering key.
+- Each SET carries exactly the §6.1 claims, a strictly increasing per-connection `seq`, and a minimized snapshot.
+- Revocations are delivered first and in every state.
+- Leased attempts are re-signed with the same `jti` and retried with backoff (10 s initially, at most 1 h apart) for 72 h, then degrade the connection or record an unacknowledged revocation.
+- SSRF-safe egress (Node DNS-pinned; Worker strictly public plus DoH).
+X6 owns the X4 outbox cursor, so a second consumer needs its own. 12 tests plus conformance. [Review](docs/release/extensibility-review.md#x6-implementation): S1/S2 medium (revocations refused at caps; serialized retries) and S3–S6, S8 fixed; S7 open. Integration pending: `AccountController.alarm` calls `integrationEventsAlarm`, X4 commits call `integrationEventsKick`, and `INTEGRATION_EVENT_PORTS` composition (signer, egress, X8 snapshot port). Reviewer ___ Date ___ Outcome ___.
+
+EXT-X7 landed (provisional, flags off).
+- **Discovery** is provider-only: signed 60 s tokens, SSRF-safe egress, 64 KiB / 100-item bounds, item-level validation, a 5-minute cache, and per-connection/account/integration/process budgets with per-connection cooldowns.
+- **Brokered records:** fresh authenticated lookup, slot-pinned contracts, generation and incarnation fencing, §4.4 revalidation, severance rows for X8, and a `mintable` hook.
+- **C1b `describe`:** ingress bound to the client_id origin. The mailbox describe uses purpose `invoke` (feature `messaging-address`, 60 s), per bindlebox §2.2 and integrations §5.5.
+21 tests. [Review](docs/release/extensibility-review.md): X7-R1–R5, R7 fixed; R6 moot. Open:
+- Node DNS-pinned POST egress;
+- the §8 hint endpoint (needs an issuer-wide connection → account directory);
+- AMD-C10 checks;
+- X8 draining.
+Production wiring needs `BROKERING_MINT`, `INTEGRATION_EGRESS` and `MESSAGING_DESCRIBE`; until then messaging descriptors stay `recipient_unavailable`. Reviewer ___ Date ___ Outcome ___.
+
+BB-B6 landed (provisional, default off, unmounted): an encrypted, signed archive in the owner's storage, plus app-switch export and import.
+- **Archive:** history and contacts written as objects encrypted to the owner's identity key; key-holder access only with a fresh proof from the occupant's key; compaction, crash-safe resume, writer lease.
+- **Switch:** import only against the exact export, absent-only and resumable, then rejoin.
+- **Retention:** tombstones are never resurrected; rollback is refused.
+- **Capacity:** archived send obligations leave the queue; old objects are reclaimed.
+Unresolved obligations from the old app become a resend list rather than automatic re-signing. Spec §10 deviations are recorded. 17 simulator tests. [Review](docs/release/bindlebox-archive-review.md): BB6-S1–S6, S9–S11 fixed. Open:
+- BB6-S7: new traffic is not held during import (gate before enabling; needs receive, conversations and shell changes);
+- BB6-S8: imported envelopes are not re-checked;
+- the real key-holder port;
+- BB-B2 stages large bodies in user storage in plaintext.
+Core 1904/1904. Reviewer ___ Date ___ Outcome ___.
+
+EV-3 landed (provisional, behind `EVENT_BUSES_ENABLED` and `INTEGRATIONS_ENABLED`): push is a data-free `bus-advanced/v1` SET on the X6 channel, carrying only the subscriber's own bus ID and visible head.
+- At most one doorbell pending per subscription, at most one sent per 5 s, with a 31-per-hour fair share per subscription.
+- Its row budget is separate and lowest priority, so it never blocks owner writes or revocation SETs.
+- A mandatory live grant check port (`doorbellGrant`); send-time checks fail closed.
+- Subscribe caps of 8 per connection, 16 per bus and 64 per account.
+[Review](docs/release/events-consent-review.md): R1, R1b, R3–R5, R6a–c fixed (not re-reviewed). Residuals: subscribe caps hint at other subscribers; a subscribed bus wakes the alarm on every publish. The app-initiated push request via `configure` (Q11) is not built.
+
+Wave 4 streams complete. Wave 4 integration started (Codex).
+
+Wave 4 integration (Codex, coordinator-verified; [notes](docs/release/wave4-integration.md)), all behind existing default-off flags:
+- **X6:** alarm and kick hooks, signing and egress ports on Worker and Node.
+- **X7:** minting, discovery and messaging `describe`; Node DNS-pinned POST transport.
+- **EV-3:** subscription routing, publish kicks, live grants, revocation cancellation, owner push controls.
+- **X10:** canonical classifier slot registration, publication and discovery.
+- **IA-4:** SDK registration, embed wiring and attested incremental popup delivery.
+- **B9/B6:** mounted clients, archive ports with a development key holder, verified contacts, Rejected reads, pagination.
+- **B6 gates:** import holds (S7), imported envelope and body verification (S8), and encrypted staging of large bodies, with regression tests.
+
+Gates: core 1929, Worker 65, UI-state 258, BindleBox 194, BindleBox web 41, DOM, build, dry run, audit; full e2e 180 with flags off and 180 with device authorization on (4 WebKit skips each).
+
+Deferred: the X8 snapshot stub, X7 hints/AMD-C10, app-initiated push configuration, production key-holder/service verification. Legacy or redacted imports remain explicitly unverified.

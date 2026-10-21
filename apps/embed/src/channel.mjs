@@ -3,6 +3,7 @@
 // last-value-wins and applied on the next task; other types are limited to 10/s; three violations within a
 // minute stop the island reading the port. There are no error replies. Outbound messages pass the part's exact
 // events contract before they leave (the element is not a boundary: embedder script can read the port).
+import {validatePrepareRequest} from '../../../packages/sdk/src/elements/request-protocol.mjs';
 import {validateInbound,validateOutbound,STATE_TYPES,UNLIMITED_TYPES,LIMITS} from '../../../packages/sdk/src/islands-protocol.mjs';
 
 export function createChannel(port,{part,version,issuer,origins,onState,onForget,clock=()=>Date.now(),defer=fn=>setTimeout(fn,0)}){
@@ -16,7 +17,7 @@ export function createChannel(port,{part,version,issuer,origins,onState,onForget
     if(event.ports?.length){violation();return;}
     const type=typeof data?.type==='string'?data.type:'';
     if(!UNLIMITED_TYPES.includes(type)&&limited())return;
-    const message=validateInbound(data,{part,issuer,origins});
+    const message=part==='request'&&type==='prepare-request'?validatePrepareRequest(data,{origins}):validateInbound(data,{part,issuer,origins});
     if(!message){violation();return;}
     if(message.type==='forget'){onForget(message);return;}
     if(STATE_TYPES.includes(message.type)){pending.set(message.type,message);if(!scheduled){scheduled=true;defer(flush);}}

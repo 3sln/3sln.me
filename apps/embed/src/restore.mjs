@@ -78,3 +78,11 @@ export async function restoreAll(api,credentials,{issuer,pad=RESTORE_PAD_MS,slot
   if(slots>results.length&&pad>0&&!signal?.aborted)await wait(pad*(slots-results.length));
   return results;
 }
+
+/** Incremental entries bind the app's subject and the frame key, with no embed credential or claim. */
+export async function createRequestEntry({issuer,clientId,key,prepare,subjectConstraint,fetch=globalThis.fetch.bind(globalThis)}){
+ const {v,type,...inputs}=prepare,body={...inputs,clientId,subjectConstraint,presentation:'popup',delivery:'embed-popup',embedJkt:key.jkt,...prepare.intent==='grant-more'?{challengeMethod:'S256'}:{}};
+ const response=await fetch(`${issuer}/api/oauth/entries`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),mode:'cors',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer'});
+ if(!response.ok)throw new EmbedAPIError(response.status);const {entryId}=await response.json();
+ if(typeof entryId!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(entryId))throw new EmbedAPIError(502);return entryId;
+}

@@ -1,3 +1,5 @@
+import {requireRestored} from '../store/restore.mjs';
+import {bodyObjects} from '../store/bodies.mjs';
 import {projectIncoming,removeIncoming} from '../store/item-index.mjs';
 // Intake: per-parent intake configuration (spec §4.3), bridged public intake `deliver` (spec §9), and public-request
 // filtering with the spam tiers of architecture §12.1. Filtering runs after custody in `intake.drain`, so no
@@ -108,6 +110,7 @@ export class IntakeDeliver extends MailboxAction {
   const digest=await intakeDigest(args.message),txKey=KEYS.intakeTx(`${encodeURIComponent(consumer)}/${txId}`);
   const id=await sha256(globalThis.crypto,jcs(['bindlebox-intake-v1',consumer,v.jti])),bytes=args.message.parts.reduce((n,x)=>n+fromBase64url(x.dataBase64url).byteLength,0);
   return store.transaction(async tx=>{
+   await requireRestored(tx);
    // Provenance cannot be accepted after seven days. Keep both replay fences an extra day, then prune bounded work.
    let pruned=0;for(const prefix of ['intake/tx/','intake/jti/'])for(const [key,row]of await tx.list({prefix})){if(pruned>=32)break;if(row.at+8*86400000<=now){await tx.delete(key);pruned++;}}
    // Dedup answers only after provenance verified, per (consumer, tx) and (consumer, jti), and only for the same
@@ -168,7 +171,7 @@ export class IntakeDrain extends MailboxAction {
 async function boundRejected(tx,now){
  const rows=[...(await tx.list({prefix:'rejected/'})).entries()];let excess=rows.length-BOUNDS.rejectedItems;
  for(const [key,{id}] of rows){const at=Number(key.split('/')[1]);if(excess>0||at+BOUNDS.rejectedMs<now){const item=await tx.get(KEYS.item(id));await tx.delete(key);await tx.delete(KEYS.item(id));await removeIncoming(tx,id);await tx.delete(KEYS.body(id));if(item?.hot>0)await chargeUsage(tx,{bytes:-item.hot,items:-1});
-  if(item?.author?.jkt)await tx.delete(`by-jkt/${item.author.jkt}/${id}`);if(item?.bodyRef?.storage==='user')await tx.put(`storage-gc/${encodeURIComponent(item.bodyRef.key)}`,{key:item.bodyRef.key});excess--;}}
+  if(item?.author?.jkt)await tx.delete(`by-jkt/${item.author.jkt}/${id}`);if(item?.bodyRef?.storage==='user')for(const key of bodyObjects(item.bodyRef))await tx.put(`storage-gc/${encodeURIComponent(key)}`,{key});excess--;}}
 }
 // Erases expired Rejected items, then deletes queued user-storage bodies (erased items and refused-attempt orphans)
 // outside any transaction; a failed delete stays queued (BB2-R1, BB2-R7).
@@ -196,7 +199,7 @@ export class IntakeRescue extends MailboxAction {
   });
  }
 }
-const view=i=>({id:i.id,origin:i.origin,kind:i.kind,author:i.origin==='native'?{principal:i.author.principal,verified:true}:{asserted:{sender:i.asserted.sender,dmarc:i.asserted.dmarc,automation:i.asserted.automation},verified:false},subject:i.subject,receivedAt:i.receivedAt,state:i.state,priority:i.priority??'normal',tags:i.tags,tagHistory:i.tagHistory,rejectedAt:i.rejectedAt??null});
+const view=i=>({id:i.id,origin:i.origin,kind:i.kind,author:i.origin==='native'?{principal:i.author.principal,verified:i.imported?.verified!==false}:{asserted:{sender:i.asserted.sender,dmarc:i.asserted.dmarc,automation:i.asserted.automation},verified:false},subject:i.subject,receivedAt:i.receivedAt,state:i.state,priority:i.priority??'normal',tags:i.tags,tagHistory:i.tagHistory,rejectedAt:i.rejectedAt??null});
 // "Requests" View: suspected requests sorted to the bottom. Rejected view: not searchable, newest first.
 export class IntakeRequests extends MailboxQuery {
  static operation='intake.requests';static deps=['receive'];static refreshOn=['incoming-changed'];

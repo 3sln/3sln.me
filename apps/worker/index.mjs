@@ -1,3 +1,4 @@
+import {workerIntegrationPorts} from './integration-ports.mjs';
 import {hostApprovalNotices} from './approval-notices.mjs';
 import {incrementalMountable,incrementalRemote,INCREMENTAL_STORE} from '../../packages/runtime/incremental-authorization.mjs';
 import {onboardingPort,onboardingKeyReady} from '../../packages/identity/onboarding.mjs';
@@ -71,6 +72,7 @@ function resources(env,resolveIdentityBadges){
  const linkedLimits={consume:(key,window)=>env.ABUSE.get(env.ABUSE.idFromName('linked-v1:'+key)).consume(window)};
  const mailer=mailTransport(env);
  const value={...env,EVENT_BUS_WAITS_MOUNTED:env.EVENT_BUSES_ENABLED==='true'&&!!env.EVENT_BUS_WAITS,DEVELOPER_CONTACT_POPULATION:workerActivePopulation(env),BILLING_CATALOG:workerCatalogPort(env),ASSETS:assetResource(env.ASSETS),EMAIL_AVAILABLE:Boolean(mailer),WAITLIST_MAIL_AVAILABLE:typeof mailer?.sendWaitlistConfirmation==='function',WAITLIST_MAILER:mailer,IDENTITY_REPOSITORY:repository,ACCOUNTS:{get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))},SIGNUP_STATUS_CACHE_KEY:env.ABUSE,ABUSE:{waitlist:(method,input)=>env.ABUSE.get(env.ABUSE.idFromName('signup:waitlist:v1')).waitlistAction(method,input),consume:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).consume(limits),consumeSignup:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).consumeSignup(limits),signupStatus:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).signupStatus(limits)}};
+ Object.assign(value,workerIntegrationPorts(env,{describe:async query=>{const response=await env.ACCOUNTS.get(env.ACCOUNTS.idFromName(query.owner)).invoke({method:'integrationsMessagingDescribe',args:[query]});if(response?.$fault)throw Object.assign(new Error(response.$fault.message),response.$fault);return response;}}));
  const delivery=createPushTransport(env),pushTransport=delivery?{...delivery,async register({owner,subscription}){const result=await value.ACCOUNTS.get(owner).invoke({method:'registerSignupPush',args:[owner,{subscription}]});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),result.$fault);return result;}}:null;
  // Island avatar sources on operator-approved origins (EMBED_AVATAR_ORIGINS) use the global fetch, which
  // global_fetch_strictly_public keeps off private and internal addresses. Node has no equivalent guard, so it injects none.
@@ -86,7 +88,7 @@ function resources(env,resolveIdentityBadges){
  if(env.FEDERATION&&env.BROKERING_ENABLED==='true')value.FEDERATION_BROKERING={enabled:true,jwks:()=>env.FEDERATION.get(env.FEDERATION.idFromName(BROKERING_STORE)).brokeringJwks()};
  // Device grant (LA3): mounted, and so declared, only with the flag and every dependency of the declared members.
  const deviceMounted=Boolean(env.FEDERATION)&&deviceGrantMountable(env);
- if(env.FEDERATION)value.FEDERATION_AUTHORITY=federationAuthority({config:env,repository,directory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted(env)},shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
+ if(env.FEDERATION)value.FEDERATION_AUTHORITY=federationAuthority({config:env,repository,directory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted(value)},shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
  if(deviceMounted){
   const remote=async(owner,method,args)=>{const envelope=await env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).device(method,args,owner);if(!envelope.ok)throw Object.assign(new Error(envelope.error.message),envelope.error);return envelope.result;};
   value.DEVICE_GRANT=deviceGrantRunner({config:env,deviceGrant:remoteDeviceGrant({config:env,linked:engineLinkedPort(()=>value.IDENTITY_ENGINE()),limits:deviceLimits(value.ABUSE),pollLimits:linkedPollLimits,jti:deviceJti,remote,active:async owner=>(await repository.get(owner))?.status==='active'})});

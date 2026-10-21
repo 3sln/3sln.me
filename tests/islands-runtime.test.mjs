@@ -157,3 +157,12 @@ test('no P8 behaviours and no HTML/script sinks anywhere in the island sources',
   assert.equal((shell.match(/<script/g)??[]).length,2);assert.match(shell,/<script type="application\/json" id="config">\{\{CONFIG\}\}<\/script>/);assert.doesNotMatch(shell,/\sstyle=|\son[a-z]+=/i);
   assert.equal(files.filter(f=>/createPolicy\(/.test(f.text)).length,1,'exactly one Trusted Types policy');
 });
+
+
+test('request preparation is validated at the shell channel, coalesced without IO and bounded separately from other messages',T,async t=>{
+ let flush;const c=channelPair(t,'request',{defer:fn=>{flush=fn;}}),prepare={v:1,type:'prepare-request',intent:'grant-more',redirectUri:app+'/callback',state:b43,challenge:b43,requests:[{fragment:'https://tasks.example/settings/v1',fields:['day'],purpose:'x'.repeat(3000)}]};
+ c.element.postMessage({...prepare,state:'s'.repeat(43)});c.element.postMessage(prepare);c.element.postMessage({v:1,type:'session',subject:issuer+'/entities/1'});
+ await c.until(()=>c.delivered===3&&flush,'request preparation and session');flush();assert.equal(c.states.length,2);assert.deepEqual(c.states[0],prepare);assert.equal(c.received.length,0);
+ for(const value of [{...prepare,subjectConstraint:issuer+'/entities/1'},{...prepare,redirectUri:'https://evil.example/callback'},{...prepare,reason:'x'.repeat(9000)}])c.element.postMessage(value);
+ await c.until(()=>c.delivered===6,'invalid request preparations');assert.equal(c.channel.closed,true);
+});

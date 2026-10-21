@@ -13,9 +13,9 @@
 @media (forced-colors:active){:root{--c-surface:Canvas;--c-surface-raised:Canvas;--c-text:CanvasText;--c-text-muted:CanvasText;--c-accent:ButtonText;--c-on-accent:ButtonFace;--c-border:CanvasText;--c-focus:Highlight;--c-danger:CanvasText;--fixed-surface:Canvas;--fixed-text:CanvasText;--fixed-muted:CanvasText;--fixed-danger:CanvasText}}
 html,body{margin:0;block-size:100%;overflow:hidden;background:transparent}
 .part{display:none;box-sizing:border-box;block-size:100%;inline-size:100%}
-.part:target,html[data-part=avatar] #avatar\.v1,html[data-part=account-switcher] #account-switcher\.v1,html[data-part=sign-in] #sign-in\.v1{display:block}
+.part:target,html[data-part=avatar] #avatar\.v1,html[data-part=account-switcher] #account-switcher\.v1,html[data-part=sign-in] #sign-in\.v1,html[data-part=request] #request\.v1{display:block}
 /* Skeletons: avatar stays transparent (the element's own avatar shows through); outlines for the others. */
 #account-switcher\.v1:empty{background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--c-radius)}
-#sign-in\.v1:empty{border:1px solid var(--c-border);border-radius:var(--c-radius)}
+#sign-in\.v1:empty,#request\.v1:empty{border:1px solid var(--c-border);border-radius:var(--c-radius)}
 .visually-hidden{position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}

@@ -46,7 +46,7 @@ export const stages={
     if(!asset.ok&&asset.status!==304)return json({error:'not_found'},asset.status===404?404:502,{'Access-Control-Allow-Origin':'*'});
     if(!artifact&&!registryJSON&&asset.status!==304)asset=await securePage(asset);
     const merged=new Headers(asset.headers);for(const [key,value]of Object.entries(headers))merged.set(key,value);
-    if(artifact){merged.set('Content-Type',['preferences-fragment','manifest-profile'].includes(artifact.kind)?'application/json':'application/schema+json');merged.set('Content-Location',artifact.path);}
+    if(artifact){merged.set('Content-Type',['preferences-fragment','manifest-profile','slot-manifest'].includes(artifact.kind)?'application/json':'application/schema+json');merged.set('Content-Location',artifact.path);}
     else if(registryJSON)merged.set('Content-Type','application/json');
     return new Response(request.method==='HEAD'||asset.status===304?null:asset.body,{status:asset.status,headers:merged});
    }

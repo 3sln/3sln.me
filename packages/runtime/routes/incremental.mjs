@@ -1,3 +1,4 @@
+import {federationSchemas} from '../federation.mjs';
 import {clientSite} from '../../federation/client-metadata.mjs';
 import {consentContracts} from '../../consent/contracts.mjs';
 import {digest,canonical} from '../../messaging/store.mjs';
@@ -14,7 +15,7 @@ const PATH=/^\/api\/incremental\/suppressions(?:\/([0-9a-f-]{36}))?$/;
 const mounted=env=>incrementalAuthorizationEnabled(env)&&env.INCREMENTAL_AUTHORIZATION?.mounted===true;
 const fault=error=>json({error:error?.code??'invalid_request',message:error?.code?error.message:'The request could not be completed.'},status(error));
 export const stages={
- async public({request,env,path,url}){if(!['/api/incremental/schema','/api/incremental/contracts'].includes(path)||!mounted(env))return;if(request.method!=='GET')return json({error:'method_not_allowed'},405);if(path==='/api/incremental/contracts')return json({contracts:await consentContracts()});const fragment=url.searchParams.get('fragment'),schemas=typeof env.FEDERATION_SCHEMAS==='string'?JSON.parse(env.FEDERATION_SCHEMAS):env.FEDERATION_SCHEMAS??{};if(!Object.hasOwn(schemas,fragment))return json({error:'not_found'},404);const schema=schemas[fragment];return json({schema,digest:await digest(crypto,canonical(schema))});},
+ async public({request,env,path,url}){if(!['/api/incremental/schema','/api/incremental/contracts'].includes(path)||!mounted(env))return;if(request.method!=='GET')return json({error:'method_not_allowed'},405);if(path==='/api/incremental/contracts')return json({contracts:await consentContracts()});const fragment=url.searchParams.get('fragment'),schemas=federationSchemas(env);if(!Object.hasOwn(schemas,fragment))return json({error:'not_found'},404);const schema=schemas[fragment];return json({schema,digest:await digest(crypto,canonical(schema))});},
  async beforeActivity({request,env,path,url,id,context}){
   if(!mounted(env))return;if(path==='/api/incremental/preferences'&&request.method==='GET'){let site;try{site=clientSite(new URL(url.searchParams.get('client')).hostname);}catch{return json({error:'invalid_request'},400);}const prefs=await env.FEDERATION_AUTHORITY.preferences(context),preference=prefs.preferences.find(p=>p.fragment===url.searchParams.get('fragment'))??null;return json({preference,candidates:(preference?.resources??[]).filter(r=>clientSite(new URL(r.id).hostname)!==site)});}
   const match=PATH.exec(path);if(!match)return;const port=env.INCREMENTAL_AUTHORIZATION,client=url.searchParams.get('client')??undefined;

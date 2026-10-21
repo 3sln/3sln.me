@@ -177,3 +177,110 @@ One independent reviewer agent worked read-only and wrote proof-of-concept probe
 | X4-R8 | Info | (a) Cascade rows written with the flag off are applied later, by `clientId`, which can only over-revoke. (b) Owner routes must take `authTime` from the session. (c) The system disconnect reason was wrong. (d) Write amplification while blocked. | (c) and (d) fixed. (a) accepted. (b) is for the future route owner (X11). |
 
 **Checked without findings:** exclusive-only ports and the bound-owner check; owner/system actor separation; occupancy declaration, contract, state and fence gates; `cnx` changes on every incarnation; the issuance-versus-cascade race (covered by the delegation epoch); durable cascades stopping at the first failure; the `CASCADE_LIMIT` collapse; legacy behaviour with the flag off; a disabled flag never revives a paused record; outbox bounds and gap semantics.
+
+## X6 implementation
+
+Date: 2026-10-20. Subject: EXT-X6, the integration event outbox and SET delivery:
+
+- `packages/runtime/integration-events.mjs` (new);
+- `tests/integration-events.test.mjs` and the EXT-X6 case in `tests/integrations-conformance.test.mjs`;
+- one registry line each in `packages/app/providers.mjs` and `packages/runtime/account/index.mjs`.
+
+One independent reviewer agent worked read-only and wrote proof-of-concept scripts. It looked at SET forgery and replay, endpoint SSRF, snapshot data minimization and DoS through a slow endpoint. This is an agent review, not human sign-off: reviewer ___ / date ___ / outcome ___.
+
+**What was implemented (local behaviour only, behind `INTEGRATIONS_ENABLED`, default off; nothing is ingested or sent without a configured signer and egress):**
+
+- **Ingest.** The X4 outbox is drained into per-connection rows in one commit with a cursor, then acknowledged. `connection-revoked` and `connection-resumed` become SETs. An outbox gap is repaired from the current connection state.
+- **Enqueue.** Other writers enqueue in the same commit (`enqueueIntegrationEvent(tx)`) or through idempotent system Actions.
+- **Coalescing.** There is one row per fragment and per detached resource. A higher floor supersedes the pending revocations and resumes below it.
+- **SETs.** Each SET is RFC 8417, ES256, signed with the `event`-purpose brokering key and carries exactly `iss`, `sub`, `aud`, `iat`, `jti` and `events`. Every attempt is re-signed.
+- **seq.** `seq` increases strictly per connection. A changed snapshot gets a fresh `jti` and `seq`.
+- **Ordering.** Revocations go first, both per connection and across connections.
+- **Retries.** Leased attempts back off exponentially, starting at 10 s or less and capped at 1 h, for 72 h. After that the dead letter degrades the connection, or records an unacknowledged revocation (§7.3).
+- **Egress.** Both adapters are SSRF-safe. Node is DNS-pinned to public IPv4. Workers require strictly public routing plus a DoH screen. Neither follows redirects, responses are limited to 4 KiB, and each request has one deadline.
+- **Status.** An owner-visible status and log carries no payloads.
+- **Slice.** The alarm slice runs on `AccountController`, which serves both Worker and Node.
+
+| ID | Sev | Finding | Status |
+| --- | --- | --- | --- |
+| X6-S1 | Medium | The 64/512 caps refused revocations too. That aborted an X7 severance commit and stopped ingest for every connection, and held rows of paused connections never aged out. | **Fixed.** Revocations are always admitted. Over the caps they evict that connection's snapshot markers, and only a 2× hard ceiling fails. Held rows are dropped (`stale`) after the window. |
+| X6-S2 | Medium | Retries were serialized per connection. Each later row's 72 h clock started only after the row before it expired, so a dead endpoint with 64 rows stayed stuck for about 64 × 72 h. | **Fixed.** When one row expires, the connection's whole backlog expires with it in the same commit. Revocations in that backlog are recorded as unacknowledged. |
+| X6-S3 | Low | `no_endpoint` drops for built-in and endpoint-less connections filled the unacknowledged list. | **Fixed.** Only genuine delivery outcomes are recorded: expired, rejected and unknown connection. |
+| X6-S4 | Low | The exported verifier skipped the connection lookup and the `sub` check when those options were left out. | **Fixed.** Both are required (`TypeError` otherwise), and the payload `connection` must be a string. |
+| X6-S5 | Low | Token stripping applied only to objects that had both `id` and `contracts`. | **Fixed.** Any object with a string `id` is treated as a reference, and the keys are stripped at every depth inside it, including `broker`. |
+| X6-S6 | Low | With no snapshot port, held preference rows re-armed the alarm every second. | **Fixed.** Such rows count as held when computing the next wake. |
+| X6-S7 | Info | The issuer exclusion covers only the issuer's host and its subdomains, not its registrable domain. `mark` accepts any HTTPS fragment. | **Accepted, open.** DNS screening still applies. Limiting fragments to approved ones is X8's projection port. |
+| X6-S8 | Info | X6 acknowledges every X4 outbox row. X8 needs the same `seq` for pull reads. | **Fixed/recorded.** `currentSeq(tx, connection)` is exported. X6 is recorded as the sole X4 outbox consumer, and a second consumer needs its own cursor. When a gap is repaired, the terminal flag for a generation that was disconnected and reconnected inside the gap is lost. That residual is accepted, because floors still rise. |
+
+**Checked without findings:** canonical SET headers and claims; verifier order and canonical parsing (low-s, `kid` purpose, `iat` window); `jti`/`seq` freshness with no lost update; lease and settle crash consistency; coalescing never drops a needed revocation; the endpoint comes only from the pinned external snapshot; Node and Worker egress bounds; no payloads in status, audit or log; flag and actor gating; per-pass budgets.
+
+**Required before any implementation claim:**
+
+- integrator wiring: the `AccountController.alarm` hook (`integrationEventsAlarm`), `integrationEventsKick` after X4 commits, and the Worker/Node composition of `INTEGRATION_EVENT_PORTS` (a signer over the brokering store and the egress adapters);
+- X8's snapshot port;
+- production verification of Worker egress.
+
+## X7 implementation
+
+Date: 2026-10-20. Subject: EXT-X7, resource discovery and brokered records:
+
+- `packages/federation/resource-discovery.mjs` and `packages/federation/brokered.mjs` (new);
+- `packages/runtime/routes/integrations.mjs` (new: owner routes and the account slice);
+- one line each in the route, account-slice and provider registries;
+- `tests/resource-discovery.test.mjs` and `tests/brokered-records.test.mjs`.
+
+One independent reviewer agent worked read-only, wrote proof-of-concept probes and re-verified the fixes. It looked at confused-deputy brokering, discovery-response injection, SSRF and DoS, and cross-connection or cross-generation record mixups. This is an agent review, not human sign-off: reviewer ___ / date ___ / outcome ___.
+
+**What was implemented (local behaviour only, behind `INTEGRATIONS_ENABLED`; records, `describe` and the severance hooks also need `BROKERING_ENABLED`; both default off):**
+
+- **Discovery.** Only the provider calls the discovery endpoint, for an owner action or for revalidation.
+  - Each call carries a fresh 60 s `discover` token whose audience is the pinned endpoint and whose `client_id` is the issuer.
+  - Queries are normalized against the pinned manifest.
+  - Responses are bounded to 64 KiB and 100 items. Invalid items are dropped and only known members are copied. Integration error text is never shown.
+  - Owner searches are cached for at most 5 minutes per (subject, connection, generation, endpoint, query). Exact lookups always go out.
+- **Egress.** `createIntegrationEgress` accepts HTTPS public DNS names only: no IP literals, special-use names, ports, userinfo or the issuer's own host.
+  - Every resolved address must be public.
+  - Redirects are never followed, and only identity encoding is accepted.
+  - One deadline covers resolution, connection and body, and the body has a streaming byte bound.
+  - A DoH screen is included for Workers.
+- **Budgets.** Windows apply per connection and pool, per account, per integration origin and per process, plus a per-origin concurrency limit.
+  - Cool-downs apply per (connection, origin). An origin cools down for everyone only after three distinct connections fail.
+- **Records.** A record is the provider-owned coupling of connection, integration resource, generation and incarnation, with assignments of (field or slot binding, consumer, contracts, grant).
+  - Registration trusts only a fresh authenticated lookup.
+  - Slot bindings take their contracts from the slot pin and admit only a provider feature that consumes that slot.
+  - Revalidation follows §4.4. A resume leaves records stale until an authenticated lookup rebinds them, and a reconnect never revives them.
+  - Detach, unassign, narrowing and unavailability commit severance rows for X8.
+- **`describe` (C1b).** The messaging occupant's mailbox `describe` is an `invoke` token for the `messaging-address` provider feature, valid 60 s, with exactly `{mailbox: [describe]}` and a grant tied to the seat incarnation. The chain seat → record → connection → generation is re-checked, and the envelope is validated.
+  - `integrationsMessagingDescribe` is the `MESSAGING_DESCRIBE` port: it validates against bindlebox §2.3 on the client_id origin and records the ingress on the seat.
+  - Scoping `describe` (§5.6) uses purpose `describe`.
+
+| ID | Sev | Finding | Status |
+| --- | --- | --- | --- |
+| X7-R1 | Medium-High | The failure cool-down was keyed by integration origin only, in a process-wide budget. One tenant could switch an integration off for every tenant, for example by getting 401s or by sending oversized pages. Local concurrency refusals counted against the integration and against connection health. | **Fixed.** Cool-downs apply per (connection, origin). An origin cools down only after three distinct connections fail. Only 5xx, 429 and transport failures count, so 400/401/403/404 are neutral. Local pressure is a neutral `egress_busy`. The re-review then found that the new process window (1200/min) could be drained by one owner with many self-hosted integrations; that is fixed with a per-account window of 60/min. |
+| X7-R2 | Medium | Anonymous descriptor requests drew on the owner's discovery allowance: failures were not cached, and a stale record caused a rebind lookup. | **Fixed.** `describe` draws its own pool (half of the connection allowance). Failures are remembered per (owner, seat incarnation) for 60 s. The public path never rebinds; the alarm hook (`integrationsRevalidateDue`) and owner revalidation rebind stale records. |
+| X7-R3 | Medium | Rebind and re-registration narrowed contracts without severance rows, so X8 would never revoke the affected grants. | **Fixed.** One `narrow()` helper writes `narrowed` rows in register, reconfirm and revalidate. Rebind was removed. |
+| X7-R4 | Medium | A full severance backlog refused detach and unassign, which blocks revocation and breaks the commit-first ordering of §7.2. | **Fixed.** Revocations are never refused. Past 1024 rows they collapse into one `overflow` row per connection, which X8 must treat as revoking every grant of that connection. Overflow rows are listed separately. |
+| X7-R5 | Medium | The ingress origin was unchecked when the seat carried no app origin. | **Fixed.** The ingress must be on the client_id origin, and must equal the seat origin when one is present. |
+| X7-R6 | Low | Describe rebound on the first assignment's contract rather than the mailbox contract. | **Moot.** Describe no longer rebinds. |
+| X7-R7 | Low | Eviction was first-in-first-out, so a burst of new keys reset hot windows. There was no global budget. | **Fixed.** Eviction is least-recently-used, and there is a process window plus the optional durable fleet window. **Open:** Node has no DNS-pinned POST egress, so the client-metadata rebinding residual applies. Revalidation prunes ended records without `detached` rows, which is covered by the connection-level revocation (noted). |
+
+**Checked without findings:**
+
+- Discover tokens carry no resource or grant.
+- Feature tokens require a slot binding, a feature listed in `PROVIDER_CONSUMERS` and a mailbox assignment.
+- There are no cross-integration sends: endpoints are bound to the X3 origin and path prefix, resource IDs to the rpc origin, and the record index is per connection.
+- Response parsing is free of prototype issues, and exact lookups drop extra IDs.
+- Routes run behind session, Origin and CSRF checks. `integrationsSearch` checks the account owner. The owner and system actors are separated.
+- Commits re-check generation and incarnation, and `mintable` re-checks liveness inside its transaction.
+
+**Required before any implementation claim:**
+
+- Integrator wiring:
+  - `BROKERING_MINT` (mintAccessToken over the brokering key-set instance);
+  - `INTEGRATION_EGRESS` (Worker: strictly public fetch plus the DoH screen; Node: a DNS-pinned transport);
+  - `MESSAGING_DESCRIBE: messagingDescribe(controller)`, or a links.mjs fallback;
+  - the account alarm calling `integrationsRevalidateDue`.
+- The §8 hint endpoint, which needs an issuer-wide connection → account directory and client-key egress.
+- X8 draining the severance rows, acknowledging only through the highest seq it processed, and minting from `mintable`.
+- The AMD-C10 `x-bindle-brokerable` and `introspect` checks at registration, which need pinned contract metadata.
+- Production verification of egress.

@@ -65,7 +65,7 @@ export class AuthorizationEntries {
  intents(){return [...ENTRY_INTENTS.filter(intent=>intent!=='end-session'||this.endSession),...this.incremental?INCREMENTAL_INTENTS:[]];}
  /** Manifest members for mounted entry routes. The components profile also needs DPoP (embed proofs) and an adapter
   * that actually serves the embed origin, which only the root adapter knows (`components`). */
- manifest({components=false}={}){const entry=entryManifest(this.issuer,{intents:this.intents()});return components&&this.embedOrigin&&this.dpop?{...entry,...componentsDeclaration({profile:COMPONENTS_PROFILE,embedOrigin:this.embedOrigin})}:entry;}
+ manifest({components=false}={}){const entry=entryManifest(this.issuer,{intents:this.intents()});return components&&this.embedOrigin&&this.dpop?{...entry,...componentsDeclaration({profile:COMPONENTS_PROFILE,embedOrigin:this.embedOrigin},{incremental:!!this.incremental})}:entry;}
  sharded(){return typeof this.store==='function'||this.shard!==undefined;}
  storeFor(shard){if(this.shard!==undefined&&shard!==this.shard)fail('temporarily_unavailable','Application sign-in is not available.');return typeof this.store==='function'?this.store(shard):this.store;}
  /** The entry's hash and the store of its shard. */
@@ -101,9 +101,8 @@ export class AuthorizationEntries {
   // `configure` yields no code, so it carries no PKCE challenge and no DPoP key (incremental-authorization §3, §6.2).
   if(!client?.redirectUris?.includes(input.redirectUri)||(configure?input.challengeMethod!==undefined||input.challenge!==undefined||input.dpopJkt!==undefined:input.challengeMethod!=='S256'||typeof input.challenge!=='string'||!ID.test(input.challenge))||typeof input.state!=='string'||!/^[A-Za-z0-9._~-]{16,512}$/.test(input.state)||!this.intents().includes(input.intent)||!['redirect','popup'].includes(input.presentation))generic();
   if(embed?input.delivery!=='embed-popup'||!this.embedOrigin||origin!==this.embedOrigin||input.presentation!=='popup'||input.intent==='end-session'||!jktPattern.test(input.embedJkt??''):input.embedJkt!==undefined||origin!==undefined&&origin!==client.origin)generic();
-  // Incremental entries take no embedded delivery until the island `request` part (IA-4) and no login hint (the subject
-  // is constrained); their members are refused on every other intent.
-  if(incremental?embed||input.loginHint!==undefined:input.reason!==undefined||input.target!==undefined||input.suggestion!==undefined)generic();
+  // Incremental entries constrain the subject and never take a login hint; their members are refused on other intents.
+  if(incremental?input.loginHint!==undefined:input.reason!==undefined||input.target!==undefined||input.suggestion!==undefined)generic();
   const constrained=['reauthenticate','end-session',...INCREMENTAL_INTENTS].includes(input.intent);
   if(constrained!==(input.subjectConstraint!==undefined)||constrained&&(typeof input.subjectConstraint!=='string'||!input.subjectConstraint.startsWith(`${this.issuer}/entities/`)||!UUID.test(input.subjectConstraint.slice(this.issuer.length+10))))generic();
   if((input.intent==='reauthenticate')!==(input.maxAge!==undefined)||input.maxAge!==undefined&&(!Number.isSafeInteger(input.maxAge)||input.maxAge<0||input.maxAge>86400))generic();
@@ -213,7 +212,7 @@ export class AuthorizationEntries {
  }
  async complete(store,hash){await store.transaction(async tx=>{const current=await tx.get(`entry/${hash}`);if(current&&!current.completed){current.completed=true;await tx.set(`entry/${hash}`,current);}});}
  /** `grant-more` returns a code (outcomes ride the token response); `configure` returns exactly result, state, iss. */
- incrementalRedirect(record,completion){const url=new URL(record.redirectUri);for(const [k,v] of Object.entries({...typeof completion?.code==='string'?{code:completion.code}:{result:completion.result},state:record.state,iss:this.issuer}))url.searchParams.set(k,v);return {redirectUri:url.href};}
+ incrementalRedirect(record,completion){const result={...typeof completion?.code==='string'?{code:completion.code}:{result:completion.result},state:record.state,iss:this.issuer};if(record.attested)return result;const url=new URL(record.redirectUri);for(const [k,v] of Object.entries(result))url.searchParams.set(k,v);return {redirectUri:url.href};}
  /** Owner decision on an incremental entry. Decline and the blocked notice's return need the owner too: they advance
   * the ladder and may record a suppression. A retry after completion returns the stored answer (CX §6.7). */
  async decideIncremental(entryId,context,input,page){

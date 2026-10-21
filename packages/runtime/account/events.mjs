@@ -19,6 +19,7 @@ import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {eventBusProvider,EVENT_BUS_OPERATIONS,EVENT_BUS_OWNER_OPERATIONS,EVENT_BUS_APP_OPERATIONS,ApproveEventBusReader,RevokeEventBusReader,SweepEventBuses,EventBusDescriptors} from '../../app/domains/events.mjs';
 import {busKeys,eventBusesEnabled,EVENT_BUS_CONTRACT,busWaitsPort} from '../../events/index.mjs';
 import {BILLING_STATE_KEY,entitlementFromState} from '../../billing/catalog.mjs';
+import {withDoorbellKick} from '../../events/doorbell.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 
 const byName=Object.fromEntries(EVENT_BUS_OPERATIONS.map(Operation=>[Operation.operation,Operation]));
@@ -35,9 +36,9 @@ const engines=new WeakMap();
 function eventBusEngine(c){
  let engine=engines.get(c);
  if(!engine){
-  let keys;const notifier=eventBusWaits(c.config);
+  let keys;const waits=eventBusWaits(c.config),notifier=withDoorbellKick(waits,owner=>c.integrationEventsKick(owner),{store:c.metadata});
   engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,accountStore:c.metadata,eventBus:eventBusProvider({enabled:eventBusesEnabled(c.config),keys:()=>keys??=busKeys(c.config),issuer:c.config.APP_ORIGIN,
-   plan:async store=>{const state=await store.get(BILLING_STATE_KEY);return entitlementFromState(state,Date.now(),c.config).plan==='free'?'free':'paid';},notifier,waits:!!notifier&&c.config.EVENT_BUS_WAITS_MOUNTED===true})}});
+   plan:async store=>{const state=await store.get(BILLING_STATE_KEY);return entitlementFromState(state,Date.now(),c.config).plan==='free'?'free':'paid';},notifier,waits:!!waits&&c.config.EVENT_BUS_WAITS_MOUNTED===true})}});
   engines.set(c,engine);
  }
  return engine;
@@ -60,11 +61,12 @@ function clientOrigin(c,clientId){
 
 export const methods={
   async eventBusOwner(owner,{operation,id,input}={}){
-   if(!eventBusesEnabled(this.config)||typeof operation!=='string'||!EVENT_BUS_OWNER_OPERATIONS.includes(operation))notFound();
-   await this.warm(owner);let value=shape(input);
+   if(!eventBusesEnabled(this.config)||typeof operation!=='string'||![...EVENT_BUS_OWNER_OPERATIONS,'events.push','events.subscriptions'].includes(operation))notFound();
+   await this.warm(owner);if(['events.push','events.subscriptions'].includes(operation))return this.eventDoorbellOwner(owner,{operation,id,input});let value=shape(input);
    if(operation==='events.create'){if(!plain(value)||Object.keys(value).some(key=>key!=='url')||typeof value.url!=='string')throw new StorageError('invalid_request','Choose a registered feed manifest.');value={url:value.url,manifest:reviewedManifest(this,value.url)};}
    await this.scheduleAlarm(Date.now()+600000);
    const result=await run(this,new byName[operation]({actor:{kind:'owner',owner},...id!==undefined?{id}:{},...value!==undefined?{input:value}:{}}));
+   if(operation==='events.delete')await this.eventDoorbellCancel(owner,{id});
    if(['events.purge','events.delete'].includes(operation))await this.eventBusSweep(owner).catch(()=>{});return result;
   },
   async eventBusReader(owner,{operation,id,input}={}){
@@ -72,7 +74,7 @@ export const methods={
    await this.warm(owner);const Operation=operation==='approved'?ApproveEventBusReader:RevokeEventBusReader;let value=shape(input);
    // One epoch derivation with the resource handler: `grant:<readSince>` (review hardening note on EV2-S1).
    if(operation==='approved'){const {clientId,readSince,history}=value??{};if(typeof readSince!=='string'||!readSince||readSince.length>200)throw new StorageError('invalid_request','Reader approval needs its read-approval identity.');value={clientId,epoch:`grant:${readSince}`,...history!==undefined?{history}:{}};}
-   return run(this,new Operation({actor:{kind:'system',owner},...id!==undefined?{id}:{},input:value}));
+   const result=await run(this,new Operation({actor:{kind:'system',owner},...id!==undefined?{id}:{},input:value}));if(operation==='revoked')await this.eventDoorbellCancel(owner,{id,clientId:value?.clientId});return result;
   },
   async eventBusSweep(owner){if(!eventBusesEnabled(this.config))return {more:false};return run(this,new SweepEventBuses({actor:{kind:'system',owner}}));},
   async eventBusDescriptors(owner){if(!eventBusesEnabled(this.config))return [];return run(this,new EventBusDescriptors({actor:{kind:'system',owner}}));},
@@ -94,8 +96,7 @@ export const rpc={
 export async function eventBusResourceMethod(c,owner,context){
  if(!eventBusesEnabled(c.config))notFound();
  if(context.contract!==EVENT_BUS_CONTRACT)throw new StorageError('unsupported_contract','Unsupported contract.',400);
- // Push doorbells are EV-3; until then every subscription request is unsupported (never silently accepted).
- if(!['publish','read'].includes(context.method))throw new StorageError('unsupported_method','Unsupported feed method.',400);
+ if(!['publish','read','subscribe','unsubscribe'].includes(context.method))throw new StorageError('unsupported_method','Unsupported feed method.',400);
  const prefix=`${c.config.APP_ORIGIN}/entities/${owner}/buses/`,id=typeof context.resource==='string'&&context.resource.startsWith(prefix)?context.resource.slice(prefix.length):'';
  if(!UUID.test(id))forbidden();
  if(context.authority!=='bindle'||!context.epoch||typeof c.config.FEDERATION_IDENTITY_CHECK!=='function'||await c.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true)forbidden();
@@ -107,6 +108,7 @@ export async function eventBusResourceMethod(c,owner,context){
   check:async({bus,method})=>({allowed:method===context.method&&bus.id===id&&grant.fragment===bus.manifest&&bareDigest(grant.digest)===bareDigest(bus.digest),epoch:`grant:${grant.readSince}`,history:grant.history===true}),
   live:async(tx,who)=>{const r=await tx.get('resource/'+who.connection.id);return r?.owner===owner&&r.kind==='app-connection'&&r.status==='active'&&r.generation===who.connection.generation&&r.clientId===who.clientId;},
  };
+ if(['subscribe','unsubscribe'].includes(context.method)){if(!plain(context.args)||Object.keys(context.args).length)throw new StorageError('invalid_request','Unsupported feed request.');return c.eventDoorbellApp(owner,{method:context.method,id,actor,resource:context.resource,epoch:`grant:${grant.readSince}`});}
  const Operation=EVENT_BUS_APP_OPERATIONS[context.method];
  // EV2-S4: bounded opportunistic maintenance at most every 10 minutes per controller; the account alarm hook is an
  // integration hunk required before the flag is enabled (idle buses are swept only then).

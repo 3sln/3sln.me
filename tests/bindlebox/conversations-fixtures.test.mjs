@@ -98,7 +98,7 @@ export async function createMesh({names=['alice','bob','carol','dave'],seed=1,ru
    for(const name of accept){const {invitations}=await m.run(name,'conversations.invitations');const inv=invitations.find(i=>i.conversationId===created.conversationId);await m.run(name,'conversations.accept',{itemId:inv.itemId,acceptListed});}
    await m.settle();return created.conversationId;
   },
-  texts:async(name,cid)=>(await m.get(name,cid)).timeline.map(e=>e.text),
+  texts:async(name,cid)=>{const out=[];let offset=0;do{const page=await m.run(name,'conversations.get',{conversationId:cid,limit:100,offset});out.push(...page.timeline.map(e=>e.text));offset=page.pagination.next;}while(offset!==null);return out;},
   order:async(name,cid)=>(await m.get(name,cid)).timeline.map(e=>e.eventId),
   peerStates:async(name,cid)=>Object.fromEntries((await m.get(name,cid)).peers.map(p=>[[...parties.values()].find(x=>x.principal.subject===p.principal.subject).name,p.state])),
   tasks:async name=>[...(await parties.get(name).store.list({prefix:'bb:send:task/'})).values()],

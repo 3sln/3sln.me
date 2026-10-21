@@ -178,6 +178,7 @@ test('chromium: partial declarations: login without select-account, and a profil
   await page.goto(app+'/popup');await ready(page);
   const caps=await page.evaluate(()=>document.querySelector('bindle-session').capabilities);
   assert.ok(caps.islands.signIn);assert.equal(caps.islands.avatar,null);assert.equal(caps.islands.switcher,null);
+  await page.waitForFunction(()=>document.querySelector('bindle-sign-in').state.islands==='mounting');
   assert.equal(await page.evaluate(()=>document.querySelector('bindle-sign-in').state.islands),'mounting','the sign-in island mounts; the standard button shows meanwhile');
   await popupSignIn(f,()=>page.getByRole('button',{name:'Continue with 3sln.example'}).click());
   await page.getByRole('button',{name:/^Account: /}).click();

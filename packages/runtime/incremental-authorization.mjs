@@ -1,3 +1,4 @@
+import {federationSchemas} from './federation.mjs';
 import {verifyProof,dpopNonces,consumeProof,DPOP_TYP} from '../federation/dpop.mjs';
 import {consentContracts} from '../consent/contracts.mjs';
 // IA-1/IA-2 composition (docs/spec/incremental-authorization.md). Shared by the Worker and Node adapters. Nothing is
@@ -57,7 +58,7 @@ import {pinSchema} from '../federation/schema.mjs';
 /** Durable pre-owner state; all owner data is read/committed on its FederationService shard. */
 export function federationIncremental({config,store,shard}){
  if(!incrementalMountable(config))return null;
- const schemas=typeof config.FEDERATION_SCHEMAS==='string'?JSON.parse(config.FEDERATION_SCHEMAS):config.FEDERATION_SCHEMAS??{},clients=typeof config.FEDERATION_CLIENTS==='string'?JSON.parse(config.FEDERATION_CLIENTS):config.FEDERATION_CLIENTS??[];
+ const schemas=federationSchemas(config),clients=typeof config.FEDERATION_CLIENTS==='string'?JSON.parse(config.FEDERATION_CLIENTS):config.FEDERATION_CLIENTS??[];
  const call=name=>input=>{const prefix=`${config.APP_ORIGIN}/entities/`,owner=input?.subject?.startsWith(prefix)?input.subject.slice(prefix.length):'';if(!/^[a-f0-9-]{36}$/.test(owner))throw Object.assign(new Error('Invalid account.'),{code:'forbidden'});return shard(owner).incrementalPort(name,input);};
  const provider=createIncrementalProvider({store,issuer:config.APP_ORIGIN,registrableDomain:clientSite,clients:id=>clients.find(c=>c.id===id),consent:{model:async input=>createConsentProvider({contracts:await consentContracts(),manifests:Object.fromEntries(Object.entries(schemas).map(([url,schema])=>[url,{schema}])),apps:Object.fromEntries(clients.map(c=>[c.id,{reviewed:true}])),registrableDomain:clientSite}).model(input)},
   pinSchema:url=>pinSchema({store,crypto,schemaHosts:Object.keys(schemas).map(url=>new URL(url).host),schemaFetcher:async url=>{if(!Object.hasOwn(schemas,url))throw Object.assign(new Error('Unsupported fragment.'),{code:'unsupported_fragment'});return structuredClone(schemas[url]);}},url),

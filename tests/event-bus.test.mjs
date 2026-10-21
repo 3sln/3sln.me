@@ -135,7 +135,7 @@ test('account adapter: owner create from the reviewed registry only; the resourc
  const origin='https://3sln.example',client='https://tasks.example/bindle/client.json',checks=[];
  const c={metadata,config:{EVENT_BUSES_ENABLED:'true',APP_ORIGIN:origin,KEY_ENCRYPTION_KEY:Buffer.alloc(32,3).toString('base64'),FEDERATION_SCHEMAS:JSON.stringify({[url]:manifest()}),FEDERATION_IDENTITY_CHECK:async(owner,epoch)=>epoch==='epoch-1'},
   scheduleAlarm:time=>metadata.setAlarm(time),warm:async()=>{},apps:{check:async(...args)=>{checks.push(args);return true;}}};
- Object.assign(c,methods);
+ Object.assign(c,methods);c.eventDoorbellApp=async()=>{throw Object.assign(new Error('Not found.'),{code:'not_found'});};
  assert.equal(await code(c.eventBusOwner(OWNER,{operation:'events.create',input:{url:url+'/unregistered'}})),'untrusted_schema_host');
  assert.equal(await code(c.eventBusOwner(OWNER,{operation:'events.create',input:{url,manifest:{forged:true}}})),'invalid_request','the owner cannot supply the manifest document');
  assert.equal(await code(c.eventBusOwner(OWNER,{operation:'events.reader-approved',input:{}})),'not_found','system operations are not owner-dispatchable');
@@ -145,7 +145,7 @@ test('account adapter: owner create from the reviewed registry only; the resourc
  const start=await eventBusResourceMethod(c,OWNER,context('read',{}));assert.equal(start.records.length,0);
  const published=await eventBusResourceMethod(c,OWNER,context('publish',{type:'created',data:{task:'t1'}}));assert.ok(published.receipt);
  const page=await eventBusResourceMethod(c,OWNER,context('read',{cursor:start.cursor}));assert.deepEqual(page.records[0].publisher,{kind:'application',client_id:client,origin:'https://tasks.example'});
- assert.equal(await code(eventBusResourceMethod(c,OWNER,context('subscribe',{}))),'unsupported_method','push doorbells are EV-3');
+ assert.equal(await code(eventBusResourceMethod(c,OWNER,context('subscribe',{}))),'not_found','doorbells remain unavailable without integration delivery ports');
  assert.equal(await code(eventBusResourceMethod(c,OWNER,{...context('read',{}),grant:undefined})),'forbidden','no fragment grant, no access');
  assert.equal(await code(eventBusResourceMethod(c,OWNER,context('read',{},{grant:{fragment:url,digest:'other',readSince:'approval-1'}}))),'forbidden','a grant pinned to another manifest digest');
  assert.equal(await code(eventBusResourceMethod(c,OWNER,context('read',{},{grant:{fragment:url+'/v2',digest,readSince:'approval-1'}}))),'forbidden','a grant on another manifest URL');

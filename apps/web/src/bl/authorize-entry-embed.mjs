@@ -39,6 +39,6 @@ export async function runHandshake({win,api,entryId,embedOrigin,entryToken,timeo
 export async function deliverToOpener({win,embedOrigin,entryId,result,timeoutMs=ACK_MS,timers={}}){
  const opener=win.opener;if(!opener||!embedOrigin)return false;
  const ack=awaitMessage(win,{source:opener,origin:embedOrigin,accept:data=>validAck(data,entryId),timeoutMs,...timers});
- try{opener.postMessage({v:1,type:'bindle-embed-done',entry:entryId,code:result.code,state:result.state,iss:result.iss,claim:result.claim},embedOrigin);}catch{return false;}
+ try{opener.postMessage({v:1,type:'bindle-embed-done',entry:entryId,...typeof result.code==='string'?{code:result.code}: {result:result.result},state:result.state,iss:result.iss,...typeof result.claim==='string'?{claim:result.claim}:{}},embedOrigin);}catch{return false;}
  return Boolean(await ack);
 }

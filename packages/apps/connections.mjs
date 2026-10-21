@@ -2,6 +2,7 @@ import {digest} from '../messaging/store.mjs';
 import {validateIntegrationManifest} from '../federation/integrations.mjs';
 import {validateSlotManifest,validateExtensions,createSlotOperation} from '../federation/extensions.mjs';
 import {MESSAGING_INGRESS_SLOT} from '../links/types.mjs';
+import classifierSlot from '../../docs/artefacts/slots/item-classifier-v1.json' with {type:'json'};
 export class AppConnectionError extends Error{constructor(code,message,status=400){super(message);Object.assign(this,{code,status});}}
 const fail=(code,message,status)=>{throw new AppConnectionError(code,message,status);};
 const prefix='resource/';
@@ -26,7 +27,9 @@ const BLOCKED=['suspended','purge-review','purging'];
 export const DELEGATION_SLOTS=Object.freeze([MESSAGING_INGRESS_SLOT]);
 // Provider-recognized slot manifests (trusted pins, exact URL). The messaging-ingress manifest is bindlebox.md §2.1.
 export const MESSAGING_INGRESS_MANIFEST=Object.freeze({id:MESSAGING_INGRESS_SLOT,title:'Receives messages',description:'The one app that receives peer messages, contact links and bridged email for you.',publisher:'https://spec.bindle.example',fields:{occupants:{title:'Messaging app',type:'resource',cardinality:{min:0,max:1},contracts:['https://spec.bindle.example/bindlebox/v1/contracts/mailbox']}},slot:{v:1,field:'occupants',selection:'exclusive',consumers:['provider'],supersedes:null}});
-export const RECOGNIZED_SLOTS=Object.freeze({[MESSAGING_INGRESS_SLOT]:MESSAGING_INGRESS_MANIFEST});
+const freeze=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
+export const ITEM_CLASSIFIER_MANIFEST=freeze(classifierSlot);
+export const RECOGNIZED_SLOTS=Object.freeze({[MESSAGING_INGRESS_SLOT]:MESSAGING_INGRESS_MANIFEST,[classifierSlot.id]:ITEM_CLASSIFIER_MANIFEST});
 const pad=n=>String(n).padStart(16,'0');
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.getPrototypeOf(v)===Object.prototype;
 const only=(v,names)=>plain(v)&&Object.keys(v).every(k=>names.includes(k));

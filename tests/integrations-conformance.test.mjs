@@ -88,7 +88,28 @@ test('fixture supports loopback HTTP with logical HTTPS audiences and rejects ma
 
 test.todo('EXT-X3/X4: provider manifest snapshots, confidential-client authentication and lifecycle binding');
 test.todo('EXT-X5/X9b: ES256 JWS/SET verification, lookup before fetch, key rotation and DPoP vectors');
-test.todo('EXT-X6: provider transactional outbox, coalescing, re-signed retries and push/pull seq ordering');
+// EXT-X6: the provider side of §6 against this fixture. The fixture verifies every SET with the X6 reference verifier
+// (lookup before any key, ES256 under the event-purpose brokering key, typ, aud, sub, iat) instead of opaque stubs.
+test('EXT-X6: provider outbox SETs are verified, coalesced, re-signed on retry and applied in seq order',async t=>{
+ const {brokeringKeys}=await import('../packages/federation/signing.mjs'),E=await import('../packages/runtime/integration-events.mjs');
+ const store=new Map();let tail=Promise.resolve();
+ const metadata={transaction(fn){const run=tail.then(()=>fn({get:async k=>structuredClone(store.get(k)),set:async(k,v)=>{store.set(k,structuredClone(v));},put:async(k,v)=>{store.set(k,structuredClone(v));},delete:async k=>{store.delete(k);},list:async({prefix})=>new Map([...store].filter(([k])=>k.startsWith(prefix)).sort(([a],[b])=>a<b?-1:1).map(([k,v])=>[k,structuredClone(v)]))}));tail=run.catch(()=>{});return run;},get:async k=>structuredClone(store.get(k)),list:async({prefix})=>new Map([...store].filter(([k])=>k.startsWith(prefix)).sort(([a],[b])=>a<b?-1:1))};
+ const clock=fakeClock(Date.UTC(2026,9,20)),keys=brokeringKeys({issuer:ISSUER,secret:Buffer.alloc(32,5).toString('base64'),metadata,clock:()=>clock.now()});
+ const server=createIntegrationServer({clock,verifyToken:async(token,{kind,audience})=>kind==='event'?(await E.verifySecurityEventToken(token,{subject:SUBJECT,keys:await keys.jwks(),issuer:ISSUER,audience,connection:({connection})=>connection===CONNECTION,now:clock.now()})).claims:null});t.after(()=>server.close());
+ const connection={id:CONNECTION,clientId:INTEGRATION+'/bindle/client.json',generation:1,state:'active',integration:{kind:'external',snapshot:{manifest:{events_endpoint:server.endpoints.events}}}};
+ const sent=[],down={on:false},values={v:0};
+ const egress={async send({url,body}){sent.push(body);if(down.on)throw new Error('down');const r=await server.fetch(url,{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body});return {status:r.status,bytes:new Uint8Array()};}};
+ const Provider=E.integrationEventsProvider({enabled:true,issuer:ISSUER,subject:()=>SUBJECT,signer:keys,egress,snapshot:async()=>({revision:'r'+values.v,values:{...values}}),connections:()=>({outbox:async()=>({events:[],seq:0,gap:false}),ack:async()=>({}),list:async()=>[connection],health:async()=>({})})});
+ const harness=await createTestEngine({clock,providers:{integrationEvents:Provider}});t.after(()=>harness.dispose());
+ const actor={kind:'system',owner:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'},mark=()=>harness.perform(new E.MarkPreferencesUpdated({actor,input:{connection:CONNECTION,fragment:FRAGMENT}})),deliver=()=>harness.perform(new E.DeliverIntegrationEvents({actor}));
+ values.v=1;await mark();values.v=2;await mark();await deliver();
+ down.on=true;values.v=3;await mark();await deliver();clock.advance(10000);down.on=false;await deliver();
+ const claims=sent.map(token=>JSON.parse(Buffer.from(token.split('.')[1],'base64url')));
+ assert.equal(sent.length,3,'two markers coalesced into one SET, then one retried SET');
+ assert.equal(claims[1].jti,claims[2].jti);assert.notEqual(claims[1].iat,claims[2].iat);
+ const state=await server.snapshot();assert.deepEqual(state.events.map(e=>e.seq),[1,2]);assert.deepEqual(state.connections[0].preferences[FRAGMENT].values,{v:3});
+});
+test.todo('EXT-X8: push/pull seq comparison against preferences/v2 read results');
 test.todo('EXT-X7: provider SSRF-safe discovery, item validation, hints and unavailable-record reconfirmation');
 test.todo('EXT-X8: preferences v1/v2 projection and atomic severance under mint/refresh races and offline delivery');
 test.todo('EXT-X8/X9b: write-capable contracts require live introspection without cached authorization');
