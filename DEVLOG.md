@@ -2278,3 +2278,19 @@ Pending core hunks: the `EMAIL_BRIDGE` binding and migration; account RPCs `emai
 Needing sign-off: a 7-days-less-1-hour hold (vs §13's 30 days); follow-up without mailbox confirmation; the authserv attestation. Not exercised against real Email Routing or reply(). Reviewer ___ Date ___ Outcome ___.
 
 BRIDGE integration (Codex, coordinator-verified): `EMAIL_BRIDGE` binding and migration, account RPCs, brokered delivery to the intake occupant, signing-key publication, owner settings, acceptance follow-up, all behind default-off flags; production secret setup documented in the review. EB-5 fixed: BindleBox charges budgets by verified envelope and provenance data, with regression tests. Gates: core 2012, Worker 67, UI-state 290, BindleBox 196, DOM, build, dry run, audit; e2e 213 (4 WebKit skips). External Email Routing is unverified.
+
+## 2026-10-21 — Consolidated open items; naming and threshold notes
+
+[Open items and sign-off checklist](docs/release/open-items.md) consolidates:
+- 37 pending owner decisions;
+- per-flag production gates for 15 flag groups;
+- open review findings (0 High, 6 Medium, 15 Low/Info);
+- 22 unsigned sign-off groups;
+- environment limits.
+Where review tables lag DEVLOG, DEVLOG is treated as newer.
+
+Corrections recorded here so the ledger matches the conversation:
+- **App name.** The coordinator's "Parley" recommendation was withdrawn after a search found an existing enterprise messaging platform named Parley and a federated decentralized chat network named Parley. "Parlay" reads as a betting term. A naming pass with clash checks was offered and is pending the user.
+- **Spam thresholds.** The coordinator suggested starting auto-reject at 0.98 rather than 0.97, pending the user.
+- **Signup offer tension.** Offering a bundled messaging instance at signup must not conflict with "built-in occupants are never preselected"; the offer must be an explicit opt-in step, not a preselected occupant.
+- **Roadmap update.** Conflict-resolution item 14 (30 d / 7 d app credentials) is superseded by the later lifetime model: no absolute lifetime, 180-day idle, 15/60-minute access tokens.

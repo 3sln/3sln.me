@@ -128,7 +128,7 @@ The linked-approval decisions are recorded in [§15](linked-approval.md#15-open-
 11. Manifest builders: X2 creates the registry, and others append to it.
 12. Beaming, search and lifecycle engine migrations come after cutover; ACT hooks export/erase into lifecycle.
 13. `contact-delivery*`: copied in B1, deleted at cutover.
-14. App credential lifetime: 30 d / 7 d idle, only with a fresh sign-in (user decision).
+14. App credential lifetime: superseded by the later user decision: no absolute lifetime, 180-day idle expiry, 15 min bearer / 60 min DPoP access tokens, one fresh step-up at approval.
 15. `bl/release.mjs` edits are serialized: W0, LA4, LA5, ACT-3, BB-CUT.
 16. Classifier: X10 (occupant) and B5 (consumer) share one slot manifest, settled before B8.
 
