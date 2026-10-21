@@ -39,7 +39,7 @@ async function fakeProvider({origin=PROVIDER,recipient=PRINCIPAL,clock,deliver,c
   },
   async args(mail,{jti=crypto.randomUUID(),signer=pair.privateKey,iss=origin,to=recipient,ch=channel,receivedAt=mail.receivedAt}={}){
    const message={parts:[{mimeType:'text/plain',dataBase64url:B.base64url(encoder.encode(mail.text))}]};
-   const provenance=await sign({alg:'ES256',kid:keyId,typ:'bindle-intake-provenance+jwt'},{bindle:'intake-provenance',v:1,iss,channel:ch,recipient:to,receivedAt,sender:{envelopeFrom:mail.from,headerFrom:`Sender <${mail.from}>`},dmarc:mail.dmarc,automation:mail.automation,ingressFingerprint:mail.fingerprint,normalizedDigest:await B.intakeDigest(message),jti},signer);
+   const provenance=await sign({alg:'ES256',kid:keyId,typ:'bindle-intake-provenance+jwt'},{bindle:'intake-provenance',v:1,iss,channel:ch,recipient:to,receivedAt,sender:{envelopeFrom:mail.from,headerFrom:mail.headerFrom??`Sender <${mail.from}>`},dmarc:mail.dmarc,automation:mail.automation,ingressFingerprint:mail.fingerprint,normalizedDigest:await B.intakeDigest(message),jti},signer);
    return {message,provenance};
   },
   async rpc(mail,options={}){const tx=options.tx??await uuidv5(`email-bridge|${B.INTAKE_CONTRACT}|${OWNER}|${mail.fingerprint}`);return encoder.encode(JSON.stringify(B.rpcRequest({tx,resource:options.resource??RESOURCE,contract:options.contract??B.INTAKE_CONTRACT,method:'deliver',args:options.args??await p.args(mail,options)})));},
@@ -165,4 +165,22 @@ test('no reply and no signal for rejected mail; the disabled switch refuses with
  const off=await world(t,{enabled:false});
  await assert.rejects(off.deliver({body:late,consumer:off.provider.origin,resource:RESOURCE}),{code:'not_found'});
  await assert.rejects(off.run('bridge.settings'),{code:'not_found'});
+});
+
+
+test('EB-5: forged header From cannot spend another envelope sender budget or evade its own cap',async t=>{
+ const w=await world(t),deliver=async(from,headerFrom,dmarc='unknown')=>{w.provider.accept({from,dmarc});const mail={...w.provider.queue.pop(),headerFrom};return w.deliver({body:await w.provider.rpc(mail),consumer:PROVIDER,resource:RESOURCE});};
+ for(let n=0;n<5;n++)assert.equal((await deliver('attacker@evil.example',`Victim ${n} <victim${n}@good.example>`)).disposition,'stored-receipt');
+ await assert.rejects(deliver('attacker@evil.example','Next <next@other.example>','pass'),{code:'rate_limited'},'rotating From and DMARC assertions do not rotate the envelope budget');
+ assert.equal((await deliver('victim0@good.example','Victim <victim0@good.example>','pass')).disposition,'stored-receipt','forged From did not spend the real envelope sender budget');
+ assert.equal((await w.items()).length,6);
+});
+
+test('EB-5: budget keys isolate consumers/channels and collapse empty or malformed envelopes without consulting From',async()=>{
+ const {intakeBudgetIdentity,chargeBudget}=await import('../../packages/bindlebox-engine/domains/receive-budget.mjs');
+ const key=(consumer,channel,envelopeFrom,headerFrom)=>intakeBudgetIdentity({consumer,channel,sender:{envelopeFrom,headerFrom}}),a=key(PROVIDER,'email','A@EXAMPLE.EXAMPLE','victim@real.example');
+ assert.deepEqual(a,key(PROVIDER,'email','a@example.example','someone@other.example'));assert.notEqual(a.sender,key('https://other.example','email','a@example.example','x').sender);assert.notEqual(a.domain,key(PROVIDER,'sms','a@example.example','x').domain);
+ assert.deepEqual(key(PROVIDER,'email','','a@real.example'),key(PROVIDER,'email','<>','b@real.example'));
+ let state;for(let n=0;n<50;n++){const request=key(PROVIDER,'email',`s${n}@bulk.example`,`victim${n}@other${n}.example`);state=chargeBudget(state,{now:NOW,plan:'paid',bytes:1,parent:'bridge',sender:request.sender,request});}
+ const request=key(PROVIDER,'email','last@bulk.example','other@fresh.example');assert.throws(()=>chargeBudget(state,{now:NOW,plan:'paid',bytes:1,parent:'bridge',sender:request.sender,request}),{code:'rate_limited'},'rotating From cannot evade the envelope domain cap');
 });

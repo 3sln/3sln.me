@@ -17,6 +17,12 @@ export const BUDGET_DEFAULTS=Object.freeze({free:plan([30,300,1000],[16,128,512]
 // Hard cardinality ceiling for per-day maps; exceeding it fails closed as rate_limited rather than growing rows.
 export const MAX_DAY_KEYS=4096;
 
+// Channel budgets use provider-verified provenance, never sender-written From/Reply-To. A null or malformed
+// envelope has one bounded unverified bucket per consumer/channel. DMARC is display evidence, not a budget key.
+export function intakeBudgetIdentity({consumer,channel,sender}){
+ const raw=typeof sender?.envelopeFrom==='string'?sender.envelopeFrom.trim().toLowerCase():'',m=/^[^\s@<>()]{1,64}@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/.exec(raw),scope=['intake',consumer,channel];
+ return {sender:JSON.stringify([...scope,'envelope',m?raw:null]),domain:JSON.stringify([...scope,'domain',m?m[1]:null]),email:channel==='email'};
+}
 const epochs=now=>Object.fromEntries(names.map(n=>[n,Math.floor(now/WINDOWS[n])]));
 const retryAfter=(window,now)=>Math.max(1,Math.ceil(((Math.floor(now/WINDOWS[window])+1)*WINDOWS[window]-now)/1000));
 const limited=(window,now)=>{const error=new MailboxFault('rate_limited','Too many messages. Try again later.',429);error.retryAfter=retryAfter(window,now);throw error;};

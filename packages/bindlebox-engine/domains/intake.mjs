@@ -15,7 +15,7 @@ import {INTAKE_CONTRACT,verifyProvenance,intakeDigest,sha256,jcs,fromBase64url} 
 import {MailboxAction,MailboxQuery} from '../engine.mjs';
 import {fault} from '../faults.mjs';
 import {KEYS,BOUNDS,actorOwner,readConfig,chargeUsage} from '../store/mailbox.mjs';
-import {chargeBudget} from './receive-budget.mjs';
+import {chargeBudget,intakeBudgetIdentity} from './receive-budget.mjs';
 
 export const T_HIGH=0.97,T_LOW=0.70,SPAM='sys:suspected.spam',FINAL_SPAM='sys:spam',DEFAULT_ALLOWANCE=200,MAX_CLASSIFIER_CHARS=8000;
 const invalid=message=>fault('invalid_input',message,400);
@@ -106,7 +106,8 @@ export class IntakeDeliver extends MailboxAction {
   let kid;try{kid=JSON.parse(decoder.decode(fromBase64url(String(args?.provenance).split('.')[0]))).kid;}catch{fault('malformed','The request is malformed.',400);}
   let consumerKey;try{consumerKey=await providerLink?.consumerKey?.({consumer,keyId:kid});}catch{fault('recipient_unavailable','The recipient is unavailable.',503);}
   const v=await verifyProvenance(args,{consumerKey,consumer,recipient:config.principal,now});
-  const address=(v.asserted.sender.headerFrom.match(/<([^<>]+)>\s*$/)?.[1]??v.asserted.sender.headerFrom).trim().toLowerCase(),domain=EMAIL.exec(address)?.[1]??'unknown';
+  const address=(v.asserted.sender.headerFrom.match(/<([^<>]+)>\s*$/)?.[1]??v.asserted.sender.headerFrom).trim().toLowerCase();
+  const budget=intakeBudgetIdentity({consumer,channel:v.channel,sender:v.asserted.sender});
   const digest=await intakeDigest(args.message),txKey=KEYS.intakeTx(`${encodeURIComponent(consumer)}/${txId}`);
   const id=await sha256(globalThis.crypto,jcs(['bindlebox-intake-v1',consumer,v.jti])),bytes=args.message.parts.reduce((n,x)=>n+fromBase64url(x.dataBase64url).byteLength,0);
   return store.transaction(async tx=>{
@@ -118,8 +119,8 @@ export class IntakeDeliver extends MailboxAction {
    const conflict=()=>fault('operation_conflict','The operation conflicts with an earlier one.',409);
    const again=await tx.get(txKey);if(again){if(again.digest!==digest||again.jti!==v.jti)conflict();return {disposition:again.disposition};}
    const seen=await tx.get(KEYS.intakeJti(consumer,v.jti));if(seen){if(seen.digest!==digest)conflict();await tx.put(txKey,seen);return {disposition:seen.disposition};}
-   await tx.put(KEYS.budget,chargeBudget(await tx.get(KEYS.budget),{now,plan:config.plan,bytes,parent:`intake:${v.channel}`,sender:`email:${address}`,request:{sender:`email:${address}`,domain,email:true}}));
-   const item={id,origin:'channel',kind:'channel',channel:v.channel,asserted:{...v.asserted,address},verifiedSender:false,subject:'',content:null,message:args.message,bodyRef:{storage:'mailbox'},createdAt:v.receivedAt,receivedAt:now,state:'pending',request:true,tags:[],tagHistory:[],quarantined:false,reviewed:false,notification:null};
+   await tx.put(KEYS.budget,chargeBudget(await tx.get(KEYS.budget),{now,plan:config.plan,bytes,parent:JSON.stringify(['intake',consumer,v.channel]),sender:budget.sender,request:budget}));
+   const item={id,origin:'channel',kind:'channel',channel:v.channel,bridge:{consumer,jti:v.jti},asserted:{...v.asserted,address},verifiedSender:false,subject:'',content:null,message:args.message,bodyRef:{storage:'mailbox'},createdAt:v.receivedAt,receivedAt:now,state:'pending',request:true,tags:[],tagHistory:[],quarantined:false,reviewed:false,notification:null};
    await tx.put(KEYS.item(id),item);await projectIncoming(tx,item);await tx.put(KEYS.pending(now,id),{id});
    const record={disposition:'stored-receipt',digest,jti:v.jti,at:now};await tx.put(KEYS.intakeJti(consumer,v.jti),record);await tx.put(txKey,record);
    return {disposition:record.disposition};
@@ -209,4 +210,18 @@ export class IntakeRejected extends MailboxQuery {
  static operation='intake.rejected';static deps=['receive'];static refreshOn=['incoming-changed'];
  async fetch({receive}){actorOwner(this.actor);const out=[];for(const [,{id}] of [...(await receive.store.list({prefix:'rejected/'})).entries()].reverse()){const i=await receive.store.get(KEYS.item(id));if(i)out.push(view(i));}return out;}
 }
-export const INTAKE_OPERATIONS=[IntakeUpdate,IntakeSettings,IntakeAllow,IntakeDeliver,IntakeDrain,IntakeSweep,IntakeRescue,IntakeRequests,IntakeRejected];
+export class IntakeAccept extends MailboxAction {
+ static operation='intake.accept';static deps=['receive','providerLink','clock'];static changes='incoming-changed';
+ async run({receive,providerLink,clock}){
+  actorOwner(this.actor);const {id}=this.input??{};if(typeof id!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(id))invalid('Choose an item.');
+  const bridge=await receive.store.transaction(async tx=>{
+   await requireRestored(tx);const item=await tx.get(KEYS.item(id)),config=await readConfig(tx);
+   if(!item||item.quarantined||item.origin!=='channel'||item.channel!=='email'||item.bridge?.consumer!==config.principal.issuer||!['request','accepted'].includes(item.state))fault('not_found','That email request is unavailable.',404);
+   if(item.state!=='accepted'){const next={...item,state:'accepted',acceptedAt:clock.now(),reviewed:true};await tx.put(KEYS.item(id),next);await projectIncoming(tx,next);}
+   return item.bridge;
+  });
+  if(typeof providerLink?.accepted!=='function')fault('recipient_unavailable','Your provider is unavailable.',503);
+  await providerLink.accepted({jti:bridge.jti});return {id,state:'accepted'};
+ }
+}
+export const INTAKE_OPERATIONS=[IntakeUpdate,IntakeSettings,IntakeAllow,IntakeDeliver,IntakeDrain,IntakeSweep,IntakeRescue,IntakeAccept,IntakeRequests,IntakeRejected];

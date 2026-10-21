@@ -41,6 +41,13 @@ export {EventBusWaiter} from './event-bus-waiter.mjs';
 import {LIFECYCLE_SCHEDULER_NAME} from './lifecycle.mjs';
 import {lifecycleMode} from '../../packages/runtime/lifecycle-runner.mjs';
 import {entryStoreName} from './federation.mjs';
+// BRIDGE (Wave 7): the Email Routing `email` handler and its object; refused generically unless EMAIL_BRIDGE_ENABLED,
+// BINDLEBOX_ENABLED and the EMAIL_BRIDGE binding are all present (packages/email-bridge/worker.mjs).
+import {handleEmail} from '../../packages/email-bridge/worker.mjs';
+export {EmailBridgeObject} from '../../packages/email-bridge/worker-object.mjs';
+// `cloudflare:email` is loaded only when a reply is possible, so bundles and tests without it still build.
+const emailModule='cloudflare:'+'email';
+async function emailMessageClass(env){if(env.EMAIL_BRIDGE_ENABLED!=='true')return undefined;try{return (await import(emailModule)).EmailMessage;}catch{return undefined;}}
 
 // Workers Assets canonicalizes .html URLs; retain the authenticated snapshot's
 // public URL while following only this exact same-origin internal canonicalization.
@@ -128,5 +135,5 @@ export class FederationObject extends FederationBase {
   if(pending&&await this.storage.getAlarm()===null)await this.storage.setAlarm(Date.now()+600000);
  }
 }
-export function createWorker({resolveIdentityBadges}={}){if(resolveIdentityBadges!==undefined&&typeof resolveIdentityBadges!=='function')throw new TypeError('Badge resolver must be injected code.');return {fetch:(request,env,ctx)=>application.fetch(request,resources(env,resolveIdentityBadges),ctx),scheduled:(event,env,ctx)=>application.scheduled(event,resources(env,resolveIdentityBadges),ctx)};}
+export function createWorker({resolveIdentityBadges}={}){if(resolveIdentityBadges!==undefined&&typeof resolveIdentityBadges!=='function')throw new TypeError('Badge resolver must be injected code.');return {fetch:(request,env,ctx)=>application.fetch(request,resources(env,resolveIdentityBadges),ctx),scheduled:(event,env,ctx)=>application.scheduled(event,resources(env,resolveIdentityBadges),ctx),email:async(message,env,ctx)=>{await handleEmail(message,env,ctx,{EmailMessage:await emailMessageClass(env)});}};}
 export default createWorker();

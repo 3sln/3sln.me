@@ -33,6 +33,9 @@ import {integrationsEnabled} from '../../app/domains/connections.mjs';
 import {verifyAuthorProof} from '../../links/author-proof.mjs';
 import {LinkHandoff} from '../../links/handoff.mjs';
 import {LINKS_CONTRACT,LINK_SLOT_TABLE} from '../../links/types.mjs';
+import {bridgeConfig} from '../../email-bridge/engine.mjs';
+import {bridgeKey} from '../../email-bridge/keys.mjs';
+import {ownerOperation} from '../../email-bridge/owner.mjs';
 import {canonical,digest} from '../../core/records.mjs';
 
 export const LINK_ENGINE_OPERATIONS=operations(...LINK_OPERATIONS);
@@ -88,7 +91,7 @@ export const methods={
 };
 
 // Links contract resource method (RESOURCE_METHOD_HANDLERS). `context` is the verified federation RPC context.
-const LINK_METHODS=Object.freeze({issue:'links.issue',revoke:'links.revoke',rotate:'links.rotate',evaluate:'links.evaluate',list:'links.list',changes:'links.changes'});
+const LINK_METHODS=Object.freeze({issue:'links.issue',revoke:'links.revoke',rotate:'links.rotate',evaluate:'links.evaluate',list:'links.list',changes:'links.changes',consumerKey:'bridge.key',accepted:'bridge.accepted'});
 const WRITES=['issue','revoke','rotate'];
 const denied=()=>{throw new StorageError('forbidden','Link access denied.',403);};
 export async function linksResourceMethod(c,owner,context){
@@ -103,6 +106,15 @@ export async function linksResourceMethod(c,owner,context){
  // Handle from the owner's identity record (finding 5); an inactive account issues nothing.
  const account=typeof c.config.IDENTITY_ACCOUNT==='function'?await c.config.IDENTITY_ACCOUNT(owner):null;
  if(!account||account.status!=='active'||typeof account.handle!=='string')denied();
+ // BRIDGE methods are advertised only with the bridge flags. The live intake seat is checked for acceptance;
+ // keys are public, but the caller still needs this resource's ordinary authenticated grant.
+ if(['consumerKey','accepted'].includes(context.method)){
+  if(!bridgeConfig(c.config).enabled)throw new StorageError('not_found','Not found.',404);
+  if(context.method==='consumerKey'){if(Object.keys(args).some(k=>!['consumer','keyId'].includes(k)))denied();const key=await bridgeKey(c.config);return key&&args.consumer===c.config.APP_ORIGIN&&args.keyId===key.keyId?{keyId:key.keyId,publicJwk:key.publicJwk}:null;}
+  if(Object.keys(args).some(k=>k!=='jti')||typeof args.jti!=='string'||!args.jti||args.jti.length>128)denied();
+  const seat=await c.integrationsIntakeSeat(owner);if(!seat||seat.clientId!==context.clientId||seat.connection!==context.connection.id||seat.generation!==context.connection.generation)denied();
+  return ownerOperation(c.config,owner,'bridge.accepted',{jti:args.jti});
+ }
  const actor={kind:'app',owner,clientId:context.clientId,handle:account.handle,generation:context.connection.generation,connection:context.connection.id};
  const operation=LINK_METHODS[context.method],id=['revoke','rotate'].includes(context.method)?args.jti:undefined;
  if(id!==undefined&&Object.keys(args).some(name=>name!=='jti'))throw new StorageError('invalid_args','Unsupported link request.',400);

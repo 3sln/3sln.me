@@ -2265,3 +2265,16 @@ Wave 5 integration (provisional, flags off; Codex started, Claude finished after
 - **Security review:** S1 high (token-endpoint auth downgrade), S2, S3, S5 fixed; S4, S6 partly fixed. Open: a durable assertion-replay store, hints and `bindle_connection` support, and a diff in the review screen.
 
 Gates (coordinator-verified): core 1980, Worker 65, UI-state 290, BindleBox 194/41, DOM, build, dry run, audit; e2e 213 twice (flags off and device authorization on, 4 WebKit skips each). Reviewer ___ Date ___ Outcome ___.
+
+Wave 5 committed and deployed as 4aa7b46 (flags off). All roadmap waves through Wave 5 have landed. BRIDGE (Wave 7) started ahead of BB-CUT, since it does not depend on the cutover. BB-CUT awaits explicit user confirmation of the irreversible message data reset.
+
+BRIDGE landed (provisional; behind `EMAIL_BRIDGE_ENABLED` and `BINDLEBOX_ENABLED`, plus an owner opt-in, all default off): `packages/email-bridge/*` (engine, MIME parser, reply builder, Worker adapter, `EmailBridgeObject`, Node adapter) and the Worker `email` handler.
+- **Intake:** bounded MIME parse with one generic SMTP refusal; a holding queue per owner.
+- **Provenance:** SPF/DKIM/DMARC recorded as provenance only, and trusted only with `EMAIL_BRIDGE_AUTHSERV_STRIPS` operator attestation.
+- **Replies:** automated mail never gets one. One invariant auto-reply goes only to aligned senders, under per-sender, per-domain, per-recipient and global limits plus a suppression list. The follow-up is sent once on acceptance, to a DMARC-validated sender.
+- **Delivery:** to the public-message-intake occupant, fail closed.
+Intake wire constants are restated locally (import boundary) and pinned to the protocol by test. [Review](docs/release/email-bridge-review.md): EB-1 high (trusting a sender-written Authentication-Results header), EB-2, 3, 6, 7, 8, 10 fixed; EB-4 timing partly mitigated by a 1.5 s floor; EB-5 open (BindleBox charges budgets by the unverified header From).
+Pending core hunks: the `EMAIL_BRIDGE` binding and migration; account RPCs `emailBridgeEntitled`, `integrationsIntakeSeat` and `integrationsIntakeDeliver` plus a `PROVIDER_CONSUMERS` row; `EMAIL_BRIDGE_SIGNING_JWK` and key publication; owner routes and the acceptance hook.
+Needing sign-off: a 7-days-less-1-hour hold (vs §13's 30 days); follow-up without mailbox confirmation; the authserv attestation. Not exercised against real Email Routing or reply(). Reviewer ___ Date ___ Outcome ___.
+
+BRIDGE integration (Codex, coordinator-verified): `EMAIL_BRIDGE` binding and migration, account RPCs, brokered delivery to the intake occupant, signing-key publication, owner settings, acceptance follow-up, all behind default-off flags; production secret setup documented in the review. EB-5 fixed: BindleBox charges budgets by verified envelope and provenance data, with regression tests. Gates: core 2012, Worker 67, UI-state 290, BindleBox 196, DOM, build, dry run, audit; e2e 213 (4 WebKit skips). External Email Routing is unverified.

@@ -1,3 +1,4 @@
+import {bridgeConfig} from '../email-bridge/engine.mjs';
 import {appSessionDerivation} from './app-session-lineage.mjs';
 import {holdBusRPC,busWaitsPort} from '../events/waiter.mjs';
 import {EVENT_BUS_CONTRACT} from '../federation/event-buses.mjs';
@@ -117,7 +118,7 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
    if(config.BROKERED_INTROSPECTION_MOUNTED===true)descriptors.push(...await account.brokeredDescriptors(owner));
    if(config.EVENT_BUSES_ENABLED==='true')descriptors.push(...await account.eventBusDescriptors(owner));
    if([true,'true'].includes(config.INTEGRATIONS_ENABLED)&&[true,'true'].includes(config.EXTENSIONS_ENABLED))descriptors.push(...await account.classifierDescriptors(owner));
-   if(config.BINDLEBOX_ENABLED==='true')descriptors.push({id:`${subject}/links`,label:'Contact links',provider:'bindle',contracts:{[LINKS_CONTRACT]:['issue','revoke','rotate','evaluate','list','changes']},generation:owner});
+   if(config.BINDLEBOX_ENABLED==='true')descriptors.push({id:`${subject}/links`,label:'Contact links',provider:'bindle',contracts:{[LINKS_CONTRACT]:['issue','revoke','rotate','evaluate','list','changes',...bridgeConfig(config).enabled?['consumerKey','accepted']:[]]},generation:owner});
    descriptors.push({id:`${subject}/app-messages`,label:'Messages from this app',provider:'bindle',contracts:{[APP_NOTIFICATIONS]:['createOwn']},generation:owner,limits:{maxRequestBytes:16384,maxResultBytes:1024,txRetentionSeconds:86400}});descriptors.push({id:`${subject}/profile`,label:'Identity profile',provider:'identity',alias:'@profile',contracts:{[PROFILE]:['read']},generation:owner,preview:{entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null}});return descriptors;
   },
   dispatcher:{durableJournal:true,execute:async context=>{if(!await validateSubject(context.subject,context.epoch))fail('unauthorized','Application authorization is no longer active.');if(context.connection)await account.appConnectionCheck(owner,context.connection.id,context.connection.generation,context.clientId);if(context.resource===`${subject}/profile`&&context.contract===PROFILE&&context.method==='read'){if(Object.keys(context.args).length)fail('invalid_args','Profile read takes no arguments.');const current=await repository.get(owner),profile=await account.beamProfile(owner);return {entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null};}return account.federationRPC({...context,authority:'bindle'});}},

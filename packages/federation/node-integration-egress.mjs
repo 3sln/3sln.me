@@ -6,8 +6,8 @@ import {publicAddress} from '../apps/form-fetch-policy.mjs';
 export function createNodeIntegrationEgress({issuer,reserved=[],lookup=dnsLookup,request=httpsRequest,timeoutMs=L.timeoutMs,maxConcurrent=16}={}){
  if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>10000||!Number.isSafeInteger(maxConcurrent)||maxConcurrent<1||maxConcurrent>64)throw new TypeError('Invalid integration egress limits.');
  const refuse=()=>Object.assign(new Error('The integration could not be reached safely.'),{code:'egress_refused',status:502});let active=0;
- return {async send({url,headers={},body,maxBytes,signal}={}){
-  const u=integrationEndpoint(url,{issuer,reserved});if(!u||typeof body!=='string'||new TextEncoder().encode(body).length>65536||!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>L.responseBytes||signal?.aborted)throw refuse();
+ return {async send({url,headers={},body,maxBytes,requestBytes=65536,signal}={}){
+  const u=integrationEndpoint(url,{issuer,reserved});if(!u||!Number.isSafeInteger(requestBytes)||requestBytes<1||requestBytes>1500000||typeof body!=='string'||new TextEncoder().encode(body).length>requestBytes||!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>L.responseBytes||signal?.aborted)throw refuse();
   if(active>=maxConcurrent)throw Object.assign(new Error('The provider is busy.'),{code:'egress_busy',status:503,retryAfter:1});active++;
   try{return await new Promise((resolve,reject)=>{
    let req,res,done=false;const timer=setTimeout(()=>finish(refuse()),timeoutMs),abort=()=>finish(refuse());signal?.addEventListener('abort',abort,{once:true});

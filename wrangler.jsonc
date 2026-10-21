@@ -63,6 +63,10 @@
       {
         "name": "EVENT_BUS_WAITS",
         "class_name": "EventBusWaiter"
+      },
+      {
+        "name": "EMAIL_BRIDGE",
+        "class_name": "EmailBridgeObject"
       }
     ]
   },
@@ -116,6 +120,12 @@
       "new_sqlite_classes": [
         "EventBusWaiter"
       ]
+    },
+    {
+      "tag": "v9",
+      "new_sqlite_classes": [
+        "EmailBridgeObject"
+      ]
     }
   ],
   "r2_buckets": [
@@ -152,6 +162,7 @@
     "DEVICE_AUTHORIZATION_ENABLED": "false",
     "ACTIVITY_V2_ENABLED": "false",
     "BINDLEBOX_ENABLED": "false",
+    "EMAIL_BRIDGE_ENABLED": "false",
     "EVENT_BUSES_ENABLED": "false",
     "INCREMENTAL_AUTH_ENABLED": "false",
     "LIFECYCLE_ENABLED": "false",

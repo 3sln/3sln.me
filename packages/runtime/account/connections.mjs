@@ -20,7 +20,7 @@
 // so the delegation status endpoint persists the revocation on first observation (KD-1).
 import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
-import {AppConnections} from '../../apps/connections.mjs';
+import {AppConnections,recognizedSlots} from '../../apps/connections.mjs';
 import {connectionsProvider,integrationsEnabled,CONNECTION_OPERATIONS,CONNECTION_OWNER_OPERATIONS,SlotOccupant,SeverAccountConnections,ConnectionCascades,ConnectionCascadeDone} from '../../app/domains/connections.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {CLASSIFIER_INTEGRATION} from './classifier.mjs'; // EXT-X10 registry entry
@@ -36,7 +36,7 @@ const engines=new WeakMap();
 function connectionsEngine(c){
  let engine=engines.get(c);
  if(!engine){
-  const connections=new AppConnections({metadata:c.metadata,origin:c.config.APP_ORIGIN,builtins:c.config.BUILT_IN_INTEGRATIONS??BUILT_IN_INTEGRATIONS,...c.config.CONNECTION_SLOTS?{slots:c.config.CONNECTION_SLOTS}:{}});
+  const connections=new AppConnections({metadata:c.metadata,origin:c.config.APP_ORIGIN,builtins:c.config.BUILT_IN_INTEGRATIONS??BUILT_IN_INTEGRATIONS,slots:c.config.CONNECTION_SLOTS??recognizedSlots(c.config)});
   engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,connections:connectionsProvider({connections,enabled:integrationsEnabled(c.config),account:typeof c.config.IDENTITY_ACCOUNT==='function'?owner=>c.config.IDENTITY_ACCOUNT(owner):undefined})}});
   engines.set(c,engine);
  }

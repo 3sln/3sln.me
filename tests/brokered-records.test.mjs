@@ -225,15 +225,15 @@ test('fixture conformance: discovery, probes, pagination and registration agains
 });
 
 /** The real AccountController with the X7 slice, its ports and the link handoff over them. */
-async function account(t,{answer}={}){
+async function account(t,{answer,intake=false}={}){
  const db=new SqliteMetadata(':memory:');t.after(()=>db.close());const keys=brokeringKeys({issuer:ISSUER,secret:SECRET,metadata:memory()}),routes={};
  const egress=createIntegrationEgress({fetcher:(url,init)=>routes[new URL(url).hostname].fetch(url,init),resolve:async()=>['93.184.216.34'],publicRouting:true});
- const config={APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',BROKERING_ENABLED:'true',BINDLEBOX_ENABLED:'true',IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:'active',handle:'alice'}:null,BROKERING_MINT:claims=>mintAccessToken(keys,claims),INTEGRATION_EGRESS:egress,INTEGRATION_DISCOVERY_BUDGET:new DiscoveryBudget()};
+ const config={EMAIL_BRIDGE_ENABLED:intake?'true':'false',APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',BROKERING_ENABLED:'true',BINDLEBOX_ENABLED:'true',IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:'active',handle:'alice'}:null,BROKERING_MINT:claims=>mintAccessToken(keys,claims),INTEGRATION_EGRESS:egress,INTEGRATION_DISCOVERY_BUDGET:new DiscoveryBudget()};
  const bucket={put:async()=>{},get:async()=>null,delete:async()=>{}};
  const a=new AccountController({metadata:db,gate:new SerialGate(),blobs:bucket,archives:bucket,config,sql:db.sql});await a.touch(OWNER);
- const s=snapshot('box.example'),c=await a.connectionsSystem(OWNER,{operation:'connections.connect',input:s});routes['box.example']=stubIntegration('box.example',keys);
- const record=await a.integrationsOwner(OWNER,{operation:'integrations.register',input:{connection:c.id,resource:'https://box.example/r/mailbox',binding:{slot:MESSAGING_INGRESS_SLOT},consumer:{feature:'messaging-address'}}});
- await a.connectionsOwner(OWNER,{operation:'connections.occupy',input:{slot:MESSAGING_INGRESS_SLOT,connection:c.id,resource:record.id,purposes:ALL,replace:true}},{authTime:Date.now()});
+ const slot=intake?B.INTAKE_SLOT:MESSAGING_INGRESS_SLOT,contract=intake?B.INTAKE_CONTRACT:MAILBOX,s=snapshot('box.example',{slots:[slot],contracts:[contract,MODEL]}),c=await a.connectionsSystem(OWNER,{operation:'connections.connect',input:s});routes['box.example']=stubIntegration('box.example',keys,{items:[{id:'https://box.example/r/mailbox',label:'Mailbox',contracts:[contract,MODEL]}]});
+ const record=await a.integrationsOwner(OWNER,{operation:'integrations.register',input:{connection:c.id,resource:'https://box.example/r/mailbox',binding:{slot},consumer:{feature:intake?'email-bridge':'messaging-address'}}});
+ await a.connectionsOwner(OWNER,{operation:'connections.occupy',input:{slot,connection:c.id,resource:record.id,...intake?{}:{purposes:ALL},replace:true}},{authTime:Date.now()});
  const link={record:{owner:OWNER,type:MESSAGING_CONTACT_LINK_TYPE},meta:{claims:{kinds:['one-off'],exp:Math.floor(Date.now()/1000)+86400}}};
  const handoff=new LinkHandoff({service:{verify:async()=>structuredClone(link)},occupant:q=>a.linkSlotOccupant(q),describe:messagingDescribe(a)});
  return {a,c,record,routes,handoff,db};
@@ -299,4 +299,31 @@ test('review regressions: account slice remembers describe failures for a minute
  const fresh=await account(t);fresh.routes['box.example'].describe={...DESCRIBE('box.example'),ingress:'https://other.example/ingress'};
  await assert.rejects(fresh.handoff.descriptor('https://3sln.example/l/x'),code('recipient_unavailable'));
  assert.equal((await fresh.a.delegationSlotOccupant({owner:OWNER,slot:MESSAGING_INGRESS_SLOT})).ingress,null,'nothing is recorded for a foreign ingress');
+});
+
+
+test('BRIDGE account RPCs: current paid entitlement, live intake seat, signed brokered deliver and stale-seat refusal',async t=>{
+ const {a,c,db,routes}=await account(t,{intake:true}),box=routes['box.example'];
+ assert.equal(await a.emailBridgeEntitled(OWNER),false);assert.equal(await a.integrationsIntakeSeat(OWNER),null);
+ await db.put('billing/state',{owner:OWNER,source:'polar',catalogVersion:2,plan:'paid',validUntil:Date.now()+3600000});
+ assert.equal(await a.emailBridgeEntitled(OWNER),true);assert.equal(await a.emailBridgeEntitled(crypto.randomUUID()),false);
+ const seat=await a.integrationsIntakeSeat(OWNER);assert.equal(seat.resource,'https://box.example/r/mailbox');assert.equal(seat.connection,c.id);
+ const tx=crypto.randomUUID(),body=new TextEncoder().encode(JSON.stringify({version:'0',tx,resource:seat.resource,contract:B.INTAKE_CONTRACT,method:'deliver',args:{message:{parts:[{mimeType:'text/plain',dataBase64url:Buffer.from('large '.repeat(15000)).toString('base64url')}]},provenance:'signed-by-bridge'}}));
+ box.answer=(path,rpc)=>Response.json({version:'0',tx:rpc.tx,result:{disposition:'stored-receipt'}});
+ const result=await a.integrationsIntakeDeliver(OWNER,{seat,body});assert.equal(result.status,200);assert.equal(result.json.tx,tx);assert.equal(result.json.result.disposition,'stored-receipt');
+ const token=box.tokens.at(-1);assert.equal(token.bindle.feature,'email-bridge');assert.deepEqual(token.bindle.methods,{[B.INTAKE_CONTRACT]:['deliver']});assert.equal(box.calls.at(-1).body.tx,tx);
+ await assert.rejects(a.integrationsIntakeDeliver(OWNER,{seat:{...seat,resource:'https://box.example/r/other'},body}),code('recipient_unavailable'));
+ await a.connectionsOwner(OWNER,{operation:'connections.suspend',input:{connection:c.id}});assert.equal(await a.integrationsIntakeSeat(OWNER),null);await assert.rejects(a.integrationsIntakeDeliver(OWNER,{seat,body}),code('recipient_unavailable'));
+});
+
+test('BRIDGE authenticated links hook: only the live intake occupant can notify acceptance; disabled and changed grants fail closed',async t=>{
+ const {a,c,db}=await account(t,{intake:true}),{linksResourceMethod}=await import('../packages/runtime/account/links.mjs'),{LINKS_CONTRACT}=await import('../packages/links/types.mjs'),sent=[];
+ await db.put('billing/state',{owner:OWNER,source:'polar',catalogVersion:2,plan:'paid',validUntil:Date.now()+3600000});
+ a.config.FEDERATION_IDENTITY_CHECK=async()=>true;a.config.EMAIL_BRIDGE_OWNER={accepted:async(owner,jti)=>{sent.push({owner,jti});return {status:'sent'};}};
+ const context={authority:'bindle',resource:`${ISSUER}/entities/${OWNER}/links`,resourceGeneration:OWNER,contract:LINKS_CONTRACT,method:'accepted',args:{jti:crypto.randomUUID()},clientId:c.clientId,connection:{id:c.id,generation:c.generation},epoch:'current'};
+ assert.deepEqual(await linksResourceMethod(a,OWNER,context),{status:'sent'});assert.equal(sent.length,1);assert.equal(sent[0].owner,OWNER);
+ await assert.rejects(linksResourceMethod(a,OWNER,{...context,args:{...context.args,owner:crypto.randomUUID()}}),code('forbidden'));
+ a.config.EMAIL_BRIDGE_ENABLED='false';await assert.rejects(linksResourceMethod(a,OWNER,context),code('not_found'));a.config.EMAIL_BRIDGE_ENABLED='true';
+ await a.connectionsOwner(OWNER,{operation:'connections.vacate',input:{slot:B.INTAKE_SLOT,seat:(await a.integrationsIntakeSeat(OWNER)).seat}});
+ await assert.rejects(linksResourceMethod(a,OWNER,context),code('forbidden'));assert.equal(sent.length,1);
 });

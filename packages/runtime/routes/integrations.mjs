@@ -21,9 +21,10 @@
 // set) and INTEGRATION_EGRESS ({send}, createIntegrationEgress or a DNS-pinned equivalent); without them discovery and
 // describe answer discovery_unavailable and descriptors stay recipient_unavailable. The change-hint endpoint
 // (integrations §8) is not mounted: it needs an issuer-wide connection -> account directory and client-key egress.
+import {bridgeConfig} from '../../email-bridge/engine.mjs';
 import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
-import {AppConnections} from '../../apps/connections.mjs';
+import {AppConnections,recognizedSlots} from '../../apps/connections.mjs';
 import {brokeredResourcesProvider,readConnection,integrationsFlag,brokeringFlag,BROKERED_OPERATIONS,BROKERED_OWNER_OPERATIONS,DescribeOccupant,RevalidateBrokeredRecords,BrokeredRecords} from '../../federation/brokered.mjs';
 import {DiscoveryClient,sharedDiscoveryBudget} from '../../federation/resource-discovery.mjs';
 import {validateDescribe} from '../../links/handoff.mjs';
@@ -43,7 +44,7 @@ function engineOf(c){
  if(!engine){
   const issuer=c.config.APP_ORIGIN,reserved=[c.config.EMBED_ORIGIN].filter(v=>typeof v==='string'&&v).map(v=>{try{return new URL(v).hostname;}catch{return null;}}).filter(Boolean);
   const discovery=new DiscoveryClient({issuer,reserved,mint:typeof c.config.BROKERING_MINT==='function'?c.config.BROKERING_MINT:undefined,egress:typeof c.config.INTEGRATION_EGRESS?.send==='function'?c.config.INTEGRATION_EGRESS:undefined,budget:c.config.INTEGRATION_DISCOVERY_BUDGET??sharedDiscoveryBudget});
-  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,brokeredResources:brokeredResourcesProvider({store:c.metadata,discovery,issuer,integrations:integrationsFlag(c.config),brokering:brokeringFlag(c.config),...c.config.CONNECTION_SLOTS?{slots:c.config.CONNECTION_SLOTS}:{}})}});
+  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,brokeredResources:brokeredResourcesProvider({store:c.metadata,discovery,issuer,integrations:integrationsFlag(c.config),brokering:brokeringFlag(c.config),emailBridge:bridgeConfig(c.config).enabled,slots:c.config.CONNECTION_SLOTS??recognizedSlots(c.config)})}});
   engines.set(c,engine);
  }
  return engine;
@@ -81,7 +82,7 @@ export const account={
    const down=()=>fail('recipient_unavailable','The recipient is unavailable.',503);
    if(!integrationsFlag(this.config)||!brokeringFlag(this.config)||typeof owner!=='string'||await this.metadata.get('owner')!==owner)down();
    const port=await this.linkSlotOccupant({owner,slot});if(!port||port.clientId!==occupant?.clientId||(occupant?.generation??null)!==port.generation)down();
-   const found=await new AppConnections({metadata:this.metadata,origin:this.config.APP_ORIGIN,...this.config.CONNECTION_SLOTS?{slots:this.config.CONNECTION_SLOTS}:{}}).occupant(owner,slot);
+   const found=await new AppConnections({metadata:this.metadata,origin:this.config.APP_ORIGIN,slots:this.config.CONNECTION_SLOTS??recognizedSlots(this.config)}).occupant(owner,slot);
    const seat=found.sever?null:found.occupants.find(o=>o.cnx===port.cnx);if(!seat||typeof seat.resource!=='string')down();
    // The ingress must sit on the occupant's own origin: the client_id origin, which X3 binds every endpoint to (X7-R5).
    let origin;try{origin=new URL(seat.clientId).origin;}catch{down();}if(typeof seat.origin==='string'&&seat.origin!==origin)down();
