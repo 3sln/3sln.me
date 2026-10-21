@@ -11,12 +11,18 @@ import {S3Adapter,WebDAVAdapter} from '../../storage/adapters.mjs';
 import {objectKey,StorageError} from '../../storage/policy.mjs';
 import {UUID_V4} from '../../core/primitives.mjs';
 import {archiveDigest} from './support.mjs';
+import {eventBusResourceMethod} from './events.mjs';
+import {EVENT_BUS_CONTRACT} from '../../events/limits.mjs';
+import {LINKS_CONTRACT} from '../../links/types.mjs';
+import {linksResourceMethod} from './links.mjs';
 
 // Append-only: add one contract handler per slice. Handlers receive (controller,owner,context)
 // and own method validation, live authorization and replay checks before effects or cached results.
 export const RESOURCE_METHOD_HANDLERS=Object.freeze({
   [APP_NOTIFICATIONS]:createAppNotification,
   [ACTIVITY_CONTRACT]:activityResourceMethod,
+  [LINKS_CONTRACT]:linksResourceMethod, // BB-C1b: links contract; not_found unless BINDLEBOX_ENABLED
+  [EVENT_BUS_CONTRACT]:eventBusResourceMethod, // EV-2: 3sln.me-hosted event bus; not_found unless EVENT_BUSES_ENABLED
 });
 
 export const methods={

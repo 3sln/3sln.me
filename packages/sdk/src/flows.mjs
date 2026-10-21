@@ -100,6 +100,8 @@ export class BindleSession extends EventTarget {
   }
   reauthenticate({maxAge=300}={}){return this.#begin('reauthenticate',{maxAge});}
   endProviderSession(){return this.#begin('end-session',{});}
+  // Opt-in SDK modules supply a client adapter; keep popup/redirect lifecycle here.
+  requestAuthorization(intent){if(!['grant-more','configure'].includes(intent))throw new TypeError('Unsupported request intent.');return this.#begin(intent,{});}
   // An account picked in a provider island: switches only to an app session this
   // document already holds for exactly (current issuer, subject). Never a flow.
   selectAccount(subject){

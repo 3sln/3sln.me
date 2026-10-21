@@ -1,3 +1,6 @@
+import {holdBusRPC,busWaitsPort} from '../../events/waiter.mjs';
+import {EVENT_BUS_CONTRACT} from '../../federation/event-buses.mjs';
+import {handleIncrementalToken,incrementalAuthorizationEnabled} from '../incremental-authorization.mjs';
 // HTTP routes of slice 13c, Federation and the MCP authority (docs/architecture/app-engine.md §12): the embed origin, federation protocol and authorization entry, MCP OAuth and owner MCP routes.
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {accountCookiesEnabled,selectedAccountMember,parseAccountCookies,hasAccountVault,removedAccountCookies,accountFault,readAccountMember,defaultAccountOwner,removedMemberCookie,accountCookieName} from '../account-cookies.mjs';
@@ -41,6 +44,7 @@ export const stages={
     // pseudonym, owner steps resolved through the multi-account cookies, and its own strict document policy (F7).
     const entryResponse=await handleAuthorizationEntry(request,{entries:env.FEDERATION_ENTRIES,issuer:env.APP_ORIGIN,assets:env.ASSETS,allowInsecureLocalhost:local,enabled:env.FEDERATION_ENABLED==='true'&&Boolean(env.FEDERATION_ENTRIES),remote:()=>entryRemote,ownerContext:entryRequest=>entryOwnerContext(entryRequest,env,local),endSession:(entryRequest,context,subject)=>entryEndSession(entryRequest,env,local,subject)});
     if(entryResponse)return entryResponse.headers.get('Content-Type')?.includes('text/html')?passthrough(securePage(await brandPage(entryResponse,env),false,false,{keepPolicy:true})):entryResponse;
+    if(incrementalAuthorizationEnabled(env)){const incremental=await handleIncrementalToken(request,{port:env.INCREMENTAL_AUTHORIZATION,issuer:env.APP_ORIGIN,origins:(origin,id)=>env.FEDERATION_AUTHORITY?.clients?.some(c=>c.origin===origin)||env.FEDERATION_AUTHORITY?.directory?.isMetadataId(id)&&new URL(id).origin===origin,authorizeClient:async id=>{const directory=env.FEDERATION_AUTHORITY?.directory;if(directory?.isMetadataId(id))await directory.assertAllowed(id);},proofs:{verify:proof=>env.INCREMENTAL_AUTHORIZATION.tokenProof(proof),nonce:()=>env.INCREMENTAL_AUTHORIZATION.tokenNonce()}});if(incremental)return incremental;}
     const response=await handleFederation(request,{controller:env.FEDERATION_AUTHORITY,issuer:env.APP_ORIGIN,allowInsecureLocalhost:local,assets:env.ASSETS,enabled:env.FEDERATION_ENABLED==='true',brokering:env.BROKERING_ENABLED==='true'?env.FEDERATION_BROKERING:undefined,ownerContext:ownerRequest=>entryOwnerContext(ownerRequest,env,local)});
     // Contact intents (links §6.4, core feature `intents.v1`): this host accepts `bindle_intent` on its console entry.
     // Entry routes and the components profile are advertised only while this adapter mounts them (review F8).
@@ -69,9 +73,9 @@ export const stages={
 const DEVICE_URN='urn:ietf:params:oauth:grant-type:device_code',OPAQUE=/^[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}$/;
 const formRequest=request=>request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase()==='application/x-www-form-urlencoded';
 async function boundedText(request,max){
- const length=Number(request.headers.get('Content-Length'));if(Number.isFinite(length)&&length>max)return null;
+ const length=Number(request.headers.get('Content-Length'));if(Number.isFinite(length)&&length>max){void request.body?.cancel().catch(()=>{});return null;}
  const reader=request.body?.getReader();if(!reader)return '';const chunks=[];let size=0;
- for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>max){await reader.cancel().catch(()=>{});return null;}chunks.push(value);}
+ for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>max){void reader.cancel().catch(()=>{});return null;}chunks.push(value);}
  const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}return new TextDecoder().decode(bytes);
 }
 const oauthResponse=result=>new Response(JSON.stringify(result.body),{status:result.status,headers:{'Content-Type':'application/json','X-Content-Type-Options':'nosniff',...result.headers}});
@@ -111,7 +115,7 @@ async function deviceRoutes(request,env,path,local){
   if(request.headers.get('Content-Type')?.split(';')[0].trim()!=='application/json')return json({error:'json_required'},415,{'Cache-Control':'no-store'});
   const text=await boundedText(request,1500000);let envelope;try{envelope=text===null?null:JSON.parse(text);}catch{}
   if(!envelope||typeof envelope!=='object'||Array.isArray(envelope))return json({error:'invalid_request'},400,{'Cache-Control':'no-store'});
-  try{return json(await grant.rpc({authorization:request.headers.get('Authorization'),dpop:request.headers.get('DPoP'),envelope,...request.headers.has('Origin')?{origin:request.headers.get('Origin')}:{}}),200,{'Cache-Control':'no-store'});}
+  try{const input={authorization:request.headers.get('Authorization'),dpop:request.headers.get('DPoP'),envelope,...request.headers.has('Origin')?{origin:request.headers.get('Origin')}:{}},waits=busWaitsPort(env.EVENT_BUS_WAITS)??env.EVENT_BUS_WAITER,held=env.EVENT_BUSES_ENABLED==='true'&&waits&&envelope.contract===EVENT_BUS_CONTRACT&&envelope.method==='read';return json(held?await holdBusRPC({owner:input.authorization.slice(5).split('.')[0],waits,rpc:lease=>grant.rpc({...input,busWaits:true,...lease?{busResume:lease}:{}}),recheck:lease=>grant.rpc({...input,busResume:lease,checkOnly:true})}):await grant.rpc(input),200,{'Cache-Control':'no-store'});}
   catch(error){const status={unauthorized:401,use_dpop_nonce:401,forbidden:403,rate_limited:429,temporarily_unavailable:503,not_found:404}[error.code]??400;return json({error:error.code??'invalid_request',message:error.code?error.message:'The request could not be completed.'},status,{'Cache-Control':'no-store',...status===401?{'WWW-Authenticate':error.code==='use_dpop_nonce'?'DPoP error="use_dpop_nonce", algs="ES256"':'DPoP algs="ES256"'}:{},...Number.isSafeInteger(error.retryAfter)?{'Retry-After':String(error.retryAfter)}:{}});}
  }
  return null;

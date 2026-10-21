@@ -20,7 +20,7 @@ export const PROVIDERS=Object.freeze({
  views:row('mailbox','domain','local','Saved Views.',{scoped:true}),
  rules:row('mailbox','domain','local','Organization rules.',{scoped:true}),
  tags:row('mailbox','domain','local','Tag labels and provenance.',{scoped:true}),
- bridge:row('mailbox','domain','planned','Verified bridge intake.',{scoped:true}),
+ bridge:row('mailbox','domain','local','BB-B7: bridged public intake (provenance, consumer/channel binding, fingerprint dedup); no egress.',{scoped:true}),
  archive:row('mailbox','domain','planned','Portable archive and writer lease.',{scoped:true}),
 });
 const subject=actor=>actor&&typeof actor==='object'?{kind:String(actor.kind),...typeof actor.owner==='string'?{owner:actor.owner}:{}}:null;

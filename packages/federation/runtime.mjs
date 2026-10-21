@@ -1,3 +1,5 @@
+import {appSessionInventory} from './session-inventory.mjs';
+import {incrementalPort} from './incremental-ports.mjs';
 import {FederationService} from './service.mjs';
 import {fail} from './schema.mjs';
 import {canonical,digest} from '../messaging/store.mjs';
@@ -56,13 +58,16 @@ const faultResult=(code,message,error={})=>({__federationError:{code,message,...
 /** Portable composition boundary. Both hosted and self-hosted runtimes inject
  * metadata, live owner authentication and actual contract adapters here. */
 export class FederationController {
-  constructor({metadata,auth,issuer,clients=[],schemaFetcher,schemaHosts=[],dispatcher,crypto=globalThis.crypto,clock=()=>Date.now(),allowInsecureLocalhost=false,enabled=true,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs,dpop,embedView,embedOrigin,clientMetadata=false,manifestDeclarations,appSessions}){
+  constructor({metadata,auth,issuer,clients=[],schemaFetcher,schemaHosts=[],dispatcher,crypto=globalThis.crypto,clock=()=>Date.now(),allowInsecureLocalhost=false,enabled=true,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs,dpop,embedView,embedOrigin,clientMetadata=false,manifestDeclarations,appSessions,incrementalIdentity,eventBusReader,appSessionLineage,deriveAppSession,incremental}){
     if(!metadata?.transaction||!auth?.owner)throw new TypeError('Transactional metadata and authenticated owner resource required');
     Object.assign(this,{metadata,auth,issuer,clients,dispatcher,clock,enabled,allowInsecureLocalhost,clientMetadata:clientMetadata===true,manifestDeclarations});
     this.service=new FederationService({store:metadata,issuer,clients,crypto,clock,schemaFetcher,schemaHosts,allowInsecureLocalhost,routingKey,validateSubject,resourceProvider,connections,refreshEnabled,objectURLs,dpop,embedView,embedOrigin,appSessions,clientMetadata:clientMetadata===true,authenticateOwner:(authority)=>auth.owner(authority.context,{mutation:authority.mutation}),dispatchCapability:ctx=>this.dispatch(ctx,crypto)});
+    this.service.incrementalIdentity=incrementalIdentity;this.service.eventBusReader=eventBusReader;this.service.appSessionLineage=appSessionLineage;this.service.deriveAppSession=deriveAppSession;this.service.incremental=incremental;
     // Persisted metadata-client snapshots load once per instance before any operation that may consult a client.
     if(this.clientMetadata)for(const method of ['beginAuthorization','inspect','approve','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','configure','preferences','grants','revoke','exchange','refresh','tokenClient','rpc','inspectObjectURL','objectURL']){const call=this[method].bind(this);this[method]=async(...args)=>{this.requireReady();await this.service.ensureClients();return call(...args);};}
   }
+  appSessions(context,input){this.requireReady();return appSessionInventory(this.service,this.authority(context,input!==undefined),input);}
+  incrementalPort(method,input){this.requireReady();return incrementalPort(this.service,method,input);}
   ready(){return this.enabled&&(this.clients.length>0||this.clientMetadata)&&typeof this.service.schemaFetcher==='function'&&(typeof this.dispatcher==='function'||typeof this.dispatcher?.execute==='function');}
   requireReady(){if(!this.ready())fail('temporarily_unavailable','Federation is not configured and release enabled.');}
   manifest(){this.requireReady();return withManifestDeclarations({version:'0',issuer:this.issuer,grant_types_supported:['authorization_code',...this.service.refreshEnabled?['refresh_token']:[]],authorization_request_endpoint:`${this.issuer}/api/oauth/requests`,preferences_contract:'https://3sln.me/artefacts/contracts/preferences/v1',authorization_endpoint:`${this.issuer}/oauth/authorize`,token_endpoint:`${this.issuer}/oauth/token`,rpc_endpoint:`${this.issuer}/bindle/rpc`,jwks_uri:`${this.issuer}/oauth/jwks`,login_presentation:['redirect'],revocation_endpoint:`${this.issuer}/oauth/revoke`,...this.service.dpopNonces?{dpop_signing_alg_values_supported:['ES256']}:{},contracts:[]},this.manifestDeclarations?.()??{});}
@@ -93,7 +98,7 @@ export class FederationController {
   objectURL(input){this.requireReady();return this.service.objectURL(input);}
   refresh(input){this.requireReady();return this.service.refresh(input);}
   async tokenClient(bearer){this.requireReady();return this.metadata.transaction(async tx=>(await this.service.token(tx,bearer)).token.clientId);}
-  async rpc(token,envelope,transport={}){this.requireReady();const response=await this.service.rpc(token,envelope,{requestOrigin:transport.requestOrigin});if(response.result?.__federationError){const {result,...rest}=response;return {...rest,error:result.__federationError};}return response;}
+  async rpc(token,envelope,transport={}){this.requireReady();const response=await this.service.rpc(token,envelope,{requestOrigin:transport.requestOrigin,busWaits:transport.busWaits===true,...transport.busResume!==undefined?{busResume:transport.busResume}:{}});if(response.result?.__federationError){const {result,...rest}=response;return {...rest,error:result.__federationError};}return response;}
   async dispatch(ctx,crypto){
     const writing=!readMethods.has(ctx.method),adapter=this.dispatcher;if(writing)await ctx.reauthorize?.();
     const transact=operation=>ctx.transaction?operation(ctx.transaction):this.metadata.transaction(operation);
@@ -119,4 +124,4 @@ export class FederationController {
 export function federationMetadata(storage){return {transaction:operation=>storage.transaction(async native=>operation({get:key=>native.get(key),set:(key,value)=>native.put(key,value),delete:key=>native.delete(key),list:async prefix=>[...await native.list({prefix})].map(([key,value])=>({key,value}))}))};}
 
 /** Preserve typed faults across runtimes whose RPC serialization drops Error properties. */
-export function federationRemote(stub){const facade={};for(const method of ['ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','dpopNonce'])facade[method]=async(...args)=>{const envelope=await stub.invoke(method,args);if(!envelope.ok)throw Object.assign(new Error(envelope.error.message),envelope.error);return envelope.result;};return facade;}
+export function federationRemote(stub){const facade={};for(const method of ['ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','dpopNonce','incrementalPort','appSessions'])facade[method]=async(...args)=>{const envelope=await stub.invoke(method,args);if(!envelope.ok)throw Object.assign(new Error(envelope.error.message),envelope.error);return envelope.result;};return facade;}

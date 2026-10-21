@@ -57,7 +57,7 @@ export default {
     const capacityExempt=protective||request.method==='DELETE'||admission.exempt(path);
     if(mutation&&!capacityExempt&&allowedMethods(path))await object.admitWork(id,{initialize:true});
     await object.touch(id);
-    if(path==='/api/account'&&request.method==='GET')return json({...await object.snapshot(id),account:owner.account,credentials:owner.credentials,devices:owner.devices,audit:owner.audit,grants:[]});
+    if(path==='/api/account'&&request.method==='GET')return json({...await object.snapshot(id),account:owner.account,credentials:owner.credentials,devices:owner.devices,audit:owner.audit,grants:[],...env.DEVICE_AUTHORIZATION_ENABLED==='true'&&env.FEDERATION_AUTHORITY?.ready()?{appSessions:(await env.FEDERATION_AUTHORITY.appSessions(context)).sessions}:{}});
     response=await stage('owner',route);if(response)return response.passthrough??response;
     return json({error:'not_found'},404);
    }

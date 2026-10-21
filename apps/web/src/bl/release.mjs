@@ -1,3 +1,4 @@
+import {devicesEnabled,RevokeDeviceAccess,RevokeOtherDeviceAccess,RevokeAppAccess} from './devices.mjs';
 import {freshAPI} from './step-up.mjs';
 import {accountReset,clearBrowserAccount,installAPIContext,accountContextError} from './account-context.mjs';
 import {OwnerFlow} from './owner-flow.mjs';
@@ -137,7 +138,7 @@ export class SignIn extends Flow {
  else {const begin=await r.api.request('/api/auth/login/passkey/begin',payload);if(!live())return;const response=await r.browser.authenticatePasskey(begin.authenticationOptions);if(!live())return;const result=await r.api.request('/api/auth/login/passkey/finish',{challengeToken:begin.challengeToken,response});if(live())await acceptSignIn(r,ctx,result);}
  }
 }
-export class SignOut extends Flow {async perform(r,ctx,detail){const push=await r.browser.pushSubscriptionId?.();await r.api.request('/api/auth/logout',push?{pushSubscription:push}:{});clearAccount(r,ctx);update(r,ctx,{auth:'login'});r.browser.setCaptchaAction('login');r.browser.installCaptcha(current(r).config);}}
+export class SignOut extends Flow {async perform(r,ctx,detail){if(devicesEnabled(current(r))&&!(detail.confirmed===true&&current(r).modal?.kind==='signout-impact')){r.browser.captureFocus?.();update(r,ctx,{modal:{kind:'signout-impact'}});r.browser.modalFocus?.();return;}const push=await r.browser.pushSubscriptionId?.();await r.api.request('/api/auth/logout',push?{pushSubscription:push}:{});clearAccount(r,ctx);update(r,ctx,{auth:'login'});r.browser.setCaptchaAction('login');r.browser.installCaptcha(current(r).config);}}
 export class StartRecovery extends Flow {
  async perform(r,ctx){const s=current(r),token=r.browser.captcha(s.config).turnstileToken;if(!token)throw new Error('Complete the recovery security check before continuing.');r.browser.storeRecoveryChallenge(token);r.browser.navigate('/recovery/restore');}
 }
@@ -250,11 +251,11 @@ export class SaveNotifications extends OwnerFlow {async perform(r,ctx,detail){co
 export class DisableNotifications extends OwnerFlow {async perform(r,ctx,detail){const p=current(r).data.notificationPreferences;await r.api.request('/api/notifications',{...p,enabled:false,push:{enabled:false},email:{...p.email,enabled:false}},'PUT');await refresh(r,ctx);notice(r,ctx,'All notification channels are off.');}}
 export class RemovePushDevice extends OwnerFlow {async perform(r,ctx,detail){await r.api.request(`/api/notifications/devices/${detail.id}`,{},'DELETE');await refresh(r,ctx);notice(r,ctx,'Push device removed.');}}
 export class LinkEmail extends Flow {async perform(r,ctx,detail){await r.api.request('/api/auth/email/start',{email:detail.values.email});update(r,ctx,{modal:null});notice(r,ctx,'Verification message requested. Check your inbox.');}}
-export class RevokeGrant extends Flow {async perform(r,ctx,detail){await r.api.request(`/api/grants/${detail.id}`,{},'DELETE');await refresh(r,ctx);notice(r,ctx,'App access revoked.');}}
+export class RevokeGrant extends RevokeAppAccess {}
 export class AddPasskey extends Flow {async perform(r,ctx,detail){const begin=await r.api.request('/api/auth/passkeys/begin',{label:detail.values.label});await r.api.request('/api/auth/passkeys/finish',{challengeId:begin.challengeId,response:await r.browser.createPasskey(begin.registrationOptions)});await completed(r,ctx,'Passkey added to your account.');}}
 export class RemovePasskey extends Flow {async perform(r,ctx,detail){const result=await r.api.request('/api/auth/passkeys/remove',{credentialId:detail.credentialId});if(result.currentSessionRevoked){clearAccount(r,ctx);notice(r,ctx,'Passkey removed. Sign in with a remaining key.');}else await completed(r,ctx,'Passkey and its device sessions revoked.');}}
-export class RevokeDevice extends Flow {async perform(r,ctx,detail){const result=await r.api.request('/api/auth/devices/revoke',{sessionId:detail.sessionId});if(result.currentSessionRevoked)clearAccount(r,ctx);else await completed(r,ctx,'Device session revoked.');}}
-export class RevokeOtherDevices extends Flow {async perform(r,ctx,detail){await r.api.request('/api/auth/devices/revoke-others',{});await completed(r,ctx,'Other devices signed out.');}}
+export class RevokeDevice extends RevokeDeviceAccess {}
+export class RevokeOtherDevices extends RevokeOtherDeviceAccess {}
 // LA5 uses LA1's unmounted browser contract; LA3 owns the routes and public config flag.
 const devicePath=(linked,method)=>`/api/auth/${linked?'linked':'device'}/${method}`;
 const deviceInterval=value=>Number.isFinite(value)?Math.max(5,Math.min(60,value)):5;

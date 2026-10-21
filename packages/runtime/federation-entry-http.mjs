@@ -66,7 +66,7 @@ export async function handleAuthorizationEntry(request,{entries,issuer,assets,ow
   const {subject}=await entries.endTarget(entry[1],input,page);let cookies=[];
   if(input.confirmed){if(typeof endSession!=='function')throw error('temporarily_unavailable','Signing out is not available.',503);cookies=await endSession(request,context,subject)??[];}
   return json(await entries.finishSession(entry[1],input,page),200,{},cookies);
- }catch(e){const status=e.status??statuses[e.code]??400;return json({error:e.code??'invalid_request',message:e.code?e.message:'The sign-in request could not be completed.'},status,{...cors,...Number.isSafeInteger(e.retryAfter)&&e.retryAfter>0?{'Retry-After':String(e.retryAfter)}:{}});}
+ }catch(e){const status=e.status??statuses[e.code]??400;return json({error:e.code??'invalid_request',message:e.code?e.message:'The sign-in request could not be completed.',...e.code==='rate_limited'&&e.ownerReviewUri?{owner_review_uri:e.ownerReviewUri}:{}},status,{...cors,...Number.isSafeInteger(e.retryAfter)&&e.retryAfter>0?{'Retry-After':String(e.retryAfter)}:{}});}
 }
 const EMBED_AUTH={session:'BindleEmbed',forget:'BindleEmbed',state:'BindleEmbedSession',avatar:'BindleEmbedSession',events:'BindleEmbedSession','session/end':'BindleEmbedSession'};
 const EMBED_GET=['avatar','events'],EMBED_STREAM={tickMs:25000,maxMs:600000};

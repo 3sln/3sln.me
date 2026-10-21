@@ -1,3 +1,4 @@
+import {key} from '../../core/records.mjs';
 // AccountController slice 10, Notifications, push, app connections and MCP account tools (docs/architecture/app-engine.md §12): notification preferences, push devices, app connections and MCP account operations.
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists the methods
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
@@ -7,6 +8,7 @@ import {ACTIVITY_PUSH_OWNER_OPERATIONS} from '../../messaging/notifications.mjs'
 import {operate} from '../../app/engine.mjs';
 
 export const methods={
+  async approvalNoticeContacts(owner){if(this.config.DEVICE_AUTHORIZATION_ENABLED!=='true')return {subscriptions:[]};return {subscriptions:[...(await this.metadata.list({prefix:key('push-subscription',owner)})).values()].filter(r=>r?.owner===owner&&typeof r.endpoint==='string').slice(0,10)};},
   async appConnections(owner){return this.apps.list(owner);},
   async appConnectionBinding(owner,clientId){return this.apps.binding(owner,clientId);},
   async appConnect(owner,client,expected){return this.apps.register(owner,client,expected);},
@@ -30,6 +32,7 @@ export const methods={
 };
 
 export const rpc={
+ approvalNoticeContacts:{warm:true},
  notificationPreferences:{},
  subscribe:{},
  removeSubscription:{},

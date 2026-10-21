@@ -80,7 +80,7 @@ export async function createAppSession(service,tx,authority,jkt,options={}){
  const familyId=options.familyId??service.random();if(typeof familyId!=='string'||!/^[A-Za-z0-9_.-]{16,128}$/.test(familyId)||await tx.get(key('family',familyId)))fail('invalid_grant');
  const expiresAt=options.expiresAt==null?NO_EXPIRY:options.expiresAt;if(!Number.isSafeInteger(expiresAt)||expiresAt<=now)fail('invalid_grant');
  const rotationKey=base64url(service.crypto.getRandomValues(new Uint8Array(32))),refresh_token=service.random(),hash=await digest(service.crypto,`refresh\0${refresh_token}`);
- const family={...structuredClone(authority),issuer:service.issuer,audience:service.audience,familyId,expiresAt,idleExpiresAt:Math.min(now+appRefreshIdleMs(service),expiresAt),lastUsedAt:now,jkt,rotationKey,status:'active',currentHash:hash,history:[hash],grantType:options.grantType??'authorization_code',...options.lineage?{lineage:{owner:options.lineage.owner,lineageId:options.lineage.lineageId}}:{},...options.access==='dpop'?{access:'dpop'}:{}};
+ const family={...structuredClone(authority),issuer:service.issuer,audience:service.audience,familyId,expiresAt,idleExpiresAt:Math.min(now+appRefreshIdleMs(service),expiresAt),lastUsedAt:now,createdAt:now,jkt,rotationKey,status:'active',currentHash:hash,history:[hash],grantType:options.grantType??'authorization_code',...options.lineage?{lineage:{owner:options.lineage.owner,lineageId:options.lineage.lineageId}}:{},...options.access==='dpop'?{access:'dpop'}:{}};
  await tx.set(key('family',familyId),family);await tx.set(key('refresh',hash),{familyId,used:false,expiresAt});
  await endLineage(service,ended);
  return {family,refresh_token,...expiresIn(family,now)};

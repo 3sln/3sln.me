@@ -70,7 +70,7 @@ export const methods={
    return result;
   },
   // LINK_SLOT_OCCUPANT ({owner, slot}) -> {clientId, generation, cnx} | null (packages/links/engine.mjs).
-  async linkSlotOccupant(query){const o=await exclusiveOccupant(this,query);return o&&{clientId:o.clientId,generation:o.generation,cnx:o.cnx};},
+  async linkSlotOccupant(query){const o=await exclusiveOccupant(this,query);return o&&{clientId:o.clientId,connection:o.connection,generation:o.generation,cnx:o.cnx};},
   // DELEGATION_SLOT_OCCUPANT ({owner, slot}) -> {clientId, origin, ingress, cnx, purposes} | null (packages/identity/delegation.mjs).
   // `cnx` names the seat incarnation: a new seat, generation (suspend/resume, reconnect) or occupant changes it (KD-1).
   async delegationSlotOccupant(query){const o=await exclusiveOccupant(this,query);return o&&{clientId:o.clientId,origin:o.origin,ingress:o.ingress,cnx:o.cnx,purposes:o.purposes};},

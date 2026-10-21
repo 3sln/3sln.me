@@ -7,10 +7,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const harness = `
-import worker, { IdentityDirectory, AccountObject, AbuseGuard, McpAuthorizationObject, FederationObject, PlanCatalogObject, LifecycleScheduler } from './apps/worker/index.mjs';
+import worker, { IdentityDirectory, AccountObject, AbuseGuard, McpAuthorizationObject, FederationObject, PlanCatalogObject, LifecycleScheduler, EventBusWaiter } from './apps/worker/index.mjs';
 import {createWorkerArgon2Hasher}from'./apps/worker/password.mjs';
 import {createPushTransport}from'./packages/messaging/web-push.mjs';
-export {McpAuthorizationObject,PlanCatalogObject,LifecycleScheduler};
+export {McpAuthorizationObject,PlanCatalogObject,LifecycleScheduler,EventBusWaiter};
 export class TestDirectory extends IdentityDirectory {
   async pushVector(config,subscription,payload){let sent;const transport=createPushTransport(config,{fetcher:async(url,options)=>{sent=options;return new Response(null,{status:201});}}),result=await transport.send(subscription,payload);return {accepted:result.accepted,encrypted:!Buffer.from(sent.body).includes(Buffer.from(payload.proof)),encoding:new Headers(sent.headers).get('Content-Encoding'),redirect:sent.redirect};}
   async rows(){return [...await this.ctx.storage.list()];}
@@ -55,7 +55,7 @@ const recoverySigningKey=JSON.stringify({kid:crypto.randomUUID(),privateJWK:awai
     compatibilityDate: '2026-10-11', compatibilityFlags: ['nodejs_compat'], log: new Log(LogLevel.ERROR),
     bindings: { APP_ORIGIN: origin, RP_ID: 'localhost', TERMS_VERSION: '2026-10-11', LOCAL_DEVELOPMENT: 'true', IDENTITY_LAYOUT:'v1-64-fresh', STORAGE_WRITE_ENABLED:'true', MCP_ENABLED:'true',MCP_LAYOUT:'mcp-auth-v1-64',MCP_CLIENTS:JSON.stringify([{id:'agent.example',name:'Example agent',redirectUris:['https://agent.example/callback']}]), SIGNUP_IP_WINDOW_MS:'1000', SIGNUP_IP_DAILY_LIMIT:'20',
       RECOVERY_SIGNING_KEY:recoverySigningKey, KEY_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'), ABUSE_HASH_KEY: 'isolated-test-rate-limit-key',...options.bindings },
-    durableObjects: { PLAN_CATALOG:{className:'PlanCatalogObject',useSQLite:true}, FEDERATION:{className:'TestFederation',useSQLite:true}, MCP_AUTH:{className:'McpAuthorizationObject',useSQLite:true}, IDENTITIES: { className: 'TestDirectory', useSQLite: true }, ACCOUNTS: { className: 'TestAccount', useSQLite: true }, ABUSE: { className: 'TestAbuse', useSQLite: true }, LIFECYCLE_SCHEDULER: { className: 'LifecycleScheduler', useSQLite: true } },
+    durableObjects: { EVENT_BUS_WAITS:{className:'EventBusWaiter'}, PLAN_CATALOG:{className:'PlanCatalogObject',useSQLite:true}, FEDERATION:{className:'TestFederation',useSQLite:true}, MCP_AUTH:{className:'McpAuthorizationObject',useSQLite:true}, IDENTITIES: { className: 'TestDirectory', useSQLite: true }, ACCOUNTS: { className: 'TestAccount', useSQLite: true }, ABUSE: { className: 'TestAbuse', useSQLite: true }, LIFECYCLE_SCHEDULER: { className: 'LifecycleScheduler', useSQLite: true } },
     r2Buckets: ['BLOBS', 'ARCHIVES'], ...options.outboundService ? { outboundService: options.outboundService } : {}, serviceBindings: { ASSETS: options.assets ?? (async () => new Response('<!doctype html><title>Test</title>', { headers: { 'Content-Type': 'text/html' } })) } }));
   const identities = await mf.getDurableObjectNamespace('IDENTITIES'); directory = new ShardedIdentityRepository({shard:name=>identities.get(identities.idFromName(name)),layout:'v1-64-fresh'});directory.passwordVector=(...args)=>identities.get(identities.idFromName('password-vector-test')).passwordVector(...args);
   accounts = await mf.getDurableObjectNamespace('ACCOUNTS'); abuse = await mf.getDurableObjectNamespace('ABUSE'); archives = await mf.getR2Bucket('ARCHIVES');

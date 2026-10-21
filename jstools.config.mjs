@@ -10,6 +10,7 @@ export const publicSources = [
   'vendor/ngin',
   'packages/sdk/src',
   'packages/i18n',
+  'packages/consent/model.mjs','packages/consent/localization.mjs','packages/consent/reviewed-contracts.mjs',
   'packages/portal',
   'packages/recovery/index.mjs',
   'packages/recovery/normalization.mjs',

@@ -232,11 +232,11 @@ export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces
   /** Resource RPC with a DPoP-bound access token (`Authorization: DPoP`, spec §6.3). `input`: {authorization, dpop,
    * envelope, origin?}. Checks the proof (ath, iat window, jti), the token's key, then the approval lineage, before
    * the owner shard's own live token, grant, account and connection checks. */
-  async rpc({authorization,dpop,envelope,origin}={}){
+  async rpc({authorization,dpop,envelope,origin,busWaits=false,busResume,checkOnly=false}={}){
    const token=typeof authorization==='string'&&authorization.startsWith('DPoP ')?authorization.slice(5):'',owner=OWNER_TOKEN.exec(token)?.[1];if(!owner)fault('unauthorized','A DPoP access token is required.');
    if(typeof dpop!=='string'||!dpop||dpop.includes(',')||dpop.length>4096)fault('unauthorized','A DPoP proof is required.');
    let proof;try{proof=await verifyProof(crypto,dpop,{typ:DPOP_TYP,htm:'POST',htu:`${issuer}/bindle/rpc`,now:clock(),ath:token,nonce:value=>value===undefined?null:nonces.check('rpc',value)});}catch(error){fault(error?.code==='use_dpop_nonce'?'use_dpop_nonce':'unauthorized','A valid DPoP proof is required.');}
-   if(!jti.claim(`rpc:${proof.jkt}:${proof.jti}`,proof.expiresAt))fault('unauthorized','This proof was already used.');
+   if(busResume===undefined&&!jti.claim(`rpc:${proof.jkt}:${proof.jti}`,proof.expiresAt))fault('unauthorized','This proof was already used.');
    const service=serviceOf(owner),id=await boundTokenId(service,token);
    const family=await service.store.transaction(async tx=>{const record=await tx.get(key('token',id));if(!record||record.jkt!==proof.jkt||record.expiresAt<=clock())fault('unauthorized','A DPoP access token is required.');return record.familyId?tx.get(key('family',record.familyId)):null;});
    // Lineage on every RPC: ending the approving session stops access at once, before the outbox drains.
@@ -244,7 +244,8 @@ export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces
     if(!live){await revokeDeviceFamilies(service,[family.familyId]);fault('unauthorized','This application session ended.');}}
    // A client whose device eligibility was withdrawn loses its sessions (review LA2-S11).
    if(family){try{eligible(family.clientId);}catch{await revokeDeviceFamilies(service,[family.familyId]);await endLineage(service,[family]);fault('unauthorized','This application session ended.');}}
-   const response=await service.rpc(token,envelope,{tokenHash:id,requestOrigin:origin});await bindChildTokens(service,response.result,proof.jkt);
+   if(checkOnly===true&&typeof busResume==='string'){await service.store.transaction(async tx=>service.tokenRecord(tx,await tx.get(key('token',id))));return {version:'0',tx:envelope.tx,result:{live:true}};}
+   const response=await service.rpc(token,envelope,{tokenHash:id,requestOrigin:origin,busWaits,...busResume!==undefined?{busResume}:{}});await bindChildTokens(service,response.result,proof.jkt);
    if(response.result?.__federationError){const {result,...rest}=response;return {...rest,error:result.__federationError};}return response;
   },
   /** Client cancellation of a pending (or redeemed) device request at the revocation endpoint: `token` is the device

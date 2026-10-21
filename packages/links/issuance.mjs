@@ -50,12 +50,14 @@ export class LinkService {
   /** `store`: the transaction contract (`transaction(tx => {get, set, delete, list(prefix)})`). `keys`: the identity
    * key registry (current key lookups). `signingKey(owner)` -> {kid, privateKey}: the current private key, imported
    * for signing only. `decide({owner, parent, policy, principal})`: the bounded audience decision (links §7.5).
-   * `policies`: the operator registry URIs (packages/links/policies.mjs). */
-  constructor({ store, issuer, keys, signingKey, decide, policies = [], crypto = globalThis.crypto, clock = () => Date.now(), maxLinks = 1000, changeRetention = 1024, evaluationsPerLink = 60, evaluationsPerOwner = 600 }) {
+   * `policies`: the operator registry URIs (packages/links/policies.mjs). `verifyAuthor({owner, jti, principal, proof,
+   * issuer, now})`: the host's author-proof check (./author-proof.mjs with host ports); without it `evaluate` is
+   * always `unavailable` (fail closed, C1b). */
+  constructor({ store, issuer, keys, signingKey, decide, verifyAuthor, policies = [], crypto = globalThis.crypto, clock = () => Date.now(), maxLinks = 1000, changeRetention = 1024, evaluationsPerLink = 60, evaluationsPerOwner = 600 }) {
     let origin; try { origin = new URL(issuer); } catch { fail('invalid_link_service'); }
     if (typeof store?.transaction !== 'function' || origin.origin !== issuer || typeof signingKey !== 'function' || !Array.isArray(policies) || !Number.isSafeInteger(maxLinks) || maxLinks < 1 || !Number.isSafeInteger(changeRetention) || changeRetention < 1) fail('invalid_link_service');
     if (![evaluationsPerLink, evaluationsPerOwner].every(value => Number.isSafeInteger(value) && value > 0)) fail('invalid_link_service');
-    Object.assign(this, { store, issuer, keys, signingKey, decide, policies: Object.freeze([...policies]), crypto, clock, maxLinks, changeRetention, evaluationsPerLink, evaluationsPerOwner });
+    Object.assign(this, { store, issuer, keys, signingKey, decide, verifyAuthor, policies: Object.freeze([...policies]), crypto, clock, maxLinks, changeRetention, evaluationsPerLink, evaluationsPerOwner });
   }
   async #bound(tx, owner) { const bound = await tx.get('owner'); if (bound !== undefined && bound !== owner) fail('forbidden'); }
   async #state(tx, owner) { return (await tx.get(key('link-state', owner))) ?? { seq: 0, floor: 0, count: 0 }; }
@@ -165,25 +167,35 @@ export class LinkService {
       return { changes, seq: state.seq };
     });
   }
-  /** Delivery-time policy evaluation (links §7.5) for a verified principal: eligible, ineligible or unavailable. */
-  async evaluate(owner, { jti, principal } = {}, { slots } = {}) {
+  /** Delivery-time policy evaluation (links §7.5) for the AUTHOR of a delivery to this link: eligible, ineligible or
+   * unavailable. `proof` is the author-signed envelope the occupant is admitting; the host verifies it itself
+   * (./author-proof.mjs), so the occupant can no longer name an arbitrary principal (review finding 1, closed by C1b). */
+  async evaluate(owner, { jti, principal, proof } = {}, { slots } = {}) {
     if (!PRINCIPAL(principal)) fail('invalid_link_query');
+    if (proof === undefined || proof === null) fail('author_proof_required');
     const record = await this.store.transaction(async tx => { await this.#bound(tx, owner); return this.#owned(tx, owner, jti, slots); });
-    if (!live(record, this.clock()) || !record.claims.audience || typeof this.decide !== 'function') return { state: 'unavailable' };
-    // The principal is the author the occupant verified; the host cannot re-check it here (review finding 1), so
-    // evaluations are budgeted per link and per owner per hour. Past the budget the answer is `unavailable`, which
-    // bounds the policy oracle, cross-account tier lookups and decision-row writes an occupant can cause.
+    if (!live(record, this.clock()) || !record.claims.audience || typeof this.decide !== 'function' || typeof this.verifyAuthor !== 'function') return { state: 'unavailable' };
+    // Proof first, under its own per-owner failure budget, so proofs that do not verify (for example from authors of
+    // other hosts) can never spend the evaluation budget of eligible senders (review LH-1). Only a verified proof is
+    // charged against the per-link and per-owner evaluation budgets, which bound policy lookups and decision rows.
+    if (!await this.#evaluationBudget(owner, 'invalid-proofs', { charge: false })) return { state: 'unavailable' };
+    let verified;
+    try { verified = await this.verifyAuthor({ owner, jti, resource: record.claims.resource, kinds: [...record.claims.kinds], principal: { issuer: principal.issuer, subject: principal.subject }, proof, issuer: this.issuer, now: this.clock() }); }
+    catch (error) { if (error?.code === 'author_proof_invalid') { await this.#evaluationBudget(owner, 'invalid-proofs'); fail('author_proof_invalid'); } return { state: 'unavailable' }; }
+    if (verified?.principal?.issuer !== principal.issuer || verified.principal.subject !== principal.subject) fail('author_proof_invalid');
     if (!await this.#evaluationBudget(owner, jti)) return { state: 'unavailable' };
     let decision; try { decision = await this.decide({ owner, parent: jti, policy: record.claims.audience.policy, principal: { issuer: principal.issuer, subject: principal.subject } }); } catch { decision = null; }
     return { state: ['eligible', 'ineligible'].includes(decision?.state) ? decision.state : 'unavailable' };
   }
-  async #evaluationBudget(owner, jti) {
-    const hour = Math.floor(this.clock() / 3600000);
+  // `scope`: a jti (per-link plus per-owner evaluations) or 'invalid-proofs' (per-owner failed proofs only).
+  async #evaluationBudget(owner, scope, { charge = true } = {}) {
+    const hour = Math.floor(this.clock() / 3600000), invalidOnly = scope === 'invalid-proofs';
     return this.store.transaction(async tx => {
-      const linkKey = key('link-evaluations', owner, jti), ownerKey = key('link-evaluations', owner), perLink = await tx.get(linkKey), perOwner = await tx.get(ownerKey);
+      const linkKey = key('link-evaluations', owner, scope), ownerKey = invalidOnly ? linkKey : key('link-evaluations', owner), perLink = await tx.get(linkKey), perOwner = await tx.get(ownerKey);
       const linkCount = perLink?.hour === hour ? perLink.count : 0, ownerCount = perOwner?.hour === hour ? perOwner.count : 0;
-      if (linkCount >= this.evaluationsPerLink || ownerCount >= this.evaluationsPerOwner) return false;
-      await tx.set(linkKey, { hour, count: linkCount + 1 }); await tx.set(ownerKey, { hour, count: ownerCount + 1 });
+      if (linkCount >= (invalidOnly ? this.evaluationsPerOwner : this.evaluationsPerLink) || ownerCount >= this.evaluationsPerOwner) return false;
+      if (!charge) return true;
+      await tx.set(linkKey, { hour, count: linkCount + 1 }); if (!invalidOnly) await tx.set(ownerKey, { hour, count: ownerCount + 1 });
       return true;
     });
   }

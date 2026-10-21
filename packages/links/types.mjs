@@ -27,3 +27,15 @@ const messagingContact = Object.freeze({
 /** Link type URI -> {slot, path(handle, jti), members, conditional, valid(claims)}. Append-only; a binding is a reviewed change. */
 export const LINK_TYPE_BINDINGS = Object.freeze(Object.assign(Object.create(null), { [MESSAGING_CONTACT_LINK_TYPE]: messagingContact }));
 export const linkBinding = type => (typeof type === 'string' && Object.hasOwn(LINK_TYPE_BINDINGS, type) ? LINK_TYPE_BINDINGS[type] : null);
+
+// BB-C1b: the slot handoff. The `messaging-address` provider consumer feature resolves a link of a bound type to the
+// current occupant of the binding's slot (bindlebox.md §2.1, §2.3). Placeholders under spec.bindle.example.
+export const PUBLIC_INTAKE_SLOT = 'https://spec.bindle.example/slots/public-message-intake/v1';
+export const MESSAGING_PROFILE = 'https://spec.bindle.example/bindlebox/v1';
+export const DESCRIPTOR_MEDIA_TYPE = 'application/vnd.bindlebox.ingress+json';
+/** The provider's consumer entry for the manifest `extensions` (bindlebox.md §2.1); declared only through the
+ * EXT-X2 registry row in packages/runtime/federation.mjs, under BINDLEBOX_ENABLED and a mounted handoff. */
+export const MESSAGING_ADDRESS_DECLARATION = Object.freeze({ slot: MESSAGING_INGRESS_SLOT, role: 'consumer', ref: 'messaging-address', purpose: 'Tells people who hold your contact links where to deliver.' });
+/** Link type -> slot, the reviewed registration table (bindlebox.md §4.2: "a small table from link type to slot"). */
+export const LINK_SLOT_TABLE = Object.freeze(Object.entries(LINK_TYPE_BINDINGS).map(([type, binding]) => Object.freeze({ type, slot: binding.slot })));
+export const linkSlot = type => linkBinding(type)?.slot ?? null;

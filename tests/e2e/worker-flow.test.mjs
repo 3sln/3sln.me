@@ -6,13 +6,15 @@ import {launch,baseURL,virtualAuthenticator,waitForApp,screenshot,publicAssetCac
 // These checks intentionally run against wrangler.local.jsonc only. Never point
 // this mutation suite at a deployed service. Turnstile's explicit local test
 // token is injected; account auth, passkey verification and storage stay real.
-let browser;
+let browser,deviceAuthorization=false;
 test.before(async()=>{
   const url=new URL(baseURL);assert.ok(['localhost','127.0.0.1'].includes(url.hostname),'local Worker required');
-  const config=await (await fetch(`${baseURL}/api/config`)).json();assert.equal(config.localDevelopment,true,'explicit local configuration required');
+  const config=await (await fetch(`${baseURL}/api/config`)).json();assert.equal(config.localDevelopment,true,'explicit local configuration required');deviceAuthorization=config.deviceAuthorizationEnabled===true;
   browser=await launch();
 });
 test.after(async()=>{await browser?.close();});
+async function signOut(page){await page.getByRole('button',{name:'Sign out',exact:true}).click();if(deviceAuthorization){const dialog=page.getByRole('dialog',{name:'Sign out and end approved sign-ins?'});await dialog.waitFor();assert.equal((await (await page.context().request.get(baseURL+'/api/session')).json()).authenticated,true,'opening the cascade warning does not sign out');await dialog.getByRole('button',{name:'Sign out',exact:true}).click();}}
+
 async function setup(t){
   const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,extraHTTPHeaders:{'CF-Connecting-IP':process.env.E2E_CLIENT_IP||`198.51.100.${Math.floor(Math.random()*200)+20}`}});t.after(async()=>{for(const page of context.pages()){const alerts=await page.locator('[role=alert]').allTextContents().catch(()=>[]);if(alerts.length)console.log('Browser alerts:',alerts.join(' | '));}await context.close();});
   // Observe the closed renderer only in this controlled browser fixture.
@@ -65,7 +67,7 @@ test('real passkey signup, confirmation gate, sign out and assertion login',asyn
   assert.equal((await (await context.request.get(`${baseURL}/api/session`)).json()).authenticated,false);
   await finishRecoveryDownload(page);await screenshot(page,'live-passkey-inbox-desktop');
   const assigned=(await (await context.request.get(`${baseURL}/api/session`)).json()).account;assertAssignedIdentity(assigned);const handle=assigned.handle;
-  await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.getByLabel('Your handle').fill(handle);
+  await signOut(page);await page.getByLabel('Your handle').fill(handle);
   await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();await page.getByRole('heading',{name:'Messages & conversations'}).waitFor();
   const session=await (await context.request.get(`${baseURL}/api/session`)).json();assert.equal(session.account.handle,handle);assert.equal(session.account.id,assigned.id);assert.equal(session.account.passkeyCount,1);
   const cookies=await context.cookies();assert.ok(cookies.some(c=>c.httpOnly&&c.sameSite==='Strict'));
@@ -99,7 +101,7 @@ test('real password setup resumes, recovery rotates, contacts constrain messages
   await page.getByRole('heading',{name:'Keep a way back in.'}).waitFor();await page.reload();
   const recovery=await finishRecoveryDownload(page);
   const assigned=(await (await context.request.get(`${baseURL}/api/session`)).json()).account;assertAssignedIdentity(assigned);
-  await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.getByRole('button',{name:'Use my recovery file'}).click();
+  await signOut(page);await page.getByRole('button',{name:'Use my recovery file'}).click();
   await page.getByRole('button',{name:'Continue to recovery',exact:true}).click();
   await page.getByLabel('Encrypted recovery file',{exact:true}).setInputFiles({name:'recovery.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(recovery))});
   await page.getByRole('button',{name:'Read recovery questions',exact:true}).click();

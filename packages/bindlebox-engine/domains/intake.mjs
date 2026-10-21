@@ -108,6 +108,8 @@ export class IntakeDeliver extends MailboxAction {
   const digest=await intakeDigest(args.message),txKey=KEYS.intakeTx(`${encodeURIComponent(consumer)}/${txId}`);
   const id=await sha256(globalThis.crypto,jcs(['bindlebox-intake-v1',consumer,v.jti])),bytes=args.message.parts.reduce((n,x)=>n+fromBase64url(x.dataBase64url).byteLength,0);
   return store.transaction(async tx=>{
+   // Provenance cannot be accepted after seven days. Keep both replay fences an extra day, then prune bounded work.
+   let pruned=0;for(const prefix of ['intake/tx/','intake/jti/'])for(const [key,row]of await tx.list({prefix})){if(pruned>=32)break;if(row.at+8*86400000<=now){await tx.delete(key);pruned++;}}
    // Dedup answers only after provenance verified, per (consumer, tx) and (consumer, jti), and only for the same
    // message digest; the same tx or jti with other content is a conflict, never a stored disposition (BB2-R4).
    const conflict=()=>fault('operation_conflict','The operation conflicts with an earlier one.',409);

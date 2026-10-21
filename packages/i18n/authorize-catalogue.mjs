@@ -72,6 +72,11 @@ const es={
  'Ready in a moment. Select the button again.':'Listo en un momento. Vuelve a seleccionar el botón.',
  'No new sign-in found on this browser yet.':'Todavía no hay ningún inicio de sesión nuevo en este navegador.',
  'Updated the accounts signed in on this browser.':'Se actualizaron las cuentas con sesión iniciada en este navegador.',
+ 'New access requested by {app}':'Nuevo acceso solicitado por {app}',
+ 'Already granted to {app}':'Ya concedido a {app}',
+ 'New fields: ':'Campos nuevos: ',
+ 'New permissions: ':'Permisos nuevos: ',
+ '{app} is asking for more access than you already granted. New items are marked below.':'{app} solicita más acceso del que ya concediste. Los elementos nuevos están marcados abajo.',
 };
 const en=Object.fromEntries(Object.entries(es).map(([key,value])=>[key,typeof value==='string'?key:{one:key.replace(/s$/,''),other:key}]));
 export const authorizeCatalogue=freeze({en:{'':en},es:{'':es}});

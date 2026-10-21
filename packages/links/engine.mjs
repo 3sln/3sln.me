@@ -7,10 +7,15 @@
 // Actors (built by trusted adapters only, never from a request body):
 //   {kind:'owner', owner, handle?}       list, changes and revoke on every app-declared link of the owner. Owners do
 //                                        not issue app types: a type is issued only for the app that handles it.
-//   {kind:'app', owner, clientId, handle} every operation, limited to link types whose binding slot (./types.mjs)
+//   {kind:'app', owner, clientId, handle, generation?}
+//                                        every operation, limited to link types whose binding slot (./types.mjs)
 //                                        the app currently occupies, as reported by the `occupant({owner, slot})`
 //                                        port -> {clientId, generation} | null. No port, no occupant, or another
-//                                        occupant means `forbidden`; occupancy is re-read on every operation.
+//                                        occupant means `forbidden`; occupancy is re-read on every operation. When
+//                                        the adapter names the verified connection `generation` (C1b resource
+//                                        method), the seat must hold exactly that generation: a stale credential of
+//                                        a suspended-and-resumed or reconnected app is refused.
+// `evaluate` requires the author proof of ./author-proof.mjs (C1b); a bare principal is refused.
 import { Provider } from '../../vendor/ngin/index.js';
 import { AppAction, AppQuery } from '../app/engine.mjs';
 import { AppFault } from '../app/faults.mjs';
@@ -32,12 +37,12 @@ export class LinksProvider extends Provider {
     if (!this.enabled || !this.service) throw new AppFault('not_found', 'Not found.', 404);
     if (!UUID.test(actor?.owner ?? '')) unauthorized();
     if (actor.kind === 'owner') return Object.freeze(scope(this.service, actor, { owner: true }));
-    if (actor.kind !== 'app' || !CLIENT(actor.clientId)) unauthorized();
+    if (actor.kind !== 'app' || !CLIENT(actor.clientId) || (actor.generation !== undefined && !Number.isSafeInteger(actor.generation))) unauthorized();
     const occupant = this.occupant, slots = async () => {
       // Slots this app occupies now; a failing or missing port fails closed.
       if (typeof occupant !== 'function') return [];
       const held = [];
-      for (const slot of new Set(Object.values(LINK_TYPE_BINDINGS).map(binding => binding.slot))) { let found = null; try { found = await occupant({ owner: actor.owner, slot }); } catch { found = null; } if (found?.clientId === actor.clientId) held.push({ slot, generation: found.generation ?? null }); }
+      for (const slot of new Set(Object.values(LINK_TYPE_BINDINGS).map(binding => binding.slot))) { let found = null; try { found = await occupant({ owner: actor.owner, slot }); } catch { found = null; } if (found?.clientId === actor.clientId && (actor.generation === undefined || found.generation === actor.generation) && (actor.connection === undefined || found.connection === actor.connection)) held.push({ slot, generation: found.generation ?? null }); }
       return held;
     };
     return Object.freeze(scope(this.service, actor, { slots }));
@@ -61,7 +66,7 @@ function scope(service, actor, { owner = false, slots }) {
     async rotate(jti) { if (owner) forbidden(); const permitted = await allowed(); if (!permitted.length) forbidden(); return service.rotateChallenge(actor.owner, jti, { slots: permitted }); },
     async evaluate(input) {
       if (owner) forbidden();
-      if (!INPUT(input, ['jti', 'principal'])) throw new AppFault('invalid_request', 'Unsupported link request.', 400);
+      if (!INPUT(input, ['jti', 'principal', 'proof'])) throw new AppFault('invalid_request', 'Unsupported link request.', 400);
       const permitted = await allowed(); if (!permitted.length) forbidden();
       return service.evaluate(actor.owner, input ?? {}, { slots: permitted });
     },
@@ -84,7 +89,8 @@ export class IssueLink extends AppAction { static operation = 'links.issue'; sta
 export class RevokeLink extends AppAction { static operation = 'links.revoke'; static deps = ['links']; static changes = 'links-changed'; run({ links }) { return links.revoke(this.id); } }
 /** `id`: the jti of a conditional link; a fresh challenge signed with the current key. */
 export class RotateLinkChallenge extends AppAction { static operation = 'links.rotate'; static deps = ['links']; static changes = 'links-changed'; run({ links }) { return links.rotate(this.id); } }
-/** `input`: {jti, principal:{issuer, subject}}. Not a pure read: it may record a bounded decision. */
+/** `input`: {jti, principal:{issuer, subject}, proof}: `proof` is the author-signed envelope (./author-proof.mjs).
+ * Not a pure read: it may record a bounded decision. */
 export class EvaluateLink extends AppAction { static operation = 'links.evaluate'; static deps = ['links']; run({ links }) { return links.evaluate(this.input); } }
 /** `input`: {type?, cursor?, limit?}. */
 export class LinkList extends AppQuery { static operation = 'links.list'; static deps = ['links']; static refreshOn = ['links-changed']; fetch({ links }) { return links.list(this.input); } }

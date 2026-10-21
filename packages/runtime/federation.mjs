@@ -1,3 +1,6 @@
+import {appSessionDerivation} from './app-session-lineage.mjs';
+import {holdBusRPC,busWaitsPort} from '../events/waiter.mjs';
+import {EVENT_BUS_CONTRACT} from '../federation/event-buses.mjs';
 import {appSessionPolicy} from '../federation/app-sessions.mjs';
 import {APP_NOTIFICATIONS,ACTIVITY_CONTRACT,ACTIVITY_METHODS} from '../federation/app-notifications.mjs';
 import {RESOURCE_SCOPING,storageScopeOptions} from '../storage/scoping.mjs';
@@ -14,7 +17,9 @@ import {deviceManifest} from '../federation/device-authorization.mjs';
 import {createManifestDeclarationProvider,ManifestDeclarations,withManifestDeclarations} from '../federation/runtime.mjs';
 import {ClientDirectory,CLIENT_METADATA_FEATURE,clientSite} from '../federation/client-metadata.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
+import {MESSAGING_ADDRESS_DECLARATION,LINKS_CONTRACT} from '../links/types.mjs';
 
+export const messagingAddressMounted=config=>config.BINDLEBOX_ENABLED==='true'&&config.INTEGRATIONS_ENABLED==='true'&&typeof config.MESSAGING_DESCRIBE==='function';
 export const BROKERING_STORE='bindle-brokering-v1';
 export const FEDERATION_LAYOUT='bindle-federation-v1';
 /** Append-only declaration registry (EXT-X2). Slices append rows; never edit builders or other slices' rows.
@@ -33,6 +38,13 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  // branch, DPoP RPC and cancellation (runtime/device-grant.mjs). DPoP algorithms and revocation_endpoint are already
  // base authority members whenever that mount is possible.
  {flag:'DEVICE_AUTHORIZATION_ENABLED',mounted:c=>c.target==='authority'&&c.mounts.deviceAuthorization===true,declare:c=>{const {device_authorization_endpoint,grant_types_supported,features}=deviceManifest(c.issuer);return {device_authorization_endpoint,grant_types_supported,features};}},
+ // BB-C1b: the `messaging-address` provider consumer of messaging-ingress (bindlebox §2.1). Only where the adapter
+ // mounted the descriptor handoff with an occupancy port AND a describe port (`mounts.messagingAddress`); the entry
+ // is kept only beside a declared extensions.v1 (EXTENSIONS_ENABLED), never on flags alone.
+ {flag:['BINDLEBOX_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.messagingAddress===true,declare:()=>({extensions:[{...MESSAGING_ADDRESS_DECLARATION}]})},
+ // IA-1: `grant-more`/`configure` need no row of their own (a second `authorization-entry.v1` would fail closed as a
+ // duplicate). They ride the FEDERATION_ENTRY_ENABLED row through `entries.intents()`, which lists them only when the
+ // adapter passed AuthorizationEntries a mounted INCREMENTAL_AUTHORIZATION port (INCREMENTAL_AUTH_ENABLED on).
 ]);
 /** Synchronous adapter over the same provider Query used by the engine harness. Mounts never come from query input. */
 export function federationDeclarations(config,context={}){return new ManifestDeclarations().fetch({config,federation:createManifestDeclarationProvider({registry:MANIFEST_DECLARATIONS,context:{...context,issuer:config.APP_ORIGIN,mounts:context.mounts??{}}})});}
@@ -60,7 +72,7 @@ export const sessionAuthTime=session=>Math.max((session?.source??'credential')==
 
 /** Domain capabilities are injected identically by Workers and Node. Owner
  * state has no fleet-wide lock; routing identifiers never grant authority. */
-export function federationControllerOptions({config,repository,accounts,owner,manifestMounts={}}){
+export function federationControllerOptions({config,repository,accounts,owner,manifestMounts={},incremental}){
  if(!UUID.test(owner))throw new TypeError('A stable UUID identity is required.');
  const issuer=config.APP_ORIGIN,subject=`${issuer}/entities/${owner}`,schemas=federationConfig(config.FEDERATION_SCHEMAS,{});
  if(!schemas||Array.isArray(schemas)||typeof schemas!=='object'||Object.keys(schemas).length>100)throw new TypeError('Invalid reviewed fragment registry.');
@@ -68,15 +80,22 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
  const account=federationAccount(accounts,owner);
  const validateSubject=async(candidate,epoch)=>{if(candidate!==subject)return false;const current=await repository.get(owner);return current?.status==='active'&&await federationEpoch(current)===epoch;};
  return {issuer,clients:federationClients(config),routingKey:owner,crypto,manifestDeclarations:()=>federationDeclarations(config,{target:'controller',mounts:manifestMounts}),objectURLs:{...objectURLAuthority({issuer,secret:config.KEY_ENCRYPTION_KEY}),seal:value=>encryptSecret(value,config.KEY_ENCRYPTION_KEY),open:record=>decryptSecret(record,config.KEY_ENCRYPTION_KEY)},enabled:config.FEDERATION_ENABLED==='true',appSessions:appSessionPolicy(config),refreshEnabled:config.FEDERATION_REFRESH_ENABLED!=='false',allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true',dpop:federationDpopSecret(config)?{secret:federationDpopSecret(config)}:undefined,embedOrigin:componentsProfile(config)?.embedOrigin,clientMetadata:clientMetadataEnabled(config),
+  incremental,
+  deriveAppSession:appSessionDerivation({repository,owner}),
+  appSessionLineage:async candidate=>candidate===subject?(await repository.get(owner))?.linkedLineage??[]:[],
+  incrementalIdentity:async candidate=>{if(candidate!==subject)return null;const current=await repository.get(owner);return current?.status==='active'?{epoch:await federationEpoch(current)}:null;},
+  eventBusReader:config.EVENT_BUSES_ENABLED==='true'?input=>account.eventBusReader(owner,input):undefined,
   embedView:async candidate=>{if(candidate!==subject)fail('unauthorized','The embedded session is unavailable.');const current=await repository.get(owner),profile=await account.beamProfile(owner);if(!current||current.status!=='active')fail('unauthorized','The embedded session is unavailable.');return {handle:current.handle,name:profile.displayName||undefined,avatar:profile.avatar||null};},
   schemaHosts:Object.keys(schemas).map(url=>new URL(url).host),schemaFetcher:async url=>{if(!Object.hasOwn(schemas,url))fail('untrusted_schema_host','This fragment has not been registered with this provider.');return structuredClone(schemas[url]);},
-  auth:{owner:async(context,{mutation})=>{const {account:current,session}=await identity.authorized(context,mutation);if(current.id!==owner)fail('forbidden','Sign in to the identity requested by this application.');return {subject,epoch:await federationEpoch(current),authTime:sessionAuthTime(session)};}},validateSubject,
+  auth:{owner:async(context,{mutation})=>{const {account:current,session}=await identity.authorized(context,mutation);if(current.id!==owner)fail('forbidden','Sign in to the identity requested by this application.');return {subject,epoch:await federationEpoch(current),authTime:sessionAuthTime(session),sessionId:await identity.sessionID(session),approvalChain:(()=>{const chain=[session.id];for(let parent=session.parentSessionId;parent&&!chain.includes(parent)&&chain.length<16;parent=current.sessions.find(s=>s.id===parent)?.parentSessionId)chain.push(parent);return chain;})()};}},validateSubject,
   resourceProvider:async()=>{
    const resources=await account.resources(owner),contract='https://3sln.me/artefacts/contracts/object-storage/v1';
    const descriptors=resources.filter(r=>r.owner===owner&&r.status==='connected'&&r.contracts?.includes(contract)).map(r=>{const capabilities=r.capabilities??{},methods=['capabilities',...capabilities.read?['get']:[],...capabilities.write&&['hosted','google-drive'].includes(r.provider)?['put','delete']:[],...capabilities.read||capabilities.write?['presign']:[]];return {id:`${subject}/resources/${r.id}`,label:r.name,provider:r.provider,contracts:{[contract]:methods,[RESOURCE_SCOPING]:['describe']},generation:String(r.generation??r.id),nativePresigned:capabilities.presigned??{read:false,write:false},scoping:storageScopeOptions(capabilities),limits:{maxRequestBytes:1500000,maxResultBytes:1500000,maxObjectBytes:capabilities.maxObjectBytes??1048576,txRetentionSeconds:86400}};});
    const current=await repository.get(owner),profile=await account.beamProfile(owner);
    if(!current||current.status!=='active')fail('unauthorized','Application authorization is no longer active.');
    if(config.ACTIVITY_V2_ENABLED==='true')descriptors.push({id:`${subject}/activity`,label:'Activity from this app',provider:'bindle',contracts:{[ACTIVITY_CONTRACT]:ACTIVITY_METHODS},generation:owner,limits:{maxRequestBytes:16384,maxResultBytes:1024,txRetentionSeconds:86400}});
+   if(config.EVENT_BUSES_ENABLED==='true')descriptors.push(...await account.eventBusDescriptors(owner));
+   if(config.BINDLEBOX_ENABLED==='true')descriptors.push({id:`${subject}/links`,label:'Contact links',provider:'bindle',contracts:{[LINKS_CONTRACT]:['issue','revoke','rotate','evaluate','list','changes']},generation:owner});
    descriptors.push({id:`${subject}/app-messages`,label:'Messages from this app',provider:'bindle',contracts:{[APP_NOTIFICATIONS]:['createOwn']},generation:owner,limits:{maxRequestBytes:16384,maxResultBytes:1024,txRetentionSeconds:86400}});descriptors.push({id:`${subject}/profile`,label:'Identity profile',provider:'identity',alias:'@profile',contracts:{[PROFILE]:['read']},generation:owner,preview:{entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null}});return descriptors;
   },
   dispatcher:{durableJournal:true,execute:async context=>{if(!await validateSubject(context.subject,context.epoch))fail('unauthorized','Application authorization is no longer active.');if(context.connection)await account.appConnectionCheck(owner,context.connection.id,context.connection.generation,context.clientId);if(context.resource===`${subject}/profile`&&context.contract===PROFILE&&context.method==='read'){if(Object.keys(context.args).length)fail('invalid_args','Profile read takes no arguments.');const current=await repository.get(owner),profile=await account.beamProfile(owner);return {entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null};}return account.federationRPC({...context,authority:'bindle'});}},
@@ -87,10 +106,10 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
 /** Pre-owner entry store for adapters. `store` is one transactional store or `shard=>store` (sharded by entry ID); a
  * host serving one shard passes `shard`. `endSession` is true only where the adapter mounts the provider
  * session-ending hook (packages/runtime/http.mjs), which is what lets the store accept and advertise end-session. */
-export function federationEntries({config,store,shard,authority,endSession=false,clock,directory,manifestMounts={}}){
+export function federationEntries({config,store,shard,authority,endSession=false,clock,directory,manifestMounts={},incremental}){
  if(config.FEDERATION_ENTRY_ENABLED!=='true')return null;
  const schemas=federationConfig(config.FEDERATION_SCHEMAS,{});
- const entries=new AuthorizationEntries({store,shard,issuer:config.APP_ORIGIN,clients:federationClients(config),authority,...directory?{directory}:{},clientMetadata:clientMetadataEnabled(config),embedOrigin:componentsProfile(config)?.embedOrigin,dpop:!!federationDpopSecret(config),...clock?{clock}:{},pinSchema:async url=>{if(!Object.hasOwn(schemas,url))fail('untrusted_schema_host','This fragment has not been registered with this provider.');return {digest:await digest(crypto,canonical(schemas[url]))};},endSession:endSession===true});
+ const entries=new AuthorizationEntries({store,shard,issuer:config.APP_ORIGIN,clients:federationClients(config),authority,...directory?{directory}:{},clientMetadata:clientMetadataEnabled(config),embedOrigin:componentsProfile(config)?.embedOrigin,dpop:!!federationDpopSecret(config),...clock?{clock}:{},pinSchema:async url=>{if(!Object.hasOwn(schemas,url))fail('untrusted_schema_host','This fragment has not been registered with this provider.');return {digest:await digest(crypto,canonical(schemas[url]))};},endSession:endSession===true,incremental});
  entries.manifest=options=>federationEntryManifest(config,entries,{...options,mounts:manifestMounts});return entries;
 }
 
@@ -100,9 +119,9 @@ export const ENTRY_METHODS=['admit','admitHost','create','view','documentPolicy'
  * args)` returns `{ok,result}` or `{ok:false,error}`. Creation first charges the caller's budgets on the caller's shard,
  * then creates on a random shard; every later call goes to the shard named by the entry ID, so retries always reach
  * the same records. `endSession` mirrors the adapter's session-ending hook. */
-export function federationEntriesRemote({config,invoke,endSession=false,directory,manifestMounts={}}){
+export function federationEntriesRemote({config,invoke,endSession=false,directory,manifestMounts={},incremental}){
  if(config.FEDERATION_ENTRY_ENABLED!=='true')return null;
- const facade={issuer:config.APP_ORIGIN,clients:new Map(federationClients(config).map(client=>[client.id,client])),directory,clientMetadata:!!directory?.enabled,embedOrigin:componentsProfile(config)?.embedOrigin,dpop:!!federationDpopSecret(config),intents:()=>ENTRY_INTENTS.filter(intent=>intent!=='end-session'||endSession===true),manifest:options=>federationEntryManifest(config,facade,{...options,mounts:manifestMounts})};
+ const facade={issuer:config.APP_ORIGIN,clients:new Map(federationClients(config).map(client=>[client.id,client])),directory,clientMetadata:!!directory?.enabled,embedOrigin:componentsProfile(config)?.embedOrigin,dpop:!!federationDpopSecret(config),intents:()=>[...ENTRY_INTENTS.filter(intent=>intent!=='end-session'||endSession===true),...incremental?.mounted===true?['grant-more','configure']:[]],manifest:options=>federationEntryManifest(config,facade,{...options,mounts:manifestMounts})};
  const call=async(shard,method,args)=>{const envelope=await invoke(shard,method,args);if(!envelope.ok)throw Object.assign(new Error(envelope.error.message),envelope.error);return envelope.result;};
  facade.admit=async input=>call(await remoteShard(crypto,input?.remote),'admit',[input]);
  facade.create=async(input,context={})=>{
@@ -136,9 +155,10 @@ export function federationAuthority({config,repository,shard,clock=()=>Date.now(
    return shard(current.id).beginAuthorization(request);},
   inspect:async(context,id)=>(await controllerFor(id)).inspect(context,id),
   async configure(context,input){const owner=typeof context?.sessionToken==='string'?context.sessionToken.split('.')[0]:'';if(!UUID.test(owner))fail('unauthorized','Sign in to continue.');const current=await repository.get(owner);if(!current||current.status!=='active')fail('unauthorized','Sign in to continue.');return shard(owner).configure(context,input);},
+  async appSessions(context,input){const owner=context?.sessionToken?.split('.')[0];if(!UUID.test(owner??'')||(await repository.get(owner))?.status!=='active')fail('unauthorized');return shard(owner).appSessions(context,input);},
   async grants(context){const owner=typeof context?.sessionToken==='string'?context.sessionToken.split('.')[0]:'';if(!UUID.test(owner))fail('unauthorized','Sign in to continue.');const current=await repository.get(owner);if(!current||current.status!=='active')fail('unauthorized','Sign in to continue.');return shard(owner).grants(context);},
   async preferences(context){const owner=typeof context?.sessionToken==='string'?context.sessionToken.split('.')[0]:'';if(!UUID.test(owner))fail('unauthorized','Sign in to continue.');const current=await repository.get(owner);if(!current||current.status!=='active')fail('unauthorized','Sign in to continue.');return shard(owner).preferences(context);},
-  revoke:async(context,id)=>(await controllerFor(id)).revoke(context,id),exchange:async input=>{await allowed(input?.clientId);return (await controllerFor(input.code)).exchange(input);},tokenClient:async token=>(await controllerFor(token)).tokenClient(token),rpc:async(token,envelope,transport)=>(await controllerFor(token)).rpc(token,envelope,transport),
+  revoke:async(context,id)=>(await controllerFor(id)).revoke(context,id),exchange:async input=>{await allowed(input?.clientId);return (await controllerFor(input.code)).exchange(input);},tokenClient:async token=>(await controllerFor(token)).tokenClient(token),rpc:async(token,envelope,transport)=>{const controller=await controllerFor(token),waits=busWaitsPort(config.EVENT_BUS_WAITS)??config.EVENT_BUS_WAITER;if(config.EVENT_BUSES_ENABLED!=='true'||!waits||envelope?.contract!==EVENT_BUS_CONTRACT||envelope.method!=='read')return controller.rpc(token,envelope,transport);return holdBusRPC({owner:token.split('.')[0],waits,rpc:lease=>controller.rpc(token,envelope,{...transport,busWaits:true,...lease?{busResume:lease}:{}}),recheck:()=>controller.tokenClient(token)});},
   refresh:async input=>{await allowed(input?.clientId);return (await controllerFor(input.refreshToken)).refresh(input);},
   approve:async(context,input,options)=>(await controllerFor(input.requestId)).approve(context,input,options),
   async entryIdentity(context,owner){if(!UUID.test(owner))fail('unauthorized','Sign in to continue.');const current=await repository.get(owner);if(!current||current.status!=='active')fail('unauthorized','Sign in to continue.');return shard(owner).entryIdentity(context);},

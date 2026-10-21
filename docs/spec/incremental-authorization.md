@@ -360,3 +360,55 @@ Requests over a limit fail at entry creation with `rate_limited`, `Retry-After`,
 - **Limits:** every §10 value; suppressed requests advancing counters identically; expiry, supersession and blocked popups advancing caps only; superseded pages disarming.
 - **Self-nomination:** same-domain occupant candidates omitted; no occupant replacement in incremental flows; no resource created before Allow.
 - **Islands:** no flow without trusted activation; `prepare-request` never rendered; identical behaviour across suppressed, cooling and granted states; popup attestation.
+
+## 15. Implementation notes and deviations (IA-1/IA-2, provisional, 2026-10-20)
+
+Status: implemented locally behind the default-off `INCREMENTAL_AUTH_ENABLED` flag (the name the consent experience and CX-1 already use). **Unmounted in every deployment** until the integration pass below lands, and not production-verified. Human sign-off: reviewer ___ / date ___ / outcome ___.
+
+Code: `packages/federation/incremental.mjs` (IA-1 engine operations over the `incremental` provider), `packages/federation/suppression.mjs` (IA-2 records, caps and ladder), the intent hunks of `packages/federation/authorization-entries.mjs`, `packages/runtime/incremental-authorization.mjs` (runner and token-endpoint branch) and `packages/runtime/routes/incremental.mjs` (owner suppression routes). Tests: `tests/incremental-authorization*.test.mjs`. Security review: [events and consent review, "IA implementation"](../release/events-consent-review.md#ia-implementation).
+
+### 15.1 Provider-page contract (3sln.me host; CX-2 builds against this)
+
+The entry routes are unchanged. For the new intents:
+
+- **`POST …/select`** answers `{requestId, incremental: view}`, or `{requestId, completed: {redirectUri}}` when nothing is new (§4.1) or no opened field is still granted. A superseded entry answers `{requestId, incremental: {superseded: true}}`.
+- **`grant-more` view:** `{intent, client, reason?, blocked, armAt, offerAppScope, requests: [{fragment, digest, purpose, alreadyAllowed: {fields, methods, resources?}, delta: {fields, methods}, suppressed, setup: [{field, type, candidates?}], ownSite} | {fragment, purpose, status: 'unsupported'|'unavailable'}]}`. `blocked` means every delta-bearing request is suppressed (show the §9.3 notice). `armAt` is the server's earliest decision time. `offerAppScope` is the CX §6.4 "3 declines in 7 days" signal. `candidates` are already filtered under §4.2.
+- **`configure` view:** `{intent, client, reason?, blocked, armAt, offerAppScope, fragment, digest, ownSite, revision, fields: [{name, type, current, suggested?, suggestedHost?, sensitive, sensitivity: ['marked'|'url'|'email'|'hostname'|'shared'], receivers, suppressed, occupant?: {candidates} | 'settings'}]}`. A suppressed field carries no suggestion.
+- **`POST …/decision`** takes `nonce` and exactly one of the following:
+  - `grant-more` Allow: `{approved: [{fragment, fields?, methods?, resources?}], setup?: [{fragment, values, sharedAcknowledged?}], reveal?: true}`;
+  - `configure` Save: `{changes: [{field, take: 'suggested', via: 'field'|'bulk'} | {field, value}], sharedAcknowledged?, reveal?: true}`;
+  - Decline: `{denied: true, suppress?}`;
+  - Blocked-notice return: `{notice: 'return', suppress?}`.
+
+  `suppress` is `{scope: 'app'} | {scope: 'kind', kind} | {scope: 'fragment', fragment, kind?} | {scope: 'field', fragment, field}`, limited to this entry's intent, fragments and fields. Every decision answers `{redirectUri}`: `code`, `state` and `iss` for `grant-more`, or exactly `result`, `state` and `iss` for `configure`. An identical retry after completion returns the stored answer; a different one is refused.
+- **Provider-page-only errors:**
+  - `decision_not_armed`: a decision before `armAt`, including the notice's return;
+  - `decision_in_progress`;
+  - `individual_acceptance_required`: bulk acceptance of a sensitive field;
+  - `shared_confirmation_required`;
+  - `replace_in_settings`: an occupant is already set;
+  - `account_mismatch`;
+  - `invalid_args`: approvals outside the request, a suppressed item without `reveal`, or `approved` on `configure`.
+
+### 15.2 Deviations from §1–§14 (provisional; need sign-off)
+
+1. **Inline setup is part of the Allow decision.** Setup values are saved only when Allow commits, so abandoned setup saves nothing. This is stricter than CX §11, where saved atomic values stay. Setup never creates a resource: an empty slot field takes an existing, filtered candidate.
+2. **Server-enforced dwell.** Every incremental decision, including the notice's return, is refused until 1.5 s after the page first rendered (`begin`). This adds to the page's own arming (ARM_MS 600 ms) and keeps return timing in the same class as a decline.
+3. **Ladder targets.** `configure` always steps one target per opened field, and an absent `fields` means every granted field. `grant-more` targets on the app's own host share one target per host, extending the §9.1 churn rule to the ladder (SEC-7). Third-party fragments use the root of their `supersedes` chain.
+4. **Sessions without a live session.** When access was added but the connection has no live session to bound the new one, the exchange returns `fragment_outcomes` only. The grant still applies at the connection level.
+5. **Code replay.** A replayed incremental code revokes the session family it issued (RFC 6749 §4.1.2). Under concurrent redemption, every attempt can therefore fail.
+6. **Member constraints.** `configure` also forbids `dpopJkt`. Incremental entries forbid `loginHint` and embedded delivery until IA-4 adds the island `request` part. The tier-4 refusal of unreviewed apps covers every requested method, not only the delta, and fails closed when the consent facts lack the contract.
+7. **"Just this time"** (§10) has no control in this slice. The ladder counts declines and notice returns.
+9. **Superseded pages (IA-R4, IA-R5).** Supersession alone steps no ladder, as §10 says. But an explicit decline or notice return made on a superseded page passes the same dwell and **does** step the ladder: the owner saw the request and decided, and an app must not erase decisions by superseding on purpose. Revealing and answering an item lifts only `fragment`/`field` suppressions for it, never `app`/`kind` ones (IA-R3). Ladder resets apply only to fully granted fragments and to configure fields whose value changed (IA-R6). Unreviewed apps are refused any method that the consent facts cannot classify (IA-R1). Approved `resources` must come from the filtered candidates, for fields that hold none yet (IA-R7). Setup fills only empty fields being approved (IA-R9).
+8. **No separate flag.** The roadmap's "two new default-off flags" resolve to `EVENT_BUSES_ENABLED` and the existing `INCREMENTAL_AUTH_ENABLED`.
+
+### 15.3 Integration status and production gates (provisional)
+
+- **Adapter ports: implemented locally.** Node and Worker mount `INCREMENTAL_AUTHORIZATION` and pass it to the local/remote entry composition only with the flag. Grants use a live owner-shard connection, union-only commits, an idempotent decision journal and a transactional `before` snapshot; preferences retain revision checks; new sessions retain proof binding, approval ancestry and the newest session's expiry bound. Pre-owner incremental state/codes live in a separate durable `bindle-incremental-v1` store. Capacity review of that centralized store remains a production gate.
+- **Token branch: implemented locally.** The runtime calls `handleIncrementalToken` before the generic exchange, with durable DPoP replay checks, browser-readable nonce challenges and metadata-client blocking.
+- **`owner_review_uri`: implemented locally.** Entry 429 bodies preserve `ownerReviewUri` as `owner_review_uri` alongside `Retry-After`.
+- **Login on an existing connection (§9.1): implemented locally.** The entry store's `loginDelta`/`loginOutcome` operations (IA-R2) reach the remote adapters; `grants.siteConnection({subject,site})` checks sibling clients. The legacy authorization-request path also uses the gate. The selection's `incrementalLogin: {additions, predeclined}` is provider-only data.
+- **Setup recovery: open.** If a setup preference save succeeds but the grant commit fails, retrying the same decision after its decision lease currently fails with `replace_in_settings`. The committing decision needs resumable setup or a shared atomic commit contract; see the [integration handoff](../release/events-consent-review.md#wave-3b-adapter-integration-local-provisional-2026-10-20).
+- **Audit.** The owner-visible audit (§12 item 10) is not implemented. Neither are account export and erasure wiring (the engine operations exist), access-view routes (CX-3) or islands (IA-4).
+
+Flags remain off by default. Local tests and configured transports imply neither production verification nor independent approval. Reviewer ___ Date ___ Outcome ___.

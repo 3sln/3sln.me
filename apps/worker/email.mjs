@@ -1,3 +1,4 @@
+import {approvalNoticeTemplate} from './approval-notices.mjs';
 import { emailLogoBase64 } from '../../packages/branding/email-logo.mjs';
 import { createLocalization } from '../../packages/i18n/index.mjs';
 import { waitlistMailLocalization } from '../../packages/i18n/waitlist-mail.mjs';
@@ -106,6 +107,11 @@ export function mailTransport(env = {}) {
     return send({ from, to: email, subject: format(subject), text: `${format(text)}\n\nOpen ${origin}/console\n\nIf you did not request this change, review your account security in your personal space.` });
   };
   return {
+    async sendApprovalNotice({email,notice,locale='en'}) {
+      if(env.DEVICE_AUTHORIZATION_ENABLED!=='true')return {enabled:false};
+      const template=approvalNoticeTemplate(notice,{origin,locale});
+      return send({from:senders.security,to:email,subject:template.subject,text:template.text});
+    },
     async sendWaitlistConfirmation({email,token,issuer,locale='en'}) {
       if(issuer!==origin)throw new Error('Invalid waitlist verification request.');
       requireToken(token);

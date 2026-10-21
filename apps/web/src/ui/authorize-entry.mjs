@@ -3,6 +3,8 @@
 // this provider page; approval controls ("Continue as …", "Allow selected access", "Sign out") are armed by
 // bl/authorize-entry-arming.mjs, never take default focus and are marked aria-disabled until armed.
 import {dodo as d} from '../shared/stack.mjs';
+import {consentCopy} from './consent-copy.mjs';
+import {consentWalkthroughView} from './consent-walkthrough.mjs';
 import {durationOf} from '../bl/authorize-entry.mjs';
 const h=d.h;
 const isolate=text=>'⁨'+text+'⁩';
@@ -56,7 +58,7 @@ export function entryView(model,ctx){
   case 'closed':body=[h('p',model.outcome==='completed'?t('{app} received your sign-in.',{app}):t('Sign-in was canceled. Nothing was shared.')).attrs({role:'status'}),ctx.canClose?h('div',plain(t('Close window'),()=>ctx.close())).classes('buttons'):null];break;
   case 'choose':{
    const accounts=model.accounts??[],constrained=Boolean(entry.subjectConstraint);
-   const intro=entry.intent==='reauthenticate'?h('p',t('{app} asks you to confirm your account. You need to have signed in less than {duration} ago.',{app,duration:duration(entry.maxAge,t)})):entry.requests.length?h('p',t('Choose an account. You will then review the access {app} requests before anything is shared.',{app})):h('p',t('{app} will receive your account’s ID, the same one other apps receive. Your handle, preferences and resources are not shared.',{app}));
+   const intro=['grant-more','configure'].includes(entry.intent)?h('p',consentCopy(model.walkthrough?.locale??ctx.locale??'en')(entry.intent==='configure'?'chooseConfigure':'chooseGrant')):entry.intent==='reauthenticate'?h('p',t('{app} asks you to confirm your account. You need to have signed in less than {duration} ago.',{app,duration:duration(entry.maxAge,t)})):entry.requests.length?h('p',t('Choose an account. You will then review the access {app} requests before anything is shared.',{app})):h('p',t('{app} will receive your account’s ID, the same one other apps receive. Your handle, preferences and resources are not shared.',{app}));
    const rows=accounts.map(a=>h('li',h('div',approve(t('Continue as {account}',{account:account(a.handle)}),()=>dispatch('continue',{owner:a.id})),a.hinted?h('span',t('Requested by the app')).classes('field-help'):null).classes('buttons')).classes('credential-row','account-row').key(a.id));
    const missing=constrained?model.otherAccounts?t('You’re signed in on this browser, but not as the account {app} asked about.',{app}):t('The account {app} asked about is not signed in on this browser.',{app}):t('No account is signed in on this browser.');
    body=[origin,intro,...status,model.accountsLoading&&!model.accounts?h('p',t('Loading accounts on this browser…')).attrs({role:'status'}):null,
@@ -70,8 +72,9 @@ export function entryView(model,ctx){
     signIn(t('Sign in again'),t('In the new tab, choose Add account and sign in again as {account}. Then return to this window.',{account:account(handle)})),
     h('div',current?approve(t('I’ve signed in again, continue'),()=>dispatch('continue',{owner:current.id})):null,cancel).classes('buttons')];break;}
   case 'consent':{const view=model.consent;
+   if(model.walkthrough){body=[consentWalkthroughView(model.walkthrough,{dispatch:ctx.dispatchConsent,guard,armed,busy,error:model.error,account:model.selected?.handle+'@'+host})];break;}
    body=[origin,h('p',t('Account: '),h('strong',account(model.selected.handle)).attrs({translate:'no'})),...status,
-    h('p',t('Choose the values, resources and methods this app may access. You can revoke access later.')),...view.requests.map(kit.requestCard),
+    h('p',t('Choose the values, resources and methods this app may access. You can revoke access later.')),view.additions?.length?h('p',t('{app} is asking for more access than you already granted. New items are marked below.',{app})).classes('alert').attrs({role:'status'}):null,...view.requests.map(request=>kit.requestCard(request,view.additions?{additions:view.additions,app:entry.client.name}:undefined)),
     h('div',approve(t('Allow selected access'),()=>dispatch('approve'),{disabled:kit.approvalBlocked(view),detail:'true'}),cancel).classes('buttons'),
     h('p',t('To use another account, cancel and start again from the application.')).classes('muted')];break;}
   case 'end-session':{const target=model.accounts?.[0];

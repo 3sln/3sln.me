@@ -7,6 +7,7 @@
 import {Action,Query} from '../shared/stack.mjs';
 import {runHandshake,deliverToOpener,embedOriginFor} from './authorize-entry-embed.mjs';
 export const INTENTS=Object.freeze(['login','select-account','reauthenticate','end-session']);
+export const INCREMENTAL_INTENTS=Object.freeze(['grant-more','configure']);
 const ID=/^[A-Za-z0-9_-]{43}$/,UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,REQUEST=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/;
 const CODE=/^[\x21-\x7e]{1,2048}$/,CLAIM=/^[A-Za-z0-9._~-]{32,256}$/;
 const exactKeys=(value,allowed)=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).every(k=>allowed.includes(k));
@@ -25,18 +26,30 @@ export const plainURL=entryId=>`/oauth/authorize?entry=${encodeURIComponent(entr
 export const subjectOf=(issuer,owner)=>`${issuer}/entities/${owner}`;
 /** Session-independent request metadata from GET /api/oauth/entries/<id>, checked before it drives any UI. The
  * view's page token is read separately (`entryToken`) and never enters the rendered model. */
-export function validEntryView(value,issuer){
+export function validEntryView(value,issuer,{incremental=false}={}){
  const e=value?.entry;
- if(!exactKeys(value,['entry','pageToken'])||!exactKeys(e,['client','redirectUri','intent','requests','presentation','delivery','nonce','expiresAt','loginHint','subjectConstraint','maxAge','uiLocales','colorScheme','embed']))fail('invalid_entry','This sign-in request is not valid.');
+ if(!exactKeys(value,['entry','pageToken'])||!exactKeys(e,['client','redirectUri','intent','requests','presentation','delivery','nonce','expiresAt','loginHint','subjectConstraint','maxAge','uiLocales','colorScheme','embed',...incremental?['reason','target','suggestion']:[]]))fail('invalid_entry','This sign-in request is not valid.');
  let redirect;try{redirect=new URL(e.redirectUri);}catch{fail('invalid_entry','This sign-in request is not valid.');}
  const client=e.client;
- if(!client||typeof client.id!=='string'||typeof client.origin!=='string'||client.origin!==redirect.origin||client.name!==undefined&&typeof client.name!=='string'||client.reviewed!==undefined&&client.reviewed!==false||client.claimedName!==undefined&&(typeof client.claimedName!=='string'||[...client.claimedName].length>100||client.reviewed!==false)||!INTENTS.includes(e.intent)||!Array.isArray(e.requests)||e.requests.length>8||!['redirect','popup'].includes(e.presentation)||!['redirect','popup','embed-popup'].includes(e.delivery)||typeof e.nonce!=='string'||!/^[A-Za-z0-9_-]{16,64}$/.test(e.nonce)||!Number.isSafeInteger(e.expiresAt)||!webScheme(redirect)||redirect.username||redirect.password||redirect.hash)fail('invalid_entry','This sign-in request is not valid.');
- const constrained=['reauthenticate','end-session'].includes(e.intent),owner=typeof e.subjectConstraint==='string'&&e.subjectConstraint.startsWith(`${issuer}/entities/`)?e.subjectConstraint.slice(issuer.length+10):null;
+ if(!client||typeof client.id!=='string'||typeof client.origin!=='string'||client.origin!==redirect.origin||client.name!==undefined&&typeof client.name!=='string'||client.reviewed!==undefined&&client.reviewed!==false||client.claimedName!==undefined&&(typeof client.claimedName!=='string'||[...client.claimedName].length>100||client.reviewed!==false)||!(INTENTS.includes(e.intent)||incremental&&INCREMENTAL_INTENTS.includes(e.intent))||!(e.intent==='configure'&&e.requests===undefined||Array.isArray(e.requests))||(e.requests?.length??0)>8||!['redirect','popup'].includes(e.presentation)||!['redirect','popup','embed-popup'].includes(e.delivery)||typeof e.nonce!=='string'||!/^[A-Za-z0-9_-]{16,64}$/.test(e.nonce)||!Number.isSafeInteger(e.expiresAt)||!webScheme(redirect)||redirect.username||redirect.password||redirect.hash)fail('invalid_entry','This sign-in request is not valid.');
+ const constrained=['reauthenticate','end-session',...incremental?INCREMENTAL_INTENTS:[]].includes(e.intent),owner=typeof e.subjectConstraint==='string'&&e.subjectConstraint.startsWith(`${issuer}/entities/`)?e.subjectConstraint.slice(issuer.length+10):null;
  if(constrained!==(e.subjectConstraint!==undefined)||constrained&&!UUID.test(owner??'')||(e.intent==='reauthenticate')!==(e.maxAge!==undefined)||e.maxAge!==undefined&&(!Number.isSafeInteger(e.maxAge)||e.maxAge<0||e.maxAge>86400)||e.loginHint!==undefined&&(typeof e.loginHint!=='string'||e.loginHint.length>320))fail('invalid_entry','This sign-in request is not valid.');
+ const added=INCREMENTAL_INTENTS.includes(e.intent);
+ if(added&&(e.reason!==undefined&&(typeof e.reason!=='string'||[...e.reason].length>200)||e.intent==='grant-more'&&(!e.requests?.length||e.requests.length>4||e.requests.some(request=>request.required!==undefined&&request.required!==false)||e.target!==undefined||e.suggestion!==undefined)||e.intent==='configure'&&(e.requests!==undefined&&(!Array.isArray(e.requests)||e.requests.length>0)||!exactKeys(e.target,['fragment','digest','fields'])||typeof e.target.fragment!=='string'||e.target.fields!==undefined&&(!Array.isArray(e.target.fields)||!e.target.fields.length||e.target.fields.length>8||new Set(e.target.fields).size!==e.target.fields.length||e.target.fields.some(name=>typeof name!=='string'||!name))||e.suggestion!==undefined&&(!exactKeys(e.suggestion,['values'])||!e.suggestion.values||typeof e.suggestion.values!=='object'||Array.isArray(e.suggestion.values)||new TextEncoder().encode(JSON.stringify(e.suggestion)).length>2048))))fail('invalid_entry','This sign-in request is not valid.');
+ if(added&&e.target){try{const target=new URL(e.target.fragment);if(target.protocol!=='https:'||target.username||target.password||target.hash)throw 0;}catch{fail('invalid_entry','This sign-in request is not valid.');}}
+ if(!added&&['reason','target','suggestion'].some(key=>e[key]!==undefined))fail('invalid_entry','This sign-in request is not valid.');
  if(e.delivery==='embed-popup'&&!exactKeys(e.embed,['attested','plain','origin']))fail('invalid_entry','This sign-in request is not valid.');
  // An unreviewed (metadata-document) client is named by its verified host, never by its own claim.
  const unreviewed=client.reviewed===false,host=new URL(client.origin).host;
- return Object.freeze({client:Object.freeze({id:client.id,name:unreviewed?host:client.name||client.origin,origin:client.origin,...unreviewed?{reviewed:false,...client.claimedName?{claimedName:client.claimedName}:{}}:{}}),redirectUri:e.redirectUri,intent:e.intent,requests:structuredClone(e.requests),presentation:e.presentation,delivery:e.delivery,nonce:e.nonce,expiresAt:e.expiresAt,...e.loginHint?{loginHint:e.loginHint}:{},...constrained?{subjectConstraint:e.subjectConstraint,subjectOwner:owner}:{},...e.maxAge!==undefined?{maxAge:e.maxAge}:{},...e.delivery==='embed-popup'?{embed:Object.freeze({attested:e.embed.attested===true,plain:e.embed.plain===true,...typeof e.embed.origin==='string'?{origin:e.embed.origin}:{}})}:{}});
+ return Object.freeze({client:Object.freeze({id:client.id,name:unreviewed?host:client.name||client.origin,origin:client.origin,...unreviewed?{reviewed:false,...client.claimedName?{claimedName:client.claimedName}:{}}:{}}),redirectUri:e.redirectUri,intent:e.intent,requests:structuredClone(e.requests??[]),...added?{reason:e.reason,target:structuredClone(e.target),suggestion:structuredClone(e.suggestion)}:{},...e.uiLocales?{uiLocales:e.uiLocales}:{},presentation:e.presentation,delivery:e.delivery,nonce:e.nonce,expiresAt:e.expiresAt,...e.loginHint?{loginHint:e.loginHint}:{},...constrained?{subjectConstraint:e.subjectConstraint,subjectOwner:owner}:{},...e.maxAge!==undefined?{maxAge:e.maxAge}:{},...e.delivery==='embed-popup'?{embed:Object.freeze({attested:e.embed.attested===true,plain:e.embed.plain===true,...typeof e.embed.origin==='string'?{origin:e.embed.origin}:{}})}:{}});
+}
+/** IA-R2: the provider's marking of a login delta on an existing connection (`incrementalLogin.additions`), checked
+ * before it drives any UI; anything malformed renders no marking (the server still enforces the delta). */
+export function loginAdditions(value){
+ if(!exactKeys(value,['additions','predeclined'])||!Array.isArray(value.additions)||value.additions.length>8)return null;
+ const out=[];for(const a of value.additions){if(!exactKeys(a,['fragment','delta'])||typeof a.fragment!=='string'||!/^https:\/\//.test(a.fragment)||!exactKeys(a.delta,['fields','methods'])||!Array.isArray(a.delta.fields)||a.delta.fields.some(f=>typeof f!=='string')||!a.delta.methods||typeof a.delta.methods!=='object'||Array.isArray(a.delta.methods))return null;
+  for(const contracts of Object.values(a.delta.methods))if(!contracts||typeof contracts!=='object'||Object.values(contracts).some(list=>!Array.isArray(list)||list.some(m=>typeof m!=='string')))return null;out.push(structuredClone(a));}
+ return Object.freeze(out);
 }
 /** The per-entry page token from the same view: sent with every entry mutation as X-Bindle-Entry-Token. */
 export function entryToken(value){if(typeof value?.pageToken!=='string'||!ID.test(value.pageToken))fail('invalid_entry','This sign-in request is not valid.');return value.pageToken;}
@@ -125,8 +138,11 @@ export class EntryAction extends Action {
   if(!parsed){phase(model,'invalid');return;}
   if(browser.sandboxed()){phase(model,'sandboxed');return;}
   model.entryId=parsed.entryId;
-  let entry;try{const value=await api.get(`/api/oauth/entries/${parsed.entryId}`);entry=validEntryView(value,browser.origin);secrets.entryToken=entryToken(value);}catch(error){phase(model,transient(error)?'unavailable':'expired');return;}
+  let entry;try{const value=await api.get(`/api/oauth/entries/${parsed.entryId}`);entry=validEntryView(value,browser.origin,{incremental:deps.consent.experienceEnabled});secrets.entryToken=entryToken(value);}catch(error){phase(model,transient(error)?'unavailable':'expired');return;}
   if(entry.expiresAt<=browser.now()){phase(model,'expired');return;}
+  // IA-4's settings completion bridge is not mounted yet. Use the existing
+  // isolated plain fallback and its registered result callback for configure.
+  if(entry.intent==='configure'&&entry.delivery==='embed-popup'&&!parsed.plain){browser.replace(plainURL(parsed.entryId));return;}
   if(entry.delivery==='embed-popup'&&!parsed.plain){
    // §7.3: nothing account-related renders in this COOP-less document until the opener proves the entry's key.
    phase(model,'handshake');changed(ctx);
@@ -169,10 +185,13 @@ export class EntryAction extends Action {
   let member;
   try{
    member=await this.member(deps,account);
-   const {requestId,approved}=await api.post(`/api/oauth/entries/${model.entryId}/select`,{nonce:entry.nonce,...this.gate(deps)},{member,csrf:member.csrf,entryToken:secrets.entryToken});
+   const selected=await api.post(`/api/oauth/entries/${model.entryId}/select`,{nonce:entry.nonce,...this.gate(deps)},{member,csrf:member.csrf,entryToken:secrets.entryToken});
+   const {requestId,approved,incremental,completed}=selected,additions=loginAdditions(selected.incrementalLogin);
+   if(completed){await this.deliver(deps,ctx,completed,'completed');return;}
    if(typeof requestId!=='string'||!REQUEST.test(requestId)||!requestId.startsWith(owner+'.'))fail('request_failed','The request could not be completed.');
    secrets.member=member;model.selected={id:owner,handle:account.handle};model.reauth=null;model.notice='';
-   const view=await this.inspect(deps,requestId);model.consent=view;model.selection.clear();model.drafts.clear();model.dirty.clear();
+   const view=incremental?{...incremental,requestId,requests:incremental.requests??[]}:await this.inspect(deps,requestId);if(view.superseded)view.armAt=deps.browser.now()+1500;if(additions&&!incremental)view.additions=additions;model.consent=view;model.selection.clear();model.drafts.clear();model.dirty.clear();
+   if(consent.experienceEnabled&&INCREMENTAL_INTENTS.includes(entry.intent)){model.walkthrough=await consent.openWalkthrough({entry,view});if(model.walkthrough.returning){await this.deliver(deps,ctx,model.walkthrough.result,'completed');return;}phase(model,'consent');return;}
    // Identity-only sign-in: "Continue as …" (with the disclosure next to it) is the decision click.
    if(!view.requests.length){await this.decide(deps,ctx,[]);return;}
    // Access this account already granted this app: the same click resubmits it (R1). A refusal (the grant or its
@@ -192,12 +211,13 @@ export class EntryAction extends Action {
   return {...view,requestId};
  }
  async configure(deps,ctx,detail){
-  const {model,secrets,api}=deps;if(model.phase!=='consent')return;
+  const {model,secrets,api}=deps;if(model.walkthrough||model.phase!=='consent')return;
   await api.post('/api/preferences',{fragment:detail.fragment,values:detail.values,expectedRevision:detail.expectedRevision,reviewedConsumerDigest:detail.reviewedConsumerDigest,...detail.updateShared?{updateShared:true}:{}},{member:secrets.member,csrf:secrets.member?.csrf});
   model.consent=await this.inspect(deps,model.consent.requestId);model.selection.delete(detail.fragment);model.drafts.delete(detail.fragment);model.dirty.delete(detail.fragment);model.surface++;
  }
+ async 'consent-result'(deps,ctx,result){if(deps.model.phase!=='consent'||!deps.model.walkthrough?.returning)return;await this.deliver(deps,ctx,result,deps.model.walkthrough.declined?'canceled':'completed');}
  async approve(deps,ctx){
-  const {model,consent}=deps;if(model.phase!=='consent'||consent.approvalBlocked(model.consent))return;
+  const {model,consent}=deps;if(model.walkthrough||model.phase!=='consent'||consent.approvalBlocked(model.consent))return;
   await this.decide(deps,ctx,consent.approvedSelections(model.consent));
  }
  async decide(deps,ctx,approved){
@@ -228,7 +248,8 @@ export class EntryAction extends Action {
    // A denial is reported by the frame as a generic cancel when this window closes.
    phase(model,'closed');model.outcome='canceled';changed(ctx);browser.close();return;
   }
-  const target=callbackTarget(result.redirectUri,entry.redirectUri,issuer,entry.intent==='end-session'?['result','state','iss']:['code','state','iss','error']);
+  const target=callbackTarget(result.redirectUri,entry.redirectUri,issuer,['end-session','configure'].includes(entry.intent)?['result','state','iss']:['code','state','iss','error']);
+  if(entry.intent==='configure'&&!['configured','unchanged'].includes(target.searchParams.get('result')))fail('callback_mismatch','The callback origin does not match this application.');
   phase(model,'returning');model.outcome=outcome;changed(ctx);browser.assign(target.href);
  }
  async 'end-session'(deps,ctx,{confirmed}){

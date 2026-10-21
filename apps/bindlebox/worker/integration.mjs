@@ -1,7 +1,7 @@
 // Broker/SET cryptography is an explicit trusted service port; these engine operations recheck local authority
 // in the mailbox transaction. No token, snapshot or populated binding is treated as approval by itself.
 import {MailboxAction,MailboxQuery,ownerOf,operations} from '../../../packages/bindlebox-engine/engine.mjs';
-import {IntakeDeliver} from '../../../packages/bindlebox-engine/domains/intake.mjs';
+import {BridgeReceive} from '../../../packages/bindlebox-engine/domains/bridge.mjs';
 import {KEYS,readConfig,queueEdge} from '../../../packages/bindlebox-engine/store/mailbox.mjs';
 import {fault} from '../../../packages/bindlebox-engine/faults.mjs';
 import {PROFILE,MAILBOX_CONTRACT,INTAKE_CONTRACT,LINK_KINDS,LIMITS} from '../../../packages/bindlebox-protocol/index.mjs';
@@ -41,12 +41,12 @@ export class MailboxLinkRevoked extends MailboxAction {
  });}
 }
 // Reuse B2's proven admission implementation while wrapping its commit handle with live local broker checks.
-export class MailboxPublicIntake extends IntakeDeliver {
+export class MailboxPublicIntake extends BridgeReceive {
  static operation='shell.public-intake';
- async run(resources){const {receive}=resources,store=receive.store,owner=this.actor?.owner,v=this.input?.verified;
+ async run(resources){const {receive,bridge}=resources,store=receive.store,owner=this.actor?.owner,v=this.input?.verified;
   await authority(store,owner,v,{purpose:'invoke',write:true,resource:this.input?.resource,method:'deliver'});
   const guarded={get:key=>store.get(key),list:options=>store.list(options),transaction:work=>store.transaction(async tx=>{await authority(tx,owner,v,{purpose:'invoke',write:true,resource:this.input?.resource,method:'deliver'});return work(tx);})};
-  return super.run({...resources,receive:{...receive,store:guarded}});
+  const body=new TextEncoder().encode(JSON.stringify({version:'0',tx:this.input.tx,resource:this.input.resource,contract:this.input.contract,method:'deliver',args:this.input.args}));const receiver=new BridgeReceive({actor:this.actor,input:{body,consumer:this.input.consumer,resource:this.input.resource}});return receiver.run({...resources,receive:{...receive,store:guarded},bridge:{...bridge,store:guarded}});
  }
 }
 export class MailboxIntegrationEvent extends MailboxAction {

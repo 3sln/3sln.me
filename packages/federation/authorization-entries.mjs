@@ -14,11 +14,12 @@ import {verifyProof,EMBED_PROOF_TYP,jktPattern} from './dpop.mjs';
 import {componentsDeclaration,COMPONENTS_PROFILE} from './components-profile.mjs';
 import {metadataClientHost,validClientSnapshot,clientSite} from './client-metadata.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
+import {INCREMENTAL_INTENTS,incrementalMembers} from './incremental.mjs';
 export const ENTRY_INTENTS=['login','select-account','reauthenticate','end-session'];
 export const ENTRY_LIMITS={ttl:600000,challenge:60000,window:600000,perClient:30,perRemote:60,perClientHost:300,global:20000,challenges:3};
 export const ENTRY_SHARDS=64;
 const ALPHABET='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-const entryKeys=['clientId','redirectUri','challenge','challengeMethod','state','intent','loginHint','subjectConstraint','maxAge','requests','uiLocales','colorScheme','presentation','dpopJkt','embedJkt','delivery'];
+const entryKeys=['clientId','redirectUri','challenge','challengeMethod','state','intent','loginHint','subjectConstraint','maxAge','requests','uiLocales','colorScheme','presentation','dpopJkt','embedJkt','delivery','reason','target','suggestion'];
 const ID=/^[A-Za-z0-9_-]{43}$/;
 const generic=()=>fail('invalid_request','The authorization entry could not be created.');
 const expired=()=>fail('invalid_request','This sign-in expired. Start again from the application.');
@@ -42,7 +43,7 @@ export class AuthorizationEntries {
  /** `store` is one transactional store, or `shard=>store` for a sharded deployment. A host that serves a single
   * shard (a Worker Durable Object) passes its `shard`, so minted IDs land there and foreign IDs are refused.
   * `endSession` says the adapter mounts a provider session-ending hook at the end-session route. */
- constructor({store,shard,issuer,clients=[],authority,embedOrigin,crypto=globalThis.crypto,clock=()=>Date.now(),dpop=false,pinSchema,endSession=false,limits={},directory,clientMetadata=false}){
+ constructor({store,shard,issuer,clients=[],authority,embedOrigin,crypto=globalThis.crypto,clock=()=>Date.now(),dpop=false,pinSchema,endSession=false,limits={},directory,clientMetadata=false,incremental}){
   if(!(typeof store==='function'||store?.transaction)||!authority)throw new TypeError('Entry storage and the federation authority are required.');
   if(shard!==undefined&&(typeof shard!=='string'||!/^\d{2}$/.test(shard)||Number(shard)>=ENTRY_SHARDS||typeof store==='function'))throw new TypeError('A single-shard host needs one store and a shard between 00 and 63.');
   if(embedOrigin!==undefined&&(new URL(embedOrigin).origin!==embedOrigin||embedOrigin===issuer))throw new TypeError('The embed origin must be a dedicated origin.');
@@ -51,13 +52,17 @@ export class AuthorizationEntries {
   // Metadata-document clients (client-id-metadata.v1): `directory` resolves them where this instance faces callers;
   // a sharded host behind a resolving facade sets `clientMetadata` and accepts the facade's validated snapshot.
   this.directory=directory;this.clientMetadata=clientMetadata===true||directory?.enabled===true;
+  // IA-1: the owner-shard half of `grant-more`/`configure` (runtime/incremental-authorization.mjs). Only a port the
+  // adapter mounted with INCREMENTAL_AUTH_ENABLED on reports `mounted`; otherwise the intents are neither accepted nor
+  // listed, so the existing declaration row cannot advertise them.
+  this.incremental=incremental?.mounted===true?incremental:null;
  }
  /** An unreviewed URL client ID this provider resolves from its metadata document. */
  metadataClient(clientId){return this.clientMetadata&&!this.clients.has(clientId)&&metadataClientHost(clientId)!==null;}
  /** Per-client-host creation budget for metadata clients, on the shard named by the host, so one client host cannot
   * flood the entry store from many addresses. A sharded facade calls it on that shard. */
  async admitHost({clientId}={}){const host=metadataClientHost(clientId);if(!host||!this.metadataClient(clientId))generic();const hostKey=await digest(this.crypto,`entry-client-host\0${clientSite(host)}`);await this.storeFor(entryShard(hostKey)).transaction(tx=>this.budget(tx,`host/${hostKey}`,this.limits.perClientHost));}
- intents(){return ENTRY_INTENTS.filter(intent=>intent!=='end-session'||this.endSession);}
+ intents(){return [...ENTRY_INTENTS.filter(intent=>intent!=='end-session'||this.endSession),...this.incremental?INCREMENTAL_INTENTS:[]];}
  /** Manifest members for mounted entry routes. The components profile also needs DPoP (embed proofs) and an adapter
   * that actually serves the embed origin, which only the root adapter knows (`components`). */
  manifest({components=false}={}){const entry=entryManifest(this.issuer,{intents:this.intents()});return components&&this.embedOrigin&&this.dpop?{...entry,...componentsDeclaration({profile:COMPONENTS_PROFILE,embedOrigin:this.embedOrigin})}:entry;}
@@ -92,25 +97,38 @@ export class AuthorizationEntries {
    // Unreviewed clients have no island shell, so they cannot use the embedded delivery.
    if(embed)generic();
   }
-  if(!client?.redirectUris?.includes(input.redirectUri)||input.challengeMethod!=='S256'||typeof input.challenge!=='string'||!ID.test(input.challenge)||typeof input.state!=='string'||!/^[A-Za-z0-9._~-]{16,512}$/.test(input.state)||!this.intents().includes(input.intent)||!['redirect','popup'].includes(input.presentation))generic();
+  const incremental=INCREMENTAL_INTENTS.includes(input.intent),configure=input.intent==='configure';
+  // `configure` yields no code, so it carries no PKCE challenge and no DPoP key (incremental-authorization §3, §6.2).
+  if(!client?.redirectUris?.includes(input.redirectUri)||(configure?input.challengeMethod!==undefined||input.challenge!==undefined||input.dpopJkt!==undefined:input.challengeMethod!=='S256'||typeof input.challenge!=='string'||!ID.test(input.challenge))||typeof input.state!=='string'||!/^[A-Za-z0-9._~-]{16,512}$/.test(input.state)||!this.intents().includes(input.intent)||!['redirect','popup'].includes(input.presentation))generic();
   if(embed?input.delivery!=='embed-popup'||!this.embedOrigin||origin!==this.embedOrigin||input.presentation!=='popup'||input.intent==='end-session'||!jktPattern.test(input.embedJkt??''):input.embedJkt!==undefined||origin!==undefined&&origin!==client.origin)generic();
-  const constrained=['reauthenticate','end-session'].includes(input.intent);
+  // Incremental entries take no embedded delivery until the island `request` part (IA-4) and no login hint (the subject
+  // is constrained); their members are refused on every other intent.
+  if(incremental?embed||input.loginHint!==undefined:input.reason!==undefined||input.target!==undefined||input.suggestion!==undefined)generic();
+  const constrained=['reauthenticate','end-session',...INCREMENTAL_INTENTS].includes(input.intent);
   if(constrained!==(input.subjectConstraint!==undefined)||constrained&&(typeof input.subjectConstraint!=='string'||!input.subjectConstraint.startsWith(`${this.issuer}/entities/`)||!UUID.test(input.subjectConstraint.slice(this.issuer.length+10))))generic();
   if((input.intent==='reauthenticate')!==(input.maxAge!==undefined)||input.maxAge!==undefined&&(!Number.isSafeInteger(input.maxAge)||input.maxAge<0||input.maxAge>86400))generic();
   if(input.dpopJkt!==undefined&&(!this.dpop||input.intent==='end-session'||!jktPattern.test(input.dpopJkt)))generic();
   if(input.loginHint!==undefined&&!boundedString(input.loginHint,320)||input.colorScheme!==undefined&&!['light','dark'].includes(input.colorScheme)||input.uiLocales!==undefined&&(!Array.isArray(input.uiLocales)||input.uiLocales.length>4||input.uiLocales.some(tag=>typeof tag!=='string'||tag.length>35||!/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,4}$/.test(tag))))generic();
-  const requests=this.validRequests(input.requests,input.intent);let digests;
+  const members=incremental?incrementalMembers(input):null,requests=incremental?members.requests??[]:this.validRequests(input.requests,input.intent);let digests;
   if(this.pinSchema&&requests.length){try{digests=await Promise.all(requests.map(async r=>(await this.pinSchema(r.fragment)).digest));}catch{generic();}}
   // A hint naming another host is ignored, never resolved at creation.
   const hint=input.loginHint?.split('@'),loginHint=hint?.length===2&&hint[1].toLowerCase()===new URL(this.issuer).host?input.loginHint:undefined;
   // A single-shard host mints IDs on its own shard; 250 random bits remain.
   let entryId=random(this.crypto);if(this.shard!==undefined)entryId=ALPHABET[Number(this.shard)]+entryId.slice(1);
-  const now=this.clock(),record={v:2,clientId:input.clientId,redirectUri:input.redirectUri,challenge:input.challenge,state:input.state,intent:input.intent,requests,...digests?{digests}:{},presentation:input.presentation,delivery:embed?'embed-popup':input.presentation,...loginHint?{loginHint}:{},...constrained?{subjectConstraint:input.subjectConstraint}:{},...input.maxAge!==undefined?{maxAge:input.maxAge}:{},...input.uiLocales?.length?{uiLocales:[...input.uiLocales]}:{},...input.colorScheme?{colorScheme:input.colorScheme}:{},...input.dpopJkt?{dpopJkt:input.dpopJkt}:{},...embed?{embedJkt:input.embedJkt}:{},...client.reviewed===false?{client}:{},nonce:random(this.crypto,16),page:random(this.crypto),createdAt:now,expiresAt:now+this.limits.ttl};
+  const now=this.clock(),record={v:2,clientId:input.clientId,redirectUri:input.redirectUri,...input.challenge!==undefined?{challenge:input.challenge}:{},state:input.state,intent:input.intent,requests,...members?.target?{target:members.target}:{},...members?.suggestion?{suggestion:members.suggestion}:{},...members?.reason!==undefined?{reason:members.reason}:{},...digests?{digests}:{},presentation:input.presentation,delivery:embed?'embed-popup':input.presentation,...loginHint?{loginHint}:{},...constrained?{subjectConstraint:input.subjectConstraint}:{},...input.maxAge!==undefined?{maxAge:input.maxAge}:{},...input.uiLocales?.length?{uiLocales:[...input.uiLocales]}:{},...input.colorScheme?{colorScheme:input.colorScheme}:{},...input.dpopJkt?{dpopJkt:input.dpopJkt}:{},...embed?{embedJkt:input.embedJkt}:{},...client.reviewed===false?{client}:{},nonce:random(this.crypto,16),page:random(this.crypto),createdAt:now,expiresAt:now+this.limits.ttl};
   // Unauthenticated creation is budgeted per caller address, per client from that address and globally, so one
   // caller cannot drain another client's budget. Each shard holds its share of the global budget.
   if(typeof remote!=='string'||!remote)fail('temporarily_unavailable','Application sign-in is not available.');
   if(!admitted)await this.admit({clientId:input.clientId,remote});
   const {hash,store}=await this.locate(entryId),global=this.sharded()?Math.ceil(this.limits.global/ENTRY_SHARDS):this.limits.global;
+  if(incremental){
+   // Owner-state checks (connection, grant coverage, suggestion schema, tier 4), caps and the decline ladder. The
+   // answer is `{entryId}` whether or not anything is suppressed; only `rate_limited` carries Retry-After (§9.3, §10).
+   await store.transaction(tx=>this.budget(tx,'global',global));
+   try{await this.incremental.admit({entryHash:hash,subject:input.subjectConstraint,clientId:input.clientId,client:{id:client.id,name:client.name,origin:client.origin,reviewed:client.reviewed!==false},intent:input.intent,...members,binding:{redirectUri:input.redirectUri,...input.challenge?{challenge:input.challenge}:{},...input.dpopJkt?{dpopJkt:input.dpopJkt}:{}}});}
+   catch(error){if(['rate_limited','temporarily_unavailable'].includes(error?.code))throw error;generic();}
+   await store.transaction(tx=>tx.set(`entry/${hash}`,record));return {entryId};
+  }
   await store.transaction(async tx=>{await this.budget(tx,'global',global);await tx.set(`entry/${hash}`,record);});
   return {entryId};
  }
@@ -122,7 +140,7 @@ export class AuthorizationEntries {
  async view(entryId){
   const {hash,store}=await this.locate(entryId),record=await store.transaction(tx=>this.load(tx,hash)),client=this.clients.get(record.clientId)??(this.clientMetadata&&record.client?.id===record.clientId&&validClientSnapshot(record.client)?record.client:null);if(!client)expired();
   // An unreviewed client is labelled by its verified origin; its self-declared name is marked as unverified.
-  return {entry:{client:{id:client.id,name:client.name,origin:client.origin,...client.reviewed===false?{reviewed:false,...client.claimedName?{claimedName:client.claimedName}:{}}:{}},redirectUri:record.redirectUri,intent:record.intent,requests:structuredClone(record.requests),presentation:record.presentation,delivery:record.delivery,nonce:record.nonce,expiresAt:record.expiresAt,...record.loginHint?{loginHint:record.loginHint}:{},...record.subjectConstraint?{subjectConstraint:record.subjectConstraint}:{},...record.maxAge!==undefined?{maxAge:record.maxAge}:{},...record.uiLocales?{uiLocales:record.uiLocales}:{},...record.colorScheme?{colorScheme:record.colorScheme}:{},...record.delivery==='embed-popup'?{embed:{attested:!!record.attested,plain:!!record.plain,...this.embedOrigin?{origin:this.embedOrigin}:{}}}:{}},pageToken:await this.pageToken(entryId,record)};
+  return {entry:{client:{id:client.id,name:client.name,origin:client.origin,...client.reviewed===false?{reviewed:false,...client.claimedName?{claimedName:client.claimedName}:{}}:{}},redirectUri:record.redirectUri,intent:record.intent,requests:structuredClone(record.requests),presentation:record.presentation,delivery:record.delivery,nonce:record.nonce,expiresAt:record.expiresAt,...record.loginHint?{loginHint:record.loginHint}:{},...record.subjectConstraint?{subjectConstraint:record.subjectConstraint}:{},...record.maxAge!==undefined?{maxAge:record.maxAge}:{},...record.reason!==undefined?{reason:record.reason}:{},...record.target?{target:structuredClone(record.target)}:{},...record.suggestion?{suggestion:structuredClone(record.suggestion)}:{},...record.uiLocales?{uiLocales:record.uiLocales}:{},...record.colorScheme?{colorScheme:record.colorScheme}:{},...record.delivery==='embed-popup'?{embed:{attested:!!record.attested,plain:!!record.plain,...this.embedOrigin?{origin:this.embedOrigin}:{}}}:{}},pageToken:await this.pageToken(entryId,record)};
  }
  /** COOP class of the static entry document (§9). Unknown entries get the strict page. */
  async documentPolicy(entryId,mode){if(mode!==undefined&&mode!=='plain')return 'same-origin';let record=null;try{const {hash,store}=await this.locate(entryId);record=await store.transaction(tx=>tx.get(`entry/${hash}`));}catch{}return record&&record.expiresAt>this.clock()&&record.delivery==='embed-popup'&&!record.plain&&mode!=='plain'?'unsafe-none':'same-origin';}
@@ -169,18 +187,44 @@ export class AuthorizationEntries {
   const session=await digest(this.crypto,`entry-session\0${context.sessionContext??context.sessionToken}`);
   // Durable before any approval: one owner-request ID per owner and entry, resumed on retry.
   const requestId=await store.transaction(async tx=>{const current=await this.load(tx,hash);await this.gate(tx,hash,current,input);const key=`selection/${hash}/${owner}`,existing=await tx.get(key);if(existing)return existing.requestId;const selection={owner,session,requestId:`${owner}.${random(this.crypto)}`,selectedAt:this.clock(),expiresAt:current.expiresAt};await tx.set(key,selection);return selection.requestId;});
-  const begun=await this.authority.beginEntryAuthorization(context,{requestId,entry:{entryHash:hash,clientId:record.clientId,redirectUri:record.redirectUri,challenge:record.challenge,state:record.state,requests:record.requests,...record.digests?{digests:record.digests}:{},intent:record.intent,delivery:record.delivery,...record.subjectConstraint?{subjectConstraint:record.subjectConstraint}:{},...record.maxAge!==undefined?{maxAge:record.maxAge,authAfter:record.createdAt}:{},...record.dpopJkt?{dpopJkt:record.dpopJkt}:{},...record.embedJkt?{embedJkt:record.embedJkt}:{}}},record.client&&!this.clients.has(record.clientId)?{client:record.client}:undefined);
+  // Incremental intents: the owner-shard view (delta, setup, pre-declined items) or an immediate no-delta completion.
+  if(INCREMENTAL_INTENTS.includes(record.intent)){
+   if(!this.incremental)expired();const begun=await this.incremental.begin({entryHash:hash,subject:identity.subject});
+   if(begun.complete){await this.complete(store,hash);return {requestId,completed:this.incrementalRedirect(record,begun.complete)};}
+   return {requestId,incremental:begun.view};
+  }
+  // IA-R2 (incremental-authorization §9.1): on an existing connection the delta of any intent is a grant-more for
+  // caps, the ladder, suppression and tier 4; blocked items are narrowed to held access (a plain decline to the app)
+  // and every request becomes optional. A first connection is unchanged.
+  let requests=record.requests,digests=record.digests,login=null;
+  if(this.incremental&&requests.length){if(typeof this.incremental.loginDelta!=='function')fail('temporarily_unavailable','Application sign-in is not available.');const client=this.clients.get(record.clientId)??record.client;login=await this.incremental.loginDelta({entryHash:hash,subject:identity.subject,clientId:record.clientId,client:{id:client.id,name:client.name,origin:client.origin,reviewed:client.reviewed!==false},requests:structuredClone(requests)});if(!login.first){requests=login.requests;digests=record.digests?login.keep.map(n=>record.digests[n]):undefined;}}
+  const begun=await this.authority.beginEntryAuthorization(context,{requestId,entry:{entryHash:hash,clientId:record.clientId,redirectUri:record.redirectUri,challenge:record.challenge,state:record.state,requests,...digests?{digests}:{},intent:record.intent,delivery:record.delivery,...record.subjectConstraint?{subjectConstraint:record.subjectConstraint}:{},...record.maxAge!==undefined?{maxAge:record.maxAge,authAfter:record.createdAt}:{},...record.dpopJkt?{dpopJkt:record.dpopJkt}:{},...record.embedJkt?{embedJkt:record.embedJkt}:{}}},record.client&&!this.clients.has(record.clientId)?{client:record.client}:undefined);
   // Provider-page-only: access this owner already granted this client, ready to resubmit with one click.
-  return {requestId,...Array.isArray(begun?.approved)?{approved:begun.approved}:{}};
+  return {requestId,...Array.isArray(begun?.approved)?{approved:begun.approved}:{},...login&&!login.first?{incrementalLogin:{additions:login.additions,predeclined:login.predeclined}}:{}};
  }
  denial(record){const params={error:'access_denied',state:record.state,iss:this.issuer};if(record.attested)return params;const url=new URL(record.redirectUri);for(const [k,v]of Object.entries(params))url.searchParams.set(k,v);return {redirectUri:url.href};}
  /** Cancel needs no owner and consults none: one store transaction and one generic access_denied, whatever was chosen. */
  async cancel(entryId,input,page){
   const {hash,store}=await this.locate(entryId);
-  const record=await store.transaction(async tx=>{const record=await this.opened(tx,entryId,hash,page,input.nonce);if(record.intent==='end-session')fail('invalid_request');await this.gate(tx,hash,record,input);record.completed=true;await tx.set(`entry/${hash}`,record);return record;});
-  return this.denial(record);
+  const record=await store.transaction(async tx=>{const record=await this.opened(tx,entryId,hash,page,input.nonce);if(record.intent==='end-session')fail('invalid_request');await this.gate(tx,hash,record,input);if(INCREMENTAL_INTENTS.includes(record.intent))return record;record.completed=true;await tx.set(`entry/${hash}`,record);return record;});
+  if(!INCREMENTAL_INTENTS.includes(record.intent)){if(this.incremental?.loginOutcome)try{await this.incremental.loginOutcome({entryHash:hash,approved:null});}catch{}return this.denial(record);}
+  // Incremental cancel without a decision: declined / unchanged through the normal code or result, caps only (§10).
+  if(!this.incremental)expired();const completion=await this.incremental.abandon({entryHash:hash});await this.complete(store,hash);return this.incrementalRedirect(record,completion);
+ }
+ async complete(store,hash){await store.transaction(async tx=>{const current=await tx.get(`entry/${hash}`);if(current&&!current.completed){current.completed=true;await tx.set(`entry/${hash}`,current);}});}
+ /** `grant-more` returns a code (outcomes ride the token response); `configure` returns exactly result, state, iss. */
+ incrementalRedirect(record,completion){const url=new URL(record.redirectUri);for(const [k,v] of Object.entries({...typeof completion?.code==='string'?{code:completion.code}:{result:completion.result},state:record.state,iss:this.issuer}))url.searchParams.set(k,v);return {redirectUri:url.href};}
+ /** Owner decision on an incremental entry. Decline and the blocked notice's return need the owner too: they advance
+  * the ladder and may record a suppression. A retry after completion returns the stored answer (CX §6.7). */
+ async decideIncremental(entryId,context,input,page){
+  exact(input,['nonce','pageSecret','plain','approved','denied','notice','suppress','reveal','changes','sharedAcknowledged','setup']);if(!this.incremental)expired();
+  const {owner,identity}=await this.caller(context),{hash,store}=await this.locate(entryId);
+  const record=await store.transaction(async tx=>{const raw=await tx.get(`entry/${hash}`);if(raw?.completed&&raw.v===2&&raw.expiresAt>this.clock()&&INCREMENTAL_INTENTS.includes(raw.intent)){await this.checkPage(entryId,raw,page);if(input.nonce!==raw.nonce)fail('invalid_request');}else await this.opened(tx,entryId,hash,page,input.nonce);const record=raw;if(!await tx.get(`selection/${hash}/${owner}`))fail('invalid_request','Choose an account first.');await this.gate(tx,hash,record,input);return record;});
+  const {nonce,pageSecret,plain,...decision}=input,completion=await this.incremental.decide({entryHash:hash,subject:identity.subject,decision});
+  await this.complete(store,hash);return this.incrementalRedirect(record,completion);
  }
  async decide(entryId,context,input,page){
+  if(this.incremental){const {hash,store}=await this.locate(entryId),peek=await store.transaction(async tx=>{const raw=await tx.get(`entry/${hash}`);return raw&&INCREMENTAL_INTENTS.includes(raw.intent)?raw:null;});if(peek)return this.decideIncremental(entryId,context,input,page);}
   exact(input,['nonce','pageSecret','plain','approved','denied']);if(input.denied!==undefined&&input.denied!==true||(input.denied===true)===(input.approved!==undefined))fail('invalid_args');
   if(input.denied===true)return this.cancel(entryId,input,page);
   const {owner}=await this.caller(context),{hash,store}=await this.locate(entryId);
@@ -199,6 +243,8 @@ export class AuthorizationEntries {
   // outcome, so the issued code is never delivered (it stays unredeemed and expires).
   const cancelled=await store.transaction(async tx=>{const current=await tx.get(`entry/${hash}`);if(current?.completed)return true;if(current){current.completed=true;await tx.set(`entry/${hash}`,current);}return false;});
   if(cancelled)expired();
+  // IA-R2: the owner's answer to a login delta advances or resets the shared ladder (accounting only; never fails the login).
+  if(this.incremental?.loginOutcome)try{await this.incremental.loginOutcome({entryHash:hash,subject:`${this.issuer}/entities/${owner}`,approved:input.approved});}catch{}
   if(!attested){const {claim,...plainResult}=result;return plainResult;}
   // Attested popup: values go to the popup document only, never to a client redirect.
   const url=new URL(result.redirectUri),state=url.searchParams.get('state'),iss=url.searchParams.get('iss');

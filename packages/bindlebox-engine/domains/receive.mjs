@@ -46,10 +46,11 @@ async function receiptSigner(delegateKeys,config,now){
  return signer;
 }
 // Conditional links (§4.6, links §7.5): bounded decision reuse; positive until the UTC day ends, negative 15 minutes.
-async function audience({store,providerLink,parent,principal,now}){
+// The author-signed envelope goes to the provider as the host-verifiable author proof (BB-C1b, core-links review 1).
+async function audience({store,providerLink,parent,principal,envelope,now}){
  const key=KEYS.decision(parent.jti,principal),prior=await store.get(key);
  if(prior&&prior.until>now){if(prior.state==='eligible')return null;protocol('audience_ineligible');}
- let state;try{state=(await providerLink.evaluate({jti:parent.jti,principal:{issuer:principal.issuer,subject:principal.subject}}))?.state;}catch{state='unavailable';}
+ let state;try{state=(await providerLink.evaluate({jti:parent.jti,principal:{issuer:principal.issuer,subject:principal.subject},proof:envelope}))?.state;}catch{state='unavailable';}
  if(state==='eligible')return {key,value:{state,until:(Math.floor(now/DAY)+1)*DAY}};
  // Negative decisions are cached only while this link holds fewer than MAX_DECISIONS rows (expired rows are pruned
  // first), so verified-but-ineligible principals cannot grow mailbox rows without bound.
@@ -118,7 +119,7 @@ export class ReceiveDeliver extends MailboxAction {
   const bytes=delivery.body?.byteLength??0;let staged=null;
   try{
    if(await store.get(KEYS.block(principal)))protocol('not_authorized');
-   const decision=parent.conditional?await audience({store,providerLink,parent,principal,now}):null;
+   const decision=parent.conditional?await audience({store,providerLink,parent,principal,envelope,now}):null;
    // Quotas and budgets read-only before staging or signing (review BB2-R1): a refused attempt writes nothing.
    if(!prior){const live=await store.get(KEYS.parent(parent.jti));if(!live||live.revoked)protocol('link_invalid');admissionPlan({live,budget:await store.get(KEYS.budget),known:await store.get(`known/${principalKey(principal)}`),principal,bytes,now,plan:config.plan});}
    // Receipt signed before the commit and released only after it.

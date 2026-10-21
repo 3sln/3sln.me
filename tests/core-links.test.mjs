@@ -28,6 +28,9 @@ const ISSUER = 'https://3sln.example', OWNER = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa
 const decoded = segment => JSON.parse(strictText(fromBase64url(segment)));
 const metaOf = url => new URL(url).searchParams.get('bindle_meta');
 const kidOf = url => decoded(metaOf(url).split('.')[0]).kid;
+// C1b: evaluate requires an author proof; these C1a tests use a stub host verifier that accepts the evaluated
+// principal (real proofs: tests/core-links-handoff.test.mjs).
+const PROOF = { stub: true }, STUB_AUTHOR = async ({ principal }) => ({ principal });
 const claims = (extra = {}) => ({ resource: 'parent-1', kinds: ['one-off'], mimeTypes: ['text/plain'], maxMessages: 5, maxBytes: 65536, maxMessageBytes: 16384, ...extra });
 
 test('moved modules: every legacy path re-exports the exact core-links bindings (no parser differential)', () => {
@@ -130,7 +133,7 @@ test('externally registered keys (pre-registry fixtures) keep minting under the 
 async function linksWorld({ enabled = true, occupant, changeRetention, decide } = {}) {
   const clock = fakeClock(1800000000000), store = new MemoryMessagingStore(), registry = new IdentityKeyRegistry({ store, clock: clock.now, seal: value => structuredClone(value), open: value => value });
   await registry.ensure(OWNER, 'signing');
-  const service = new LinkService({ store, issuer: ISSUER, keys: registry, clock: clock.now, policies: [POLICY], signingKey: owner => registry.privateKey(owner, 'signing'), decide, ...(changeRetention ? { changeRetention } : {}) });
+  const service = new LinkService({ store, issuer: ISSUER, keys: registry, clock: clock.now, policies: [POLICY], signingKey: owner => registry.privateKey(owner, 'signing'), decide, verifyAuthor: STUB_AUTHOR, ...(changeRetention ? { changeRetention } : {}) });
   const audit = memoryAudit({ clock }), state = { occupant: occupant === undefined ? { clientId: 'https://box.example/app', generation: 3 } : occupant };
   const engine = createAppEngine({ providers: { clock, random: { uuid: () => crypto.randomUUID() }, audit, links: linksProvider({ service, enabled, occupant: async ({ owner, slot }) => (owner === OWNER && slot === MESSAGING_INGRESS_SLOT ? state.occupant : null) }) } });
   const app = (clientId = 'https://box.example/app') => ({ kind: 'app', owner: OWNER, clientId, handle: 'alice' }), owner = { kind: 'owner', owner: OWNER };
@@ -195,18 +198,18 @@ test('links contract: revoke, list, changes and evaluate are scoped, idempotent 
   const decisions = [], w = await linksWorld({ changeRetention: 3, decide: async input => { decisions.push(input); return { state: input.principal.subject === OWNER ? 'eligible' : 'ineligible', tags: ['x'] }; } });
   const a = await w.issue({ audience: { policy: POLICY } }), b = await w.issue();
   const principal = { issuer: ISSUER, subject: OWNER };
-  assert.deepEqual(await perform(w.engine, new EvaluateLink({ actor: w.app(), input: { jti: a.jti, principal } })), { state: 'eligible' });
+  assert.deepEqual(await perform(w.engine, new EvaluateLink({ actor: w.app(), input: { jti: a.jti, principal, proof: PROOF } })), { state: 'eligible' });
   assert.deepEqual(decisions, [{ owner: OWNER, parent: a.jti, policy: POLICY, principal }]);
-  assert.deepEqual(await perform(w.engine, new EvaluateLink({ actor: w.app(), input: { jti: b.jti, principal } })), { state: 'unavailable' }, 'an unconditional link has no audience');
-  await assert.rejects(perform(w.engine, new EvaluateLink({ actor: w.app(), input: { jti: a.jti, principal: { issuer: ISSUER, subject: 'x' } } })), { code: 'invalid_link_query' });
-  await assert.rejects(perform(w.engine, new EvaluateLink({ actor: w.owner, input: { jti: a.jti, principal } })), { code: 'forbidden' });
+  assert.deepEqual(await perform(w.engine, new EvaluateLink({ actor: w.app(), input: { jti: b.jti, principal, proof: PROOF } })), { state: 'unavailable' }, 'an unconditional link has no audience');
+  await assert.rejects(perform(w.engine, new EvaluateLink({ actor: w.app(), input: { jti: a.jti, principal: { issuer: ISSUER, subject: 'x' }, proof: PROOF } })), { code: 'invalid_link_query' });
+  await assert.rejects(perform(w.engine, new EvaluateLink({ actor: w.owner, input: { jti: a.jti, principal, proof: PROOF } })), { code: 'forbidden' });
   const before = await read(w.engine, new LinkChanges({ actor: w.app(), input: { since: 0 } }));
   assert.deepEqual(before.changes.map(change => [change.jti, change.change]), [[a.jti, 'issued'], [b.jti, 'issued']]);
   assert.deepEqual(await perform(w.engine, new RevokeLink({ actor: w.owner, id: b.jti })), {});
   assert.deepEqual(await perform(w.engine, new RevokeLink({ actor: w.app(), id: b.jti })), {}, 'idempotent');
   await assert.rejects(perform(w.engine, new RevokeLink({ actor: w.app(), id: crypto.randomUUID() })), { code: 'not_found' });
   await assert.rejects(w.service.verify(b.link), { code: 'link_invalid' });
-  assert.deepEqual(await perform(w.engine, new EvaluateLink({ actor: w.app(), input: { jti: b.jti, principal } })), { state: 'unavailable' });
+  assert.deepEqual(await perform(w.engine, new EvaluateLink({ actor: w.app(), input: { jti: b.jti, principal, proof: PROOF } })), { state: 'unavailable' });
   const after = await read(w.engine, new LinkChanges({ actor: w.app(), input: { since: before.seq } }));
   assert.deepEqual(after.changes.map(change => [change.jti, change.change]), [[b.jti, 'revoked']]);
   await w.issue(); await w.issue();
@@ -258,7 +261,7 @@ test('seeded interleavings: concurrent issue, revoke and key rotation never leav
 
 test('review regressions: revoked links free the cap, app-supplied principals are budgeted, a rotation race leaves no orphan grant', async () => {
   const w = await linksWorld({ decide: async () => ({ state: 'eligible' }) });
-  const small = new LinkService({ store: w.store, issuer: ISSUER, keys: w.registry, clock: w.clock.now, maxLinks: 2, evaluationsPerLink: 2, evaluationsPerOwner: 3, policies: [POLICY], decide: async () => ({ state: 'eligible' }), signingKey: owner => w.registry.privateKey(owner, 'signing') });
+  const small = new LinkService({ store: w.store, issuer: ISSUER, keys: w.registry, clock: w.clock.now, maxLinks: 2, evaluationsPerLink: 2, evaluationsPerOwner: 3, policies: [POLICY], decide: async () => ({ state: 'eligible' }), verifyAuthor: STUB_AUTHOR, signingKey: owner => w.registry.privateKey(owner, 'signing') });
   const input = { type: MESSAGING_CONTACT_LINK_TYPE, claims: claims(), expiresAt: w.clock.now() + 366 * 86400000 - 1000, handle: 'alice' };
   const a = await small.issue(OWNER, { ...input, audience: { policy: POLICY } }), b = await small.issue(OWNER, { ...input, audience: {} });
   await assert.rejects(small.issue(OWNER, input), { code: 'link_limit' });
@@ -266,10 +269,10 @@ test('review regressions: revoked links free the cap, app-supplied principals ar
   const c = await small.issue(OWNER, { ...input, audience: {} });
   await assert.rejects(small.issue(OWNER, input), { code: 'link_limit' }, 'an idempotent second revoke frees nothing extra');
   const principal = () => ({ issuer: ISSUER, subject: crypto.randomUUID() });
-  assert.deepEqual([await small.evaluate(OWNER, { jti: a.jti, principal: principal() }), await small.evaluate(OWNER, { jti: a.jti, principal: principal() }), await small.evaluate(OWNER, { jti: a.jti, principal: principal() })].map(r => r.state), ['eligible', 'eligible', 'unavailable'], 'per-link hourly budget');
-  assert.equal((await small.evaluate(OWNER, { jti: c.jti, principal: principal() })).state, 'eligible');
-  assert.equal((await small.evaluate(OWNER, { jti: c.jti, principal: principal() })).state, 'unavailable', 'per-owner hourly budget');
-  w.clock.advance(3600000); assert.equal((await small.evaluate(OWNER, { jti: a.jti, principal: principal() })).state, 'eligible');
+  assert.deepEqual([await small.evaluate(OWNER, { jti: a.jti, principal: principal(), proof: PROOF }), await small.evaluate(OWNER, { jti: a.jti, principal: principal(), proof: PROOF }), await small.evaluate(OWNER, { jti: a.jti, principal: principal(), proof: PROOF })].map(r => r.state), ['eligible', 'eligible', 'unavailable'], 'per-link hourly budget');
+  assert.equal((await small.evaluate(OWNER, { jti: c.jti, principal: principal(), proof: PROOF })).state, 'eligible');
+  assert.equal((await small.evaluate(OWNER, { jti: c.jti, principal: principal(), proof: PROOF })).state, 'unavailable', 'per-owner hourly budget');
+  w.clock.advance(3600000); assert.equal((await small.evaluate(OWNER, { jti: a.jti, principal: principal(), proof: PROOF })).state, 'eligible');
   // Revoked records are reclaimed 30 days after revocation even when their expiry is a year away.
   w.clock.advance(31 * 86400000); await small.revoke(OWNER, a.jti); await small.revoke(OWNER, c.jti);
   w.clock.advance(31 * 86400000); await small.issue(OWNER, input); await small.issue(OWNER, input);

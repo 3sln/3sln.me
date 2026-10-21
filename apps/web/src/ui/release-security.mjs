@@ -1,3 +1,5 @@
+import {devicesEnabled} from '../bl/devices.mjs';
+import {devicesPanel,devicesApps,devicesDialog} from './devices.mjs';
 import { h,icon,badge,date,field,checkbox,pageHeader,helpers,interfaceText } from './release-primitives.mjs';
 export default function securityView(state){
   const {btn,date,form}=helpers(state),a=state.data?.account??state.session?.account??{},credentials=state.data?.credentials??[],devices=state.data?.devices??[];
@@ -16,18 +18,19 @@ export default function securityView(state){
     h('section',h('h2','Passkeys & password'),h('p','Register a passkey on each device you trust. Removing a passkey also revokes sessions authenticated with it.').classes('muted'),
       ...credentials.map(key=>h('div',h('div',h('strong',key.label??'Passkey').attrs({translate:'no'}),h('p',`${key.deviceType??'Authenticator'}${key.backedUp?' · Backed up':''} · Added ${date(key.createdAt)}`).classes('field-help')),btn('Remove',{kind:'open-modal',modal:{kind:'remove-passkey',credential:key}},'text-button danger')).classes('credential-row').key(key.id)),
       credentials.length?null:h('p',`${a.passkeyCount??0} verified passkey(s)${a.hasPassword?' and a password are':' are'} configured.`).classes('muted'),btn([icon('plus'),'Add a passkey'],{kind:'open-modal',modal:{kind:'add-passkey'}},'button secondary'),h('p','Adding and removing keys requires a recent sign-in. A final sign-in method cannot be removed.').classes('field-help')).classes('panel'),
-    h('section',h('h2','Signed-in devices'),h('p','Review the sessions that can access your account. Revoking a session signs that device out.').classes('muted'),
+    devicesEnabled(state)?devicesPanel(state):h('section',h('h2','Signed-in devices'),h('p','Review the sessions that can access your account. Revoking a session signs that device out.').classes('muted'),
       ...devices.map(device=>h('div',h('div',h('strong',device.label??'Browser session').attrs({translate:device.label?'no':null}),device.current?badge('This device','good'):null,h('p',interfaceText('Last active {date} · Expires {expiry}',{date:date(device.lastUsedAt??device.createdAt),expiry:date(device.expiresAt)})).classes('field-help')),h('div',btn('Rename',{kind:'open-modal',modal:{kind:'rename-device',device}},'text-button'),btn('Revoke',{kind:'open-modal',modal:{kind:'revoke-device',device}},'text-button danger')).classes('buttons')).classes('credential-row').key(device.id)),
       devices.length?null:h('p','Device session information is unavailable.').classes('muted'),btn('Sign out other devices',{kind:'open-modal',modal:{kind:'revoke-other-devices'}},'button secondary')).classes('panel'),
     h('section',h('h2','Email addresses'),h('p','Email is optional. Adding an address requires verification before it can be used for delivery.').classes('muted'),
       a.verifiedEmail?h('div',h('span',a.verifiedEmail).attrs({translate:'no'}),badge('Verified','good')).classes('credential-row'):null,
       btn('Add email address',{kind:'open-modal',modal:{kind:'email'}},'button secondary',!state.config.emailEnabled),!state.config.emailEnabled?h('p','Email linking is not enabled on this service.').classes('field-help'):null).classes('panel'),
-    h('section',h('h2','Apps with access'),...(state.data.grants??[]).filter(g=>g.active).map(grant=>h('div',h('strong',grant.client),h('p',(grant.methods??[]).join(', ')),btn('Revoke access',{kind:'revoke-grant',id:grant.id},'text-button danger')).classes('credential-row')),
+    devicesEnabled(state)?devicesApps(state):h('section',h('h2','Apps with access'),...(state.data.grants??[]).filter(g=>g.active).map(grant=>h('div',h('strong',grant.client),h('p',(grant.methods??[]).join(', ')),btn('Revoke access',{kind:'revoke-grant',id:grant.id},'text-button danger')).classes('credential-row')),
       (state.data.grants??[]).some(g=>g.active)?null:h('p','No apps have access to your resources.').classes('muted')).classes('panel')
     ).classes('settings-grid'));
 }
 export function securityDialog(state){
   const m=state.modal,{btn,form}=helpers(state);
+  if(devicesEnabled(state)){const dialog=devicesDialog(state);if(dialog)return dialog;}
   if(m.kind==='rename-device')return {title:'Give this device a name.',body:form([field('label','Device name','text',{required:true,maxLength:80,value:m.device.label??'',placeholder:'e.g. Living room tablet'})],{kind:'rename-device',sessionId:m.device.id},'Save device name')};
   if(m.kind==='add-passkey')return {title:'Add a key for this device.',body:form([field('label','Passkey name','text',{required:true,maxLength:80,placeholder:'e.g. Personal phone'}),h('p','Your browser will ask you to create a passkey. Give it a name you will recognize later.').classes('muted')],{kind:'add-passkey'},'Create passkey')};
   if(m.kind==='remove-passkey')return {title:'Remove this passkey?',body:h('div',h('p',`Remove “${m.credential.label??'Passkey'}” and revoke its signed-in sessions? You must keep at least one way to sign in.`),btn('Remove passkey',{kind:'remove-passkey',credentialId:m.credential.id},'button danger-button'))};

@@ -81,3 +81,118 @@ The coordinator fixed every finding in revision 2 except those listed under "Acc
 ## Evidence
 
 Documentation-only change. No code, tests or DEVLOG were edited, and no tests were run. The interop amendments AMD-C12–C20 are proposed and unsigned.
+
+## EV-2 implementation
+
+Status: provisional, 2026-10-20. One independent security reviewer read the EV-2 code: `packages/events/*`, `packages/app/domains/events.mjs`, `packages/runtime/{account,routes}/events.mjs` and `apps/worker/event-bus-waiter.mjs`. The reviewer looked at exfiltration, producer spoofing, consumer isolation and cost amplification, and confirmed findings with scripts. The coordinating agent applied the fixes. The fixes have not been re-reviewed. Sign-off: reviewer ___ / date ___ / outcome ___.
+
+| ID | Sev | Finding | Disposition |
+| --- | --- | --- | --- |
+| EV2-S0 | High | The per-grant read rate lived on a per-operation handle, so it never limited anything. | **Fixed:** the rate state lives with the provider, with a regression test. |
+| EV2-S1 | High | The reader-floor epoch was the connection generation. Revoking a grant does not change that, so after re-approval the old floor and cursor stayed valid. The reviewer's script read records published during the revocation. | **Fixed:** the epoch is the read-approval identity `context.grant.readSince`, and the handler fails closed without it. The `readerApproved` hook uses the same derivation. Tests cover it. |
+| EV2-S2 | Med | After a reader's free empty reads, each further empty read drew from the shared allowance. One reader polling for about 33 minutes blocked every publisher until UTC midnight. | **Fixed (provisional deviation from §9):** charged empty reads draw a separate readers' share of 25 % of the allowance, with at most 10 % per reader. They never reduce the publish allowance. Tested. |
+| EV2-S3 | Med | One app with two continuous waits spent the whole account's daily wait-seconds, and the refusals revealed other readers' activity. | **Fixed:** each app may use at most 50 % of the daily wait budget, and every refusal looks the same. Tested. |
+| EV2-S4 | Med | Sweeps were never scheduled, so idle buses kept expired records, and journal, rate and meter rows grew. | **Partly fixed:** the resource handler runs a bounded sweep at most every 10 minutes. **Open integration gate:** the account alarm must call `eventBusSweep` before the flag is enabled. Reads always age out expired records first. |
+| EV2-S5 | Low | A refusal below the caller's own limit shows that the shared per-bus or account limit was reached. | **Accepted residual:** Retry-After comes only from the caller's own window. The code comment is corrected, and spec §6.3 wording needs review. |
+| EV2-S6 | Low | A generation bump invalidated cursors and reset the floor, which silently dropped records. | **Fixed** by the EV2-S1 epoch change. |
+| EV2-H1 | Hardening | The cap age-out loop had no head guard. | **Fixed.** |
+| EV2-H2 | Hardening | The response size bound counted UTF-16 characters, not bytes. | **Fixed:** it now counts UTF-8 bytes. |
+
+**Checked with no issue found:**
+- the cursor MAC binding;
+- head, oldest and gap clipping to the floor;
+- opaque receipts;
+- write-only grants cannot read;
+- host-stamped publishers;
+- owner and system operations cannot be reached from app RPC;
+- flag gating;
+- transactions await storage only;
+- journal and `tx_conflict`;
+- bounded waiter memory.
+
+**Integration hunks still unwired:**
+- federation must pass `context.grant {fragment, digest, readSince, history?}`;
+- bus descriptors must be added to the resource provider (`eventBusDescriptors`);
+- `/bindle/rpc` must hold long-polls at the edge with `holdBusRead` and set `busWaits`/`busResume`;
+- revocation and approval must call `eventBusReader`;
+- the account alarm must run sweeps.
+
+Until these land, apps cannot reach a bus even with the flag on.
+
+## IA implementation
+
+Status: provisional, 2026-10-20. One independent security reviewer read IA-1/IA-2 as implemented, with no edits, and confirmed findings with throwaway probes:
+
+- `packages/federation/{incremental,suppression}.mjs`;
+- the intent hunks of `authorization-entries.mjs`;
+- `packages/runtime/incremental-authorization.mjs`;
+- `routes/incremental.mjs`.
+
+The implementer fixed the confirmed findings and added a regression test for each. The fixes have not been re-reviewed. Sign-off: reviewer ___ / date ___ / outcome ___.
+
+| ID | Sev | Finding | Disposition |
+| --- | --- | --- | --- |
+| IA-R1 | High | The tier-4 refusal for unreviewed apps relied on CX-1 facts. A contract missing from the consent snapshot classified as tier 2 with "missing effect", so send-as-you access was accepted. | **Fixed:** for unreviewed apps, any row with a missing effect or tier 4 refuses the entry. The consent facts must be scoped to pinned contracts (integration). |
+| IA-R2 | High | Spec §9.1: suppression, caps and the ladder did not apply to `login` deltas on an existing connection, and required deltas were not coerced to optional. | **Fixed (2026-10-20):** at owner selection, `loginDelta` treats the delta of any intent on an existing connection as a `grant-more`, with the same app-site caps, ladder targets, suppression and tier-4 refusal. Blocked items are narrowed to held access (a plain decline), every request becomes optional, and consent receives `incrementalLogin.additions`. `loginOutcome` steps or resets the shared ladder after arming. The reviewer re-ran the probe and confirmed the plain re-login bypass closed. |
+| IA-R3 | Med | Revealing one pre-declined item deleted every matching record, including `app`/`kind` blocks. | **Fixed:** only `fragment`/`field` records are lifted. |
+| IA-R4 | Med | A decision on a superseded page skipped the arming dwell and the key check, so a suppression could be stored with zero dwell. | **Fixed:** the dwell is checked first, `begin` arms superseded views, and superseded decisions accept only decline or notice. |
+| IA-R5 | Med | An app could supersede the open entry in the background so that the owner's decline stepped no ladder. | **Fixed:** an explicit decline on a superseded page steps the ladder (spec §15.2 item 9). |
+| IA-R6 | Med | A configure save reset the ladder for every opened field, and `partial` reset the whole fragment target. | **Fixed:** only changed fields and fully granted fragments are reset. |
+| IA-R7 | Med | `grant-more` `resources` were unchecked, so an app's own-site resource could be committed and mint tokens. | **Fixed:** only filtered candidates, and only for fields that hold no resources yet. |
+| IA-R8 | Med | Port writes were not atomic with completion. A cancel during Allow left the grant committed while the app saw `declined`, and a post-commit error reopened the entry. | **Fixed:** the entry is marked `committing` before port writes and is never reopened after that; `abandon` and auto-complete refuse while a decision is live or committing; a retry of the same decision can finish (the commit is idempotent per entry). |
+| IA-R9 | Low | Inline setup could overwrite existing values and fields that were not being approved. | **Fixed:** setup fills only empty fields of the approved delta. |
+| IA-R10 | Low | No host was displayed for multi-valued URL, email or hostname suggestions. | **Fixed:** one host per element. |
+
+Notes, not fixed:
+
+- **IA-S1:** own-site matching is per host, so subdomain churn or a second domain the app owns can evade fragment suppression. `schemaHosts` and the caps bound this. Consider registrable-domain matching.
+- **IA-S2:** `via: bulk`/`field` is asserted by the provider page.
+- **IA-S3:** whether a bearer incremental session may follow DPoP-bound sessions should be fixed in the sessions port contract.
+- **IA-S4:** configure decline steps fields revoked since creation.
+
+Checked OK:
+
+- `configure` never touches grants;
+- suggestion limits hold;
+- suppression is indistinguishable at creation, dwell, outcome and counters;
+- no tokens on decline, suppression or no delta;
+- PKCE, client, redirect and DPoP binding hold;
+- a replay burns the code and revokes its session;
+- the session cap holds;
+- owner routes run after CSRF.
+
+**IA-R2 re-review (same reviewer).** The probe confirms the plain re-login, wider-method, unpinnable-fragment, bus, reauthenticate and select-account paths, and alternating login and grant-more, are now bounded. It found three new gaps, all fixed with regression tests and not re-reviewed:
+
+- **IA-R2a (High):** a freshly minted sibling client ID counted as a first connection and bypassed everything. Now "existing" means per app site: the client's own connection, the optional port `grants.siteConnection`, or any request history from that site.
+- **IA-R2b (Med):** suppressed login items never stepped the ladder, so they were distinguishable from a decline. They now step on an armed decision.
+- **IA-R2c (Low):** one decision counted for every account that selected on the entry. Now only the deciding owner counts, and an ownerless cancel counts only when exactly one account selected.
+
+Residual: a login cancel needs no owner (pre-consent privacy S1). After arming it counts as a decline for the single selecting account, whereas a `grant-more` decline requires the owner.
+
+## Wave 3b adapter integration (local; provisional, 2026-10-20)
+
+Reviewer ___ Date ___ Outcome ___. Production release and the default-off gates remain unchanged. DEVLOG.md is intentionally not edited in this pass.
+
+- IA now has durable Node/Worker composition over the owner's FederationService: transactional union commits, decision journals, bounded token issuance, live connections, preference revisions, DPoP proofs/nonces, and metadata-client blocking. Incremental pre-owner records and codes live in a separate `bindle-incremental-v1` store; owner grants, preferences and sessions remain on the owner shard. This centralized pre-owner store is provisional and needs capacity review before enabling. `loginDelta`/`loginOutcome` also reach entry stores and the legacy authorization-request path; app-site connection checks include sibling clients.
+- CX-2 consumes the actual select/decision contract in incremental-authorization §15.1, including completed entries, empty configure request arrays, server dwell, suppressed suggestions, explicit bulk/individual choices and staged setup. The pure CX-1 projection is shared by browser and engine wrappers. Provider facts use reviewed contract pins and owner-scoped preferences/grants; no app-provided mock facts ship in the page.
+- EV-2's integration hunks are mounted: fragment/digest/read-approval identity in RPC context, resource descriptors with actual wait limits, approval/revocation hooks, edge-held Bearer/DPoP reads and account-alarm sweeps. Read approval identities persist through widening. EV2-S4's account-alarm integration gate is implemented locally; this is not production verification or reviewer sign-off.
+- LH-3 carries and checks the exact connection ID through occupancy. LH-7c bounds intake tx/jti retention and pruning; LH-7d routes the B8 public-intake shell through B7 with live broker checks in its commit. Messaging-address mount evidence still requires the describe port; EXT-X7 remains deferred.
+- LA7 has owner app-family inventory, approval ancestry, last use, one/all session revocation and device-page wiring. Incremental sessions derived from linked approvals have independent lineage with the same approving chain. Host notices use verified contacts, the existing email/push transports and bounded service-worker rendering; provider acceptance is not proof of delivery.
+
+Local coverage includes real Node and workerd identity/federation integration, actual incremental browser flows, the consent adapter's exact request bodies, service-worker notice rendering, event waits and alarm maintenance. Required gate results are reported with the integration handoff; no approval is inferred from passing tests.
+
+IA integration handoff (owned-module changes deferred to the IA-R2 agent):
+
+1. `tests/incremental-authorization-entries.test.mjs`'s parallel-redemption assertion is nondeterministic: replaying one code can call the idempotent `sessions.revoke` port repeatedly for the same sole issued family. Repeated full runs produced both a pass and `[family-1, family-1, family-1]` versus the expected single call. Reconcile the test with idempotent final revocation, or serialize logical revocation in `incremental.mjs`; never permit a second live session.
+2. Fault injection through the real Node ports: allow a `grant-more` decision with inline setup, let `preferences.save` succeed, fail `grants.commit` once with `temporarily_unavailable`, then retry the identical decision after its 30-second decision lease. `incremental.mjs` rejects its own already-saved setup with `replace_in_settings`. The committing decision needs resumable, idempotent setup (or an atomic preference/grant commit contract). Before the lease expires, `decision_in_progress` is expected. This is a separate recovery gate; ordinary happy-path gates do not cover it.
+
+**IA handoff resolution (2026-10-20, IA agent; not re-reviewed).**
+
+1. **Replay revocation.** Revoking a replayed code is now logical and serialized in `incremental.mjs`. The code record carries a `revoked` flag, so the sole issued family is revoked exactly once however replays interleave, and a second live session is never possible. The parallel-redemption test asserts exactly one revocation, and 15 repeated runs were stable.
+2. **Resumable decisions.** A decision journals its validated plan (approvals, setup values, configure values) with its lease when it starts writing. After a partial failure, a retry of the identical decision after the 30 s lease resumes that plan:
+   - setup values that are already saved are skipped instead of being re-validated, so there is no `replace_in_settings`;
+   - the grant commit is idempotent per entry;
+   - outcomes use the commit's own `before`/`after`.
+
+   A different decision, or `abandon`, gets `decision_in_progress`/`invalid_request` while a decision is committing. A configure save that succeeded before a failure resumes as `configured`, never `unchanged`. Covered by engine tests with fault-injected ports; the real-Node fault path is not exercised, since its lease runs on the system clock.
+3. **Consent marking.** CX consent now shows login deltas on an existing connection as "New access requested by ‹app›" notes (`role="note"`). They are separate from "Already granted to ‹app›" cards, carry a summary status line, use en/es authorize-catalogue strings, and the selection's `incrementalLogin` is validated before render. Browser tests are in `tests/browser/consent-entry.mjs`.

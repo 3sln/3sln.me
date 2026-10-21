@@ -4,11 +4,11 @@
 // or showing a new decision surface disarms and restarts the delay, so a click aimed at an earlier control (or a
 // double-click across a surface change) cannot land on a fresh approval. Approval controls never take default focus.
 export const ARM_MS=600;
-export function createArming({win=globalThis.window,doc=globalThis.document,delay=ARM_MS,onChange=()=>{},onReject=()=>{},setTimer=setTimeout,clearTimer=clearTimeout}={}){
+export function createArming({win=globalThis.window,doc=globalThis.document,delay=ARM_MS,notBefore=()=>0,onChange=()=>{},onReject=()=>{},setTimer=setTimeout,clearTimer=clearTimeout}={}){
  let armed=false,timer=null,disposed=false,width=win.innerWidth,pressedArmed=false;
  const ready=()=>doc.visibilityState!=='hidden'&&(typeof doc.hasFocus!=='function'||doc.hasFocus());
  const set=value=>{if(armed!==value){armed=value;onChange(value);}};
- const rearm=()=>{if(disposed)return;pressedArmed=false;set(false);clearTimer(timer);timer=null;if(ready())timer=setTimer(()=>{timer=null;if(ready())set(true);},delay);};
+ const rearm=()=>{if(disposed)return;pressedArmed=false;set(false);clearTimer(timer);timer=null;if(ready())timer=setTimer(()=>{timer=null;if(ready())set(true);},Math.max(delay,notBefore()-Date.now()));};
  // Mobile URL-bar show/hide fires height-only resizes while scrolling; only a width change (or a large growth) re-arms.
  const resized=()=>{const w=win.innerWidth;if(w!==width){width=w;rearm();}};
  // A press must also START while armed: a pointerdown/keydown before arming that completes after it does not count.

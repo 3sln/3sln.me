@@ -28,6 +28,38 @@ Access tokens are short-lived (at most five minutes) and stay in memory. When th
 
 `signOut({revoke:true})` revokes each app session it signs out with that session's own refresh token (RFC 7009), which also ends that session's paired component credential at providers that issue one; `revokePrevious` on a switch revokes only the previous session. Sign-out of the app never ends the provider session; `endProviderSession()` does that where the provider declares it.
 
+## Incremental authorization (provisional, default off)
+
+The opt-in SDK module `packages/sdk/src/incremental.mjs` implements the [incremental authorization draft](spec/incremental-authorization.md) against a spec-contract extension of the SDK testing double. This is local mock verification; provider integration, independent review and production verification remain outstanding. Package exports and a standalone distribution entry are integrator work; the example uses the repository source module. The helper's `enabled` option defaults to `false`; enable it only through your app's default-off `INCREMENTAL_AUTH_ENABLED` flag. Load the module when preparing the optional feature, before its user action, to preserve popup activation and keep it outside the first-render element bundle:
+
+```js
+// Inside your app's enabled feature branch, before enabling the request button.
+const {createIncrementalClient}=await import('/packages/sdk/src/incremental.mjs');
+const incremental=createIncrementalClient({client:session.client,enabled:true,presentation:'popup'});
+await incremental.loadCapabilities();
+button.addEventListener('click',async()=>{
+  const result=await incremental.grantMore({
+    reason:'To add due dates to your calendar.',
+    requests:[{fragment:'https://calendar.example/preferences/v1',purpose:'Add task due dates.',
+      fields:['calendar'],methods:{calendar:{'https://contracts.example/calendar/v1':['createEvent']}}}],
+  });
+  // Explain the result in the app and degrade gracefully; never automatically ask again.
+  renderCalendarAccess(result);
+});
+```
+
+`grantMore({requests, reason?})` accepts 1–4 optional requests (`required` absent or `false`; include the pinned `digest` when available). It binds the request to the current session's issuer and subject and uses the redirect/popup lifecycle from `flows.mjs`. Completion returns `{outcome:'completed', fragments}`. Each fragment has `outcome` (`granted`, `partial`, `declined`, `unsupported` or `unavailable`), `granted`, and `methods[field][contract]: {granted, missing}` arrays for the requested methods. For `granted` and `partial`, `granted` is the **complete current grant**, including access beyond the request; do not merge it as a delta. Missing outcomes mean declined. On a decline, the helper reports previously known access; an unknown previous method is conservatively missing. Read values and scoped resource identifiers through ordinary `client.readPreferences(fragment)`.
+
+An exchange without tokens leaves existing app sessions intact. If new credentials are issued, completion also returns a validated `issuedSession`; it never silently replaces the app's current session. Existing sessions gain the approved union at their next provider live check. If your app does not need the issued session, call `await session.client.revokeSession(result.issuedSession)` once, then `session.client.forgetSession(result.issuedSession)` to release its unused key. Retain any issued session's DPoP key until its use or revocation ends; the helper checks identity and the recorded existing session deadline before returning it.
+
+`configure({target:{fragment, digest?, fields?}, suggestion?:{values}, reason?})` opens one already-granted fragment, optionally restricted to 1–8 fields. Suggestions contain atomic values only; resource references, occupants and grants cannot be suggested. The provider validates the pinned schema and requires the owner's acceptance. Both `{outcome:'configured', preferences}` and `{outcome:'unchanged', preferences}` include a fresh `@preferences` read with its `revision`; the front-channel outcome is only a hint. Compare that revision and read the returned values before acting. A failed read returns an error and confers no authority.
+
+For `presentation:'redirect'`, recreate the helper on the exact registered callback and use `handleCallback({session:incremental})` from `callback.mjs`, or `incremental.completeCallback(location.href)`. The helper consumes state once and binds the callback URI, issuer and result kind. Popup callback pages can use the existing argument-free `handleCallback()` relay. Redirects keep pending metadata and the PKCE verifier in session storage, never tokens. Restore your app's connection to the **same issuer and subject** before completing a configure redirect so the helper can read preferences; the SDK's memory-only app session does not survive navigation by itself. A redirect grant exchange can complete without a restored session. A configured persistent `client.keyStore` is needed to bind a redirect exchange with DPoP; popup keys remain in memory.
+
+Entry limits return `{outcome:'rate_limited', code:'rate_limited', retryAfter?, ownerReviewUri?}`. `retryAfter` is seconds from `Retry-After`; review links are accepted only on the issuer origin. The helper does not retry entry creation, decisions, uncertain token exchanges or preference reads. Its only bounded protocol retry is one DPoP nonce challenge. Respect declines and cooldowns, offer a review link when provided, and send no request for your app's own “Not now” action. Start requests only from an explicit user action; never ask on page load or schedule another prompt.
+
+An undeclared intent returns `unsupported-provider` without sending it. The app may explicitly offer the draft's full-request login fallback for `grant-more`, or a settings link for unsupported `configure`; the helper never starts another consent flow automatically. Transport outcomes such as `redirecting`, `popup-blocked`, `dismissed` and `canceled` retain their existing meanings. `cancel()` ends the pending flow; `dispose()` releases the helper. Tests can drive the same logic through `createIncrementalEngine`, the exported Begin/Complete/Cancel Actions and `IncrementalResult` Query.
+
 ## Embeddable elements (provisional)
 
 Framework-neutral custom elements: `<bindle-session>`, `<bindle-sign-in>`, `<bindle-account>`, `<bindle-avatar>` and `<bindle-monogram>`. The former `<bindle-login>` alias is removed (nothing was released). Designs: [embeddable elements](architecture/embeddable-elements.md) and the [components profile decision note](architecture/components-profile.md). The package name `@3sln/bindle` lives only in `packages/sdk/package.json`, which is private.

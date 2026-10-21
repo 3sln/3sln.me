@@ -49,6 +49,10 @@
       {
         "name": "LIFECYCLE_SCHEDULER",
         "class_name": "LifecycleScheduler"
+      },
+      {
+        "name": "EVENT_BUS_WAITS",
+        "class_name": "EventBusWaiter"
       }
     ]
   },
@@ -96,6 +100,12 @@
       "new_sqlite_classes": [
         "LifecycleScheduler"
       ]
+    },
+    {
+      "tag": "v8",
+      "new_sqlite_classes": [
+        "EventBusWaiter"
+      ]
     }
   ],
   "r2_buckets": [
@@ -115,6 +125,8 @@
     "DEVICE_AUTHORIZATION_ENABLED": "false",
     "ACTIVITY_V2_ENABLED": "false",
     "BINDLEBOX_ENABLED": "false",
+    "EVENT_BUSES_ENABLED": "false",
+    "INCREMENTAL_AUTH_ENABLED": "false",
     "LIFECYCLE_ENABLED": "false",
     "LIFECYCLE_DRY_RUN": "true",
     "LIFECYCLE_PURGE_ENABLED": "false",

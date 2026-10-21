@@ -5,6 +5,7 @@ import {Engine,Provider,dodo as d} from '../shared/stack.mjs';
 import {authorizeLocalization} from '../../../../packages/i18n/authorize-catalogue.mjs';
 import {consentKit} from '../ui/authorize-entry-consent.mjs';
 import {entryView,entryTitle} from '../ui/authorize-entry.mjs';
+import {ConsentWalkthroughAction} from './authorize-entry-consent.mjs';
 import {createArming} from './authorize-entry-arming.mjs';
 import {createEntryModel,createEntrySecrets,createEntryAPI,EntryAction,EntryView,TERMINAL} from './authorize-entry.mjs';
 /** Sandboxed documents cannot set document.domain even to itself (adaptive-app-sign-in §10.2; COOP spike). */
@@ -16,21 +17,23 @@ export function createEntryBrowser(win=globalThis.window){
   // Only a window this page's opener created can close itself; the result is checked by the caller's UI.
   close:()=>{try{win.close();}catch{}}});
 }
-export function startEntryPage({root,preferredLocale='en',win=globalThis.window,fetch,browser=createEntryBrowser(win)}){
+export function startEntryPage({root,preferredLocale='en',win=globalThis.window,fetch,browser=createEntryBrowser(win),consentExperience=null}){
  const doc=win.document,{t,locale}=authorizeLocalization(preferredLocale);doc.documentElement.lang=locale;
  const model=createEntryModel(),secrets=createEntrySecrets(),api=createEntryAPI(fetch?{fetch}:{}),host=win.location.host;
- let engine=null,surface=null,disposed=false;const dispatch=(kind,detail)=>engine.dispatch(new EntryAction(kind,detail));
- const kit=consentKit({model,t,rerender:()=>render(),onConfigure:detail=>dispatch('configure',detail),root});
+ const experience=(typeof consentExperience==='function'?consentExperience({model,secrets,api,browser}):consentExperience)??{enabled:false};
+ let engine=null,surface=null,disposed=false;const dispatch=(kind,detail)=>engine.dispatch(new EntryAction(kind,detail)),dispatchConsent=(kind,detail)=>engine.dispatch(new ConsentWalkthroughAction(kind,detail));
+ const kit=consentKit({model,t,rerender:()=>render(),onConfigure:detail=>dispatch('configure',detail),root,experience,locale});
  // An early (unarmed) trusted activation is explained rather than silently dropped.
- const arming=createArming({win,doc,onChange:()=>render(),onReject:()=>dispatch('early')});
+ const arming=createArming({win,doc,notBefore:()=>model.consent?.armAt??0,onChange:()=>render(),onReject:()=>dispatch('early')});
  const canClose=()=>Boolean(win.opener);
- engine=new Engine({providers:{model:Provider.fromSingleton(model),secrets:Provider.fromSingleton(secrets),api:Provider.fromSingleton(api),browser:Provider.fromSingleton(browser),i18n:Provider.fromSingleton({t}),consent:Provider.fromSingleton(kit)}});
+ engine=new Engine({providers:{model:Provider.fromSingleton(model),secrets:Provider.fromSingleton(secrets),api:Provider.fromSingleton(api),browser:Provider.fromSingleton(browser),i18n:Provider.fromSingleton({t}),consent:Provider.fromSingleton(kit),consentWalkthrough:Provider.fromSingleton(experience)}});
+ const completed=event=>dispatch('consent-result',event.detail);engine.feed.addEventListener('consent-complete',completed);
  function render(){
   if(disposed)return;
-  d.reconcile(root,[entryView(model,{t,host,armed:arming.armed,guard:arming.guard,dispatch,kit,canClose:canClose(),close:browser.close})]);
+  d.reconcile(root,[entryView(model,{t,host,locale,armed:arming.armed,guard:arming.guard,dispatch,dispatchConsent,kit,canClose:canClose(),close:browser.close})]);
   // A new decision surface restarts the arming delay and moves focus to its heading (never to an approval control).
   // Focus moves only after the user has acted; the first surface keeps the document's natural reading order.
-  const key=`${model.phase}|${model.surface}|${(model.accounts??[]).map(a=>a.id+'/'+a.sessionContext).join()}|${model.busy}`;if(key!==surface){surface=key;doc.title=`${entryTitle(model,t,host)} · ${host}`;arming.reset();if(interacted)root.querySelector('#entry-title')?.focus?.({preventScroll:false});}
+  const key=`${model.phase}|${model.surface}|${(model.accounts??[]).map(a=>a.id+'/'+a.sessionContext).join()}|${model.walkthrough?'walkthrough':model.busy}`;if(key!==surface){surface=key;doc.title=`${entryTitle(model,t,host)} · ${host}`;arming.reset();if(interacted)root.querySelector(model.walkthrough?'#consent-step-title':'#entry-title')?.focus?.({preventScroll:false});}
  }
  let interacted=false;const acted=()=>{interacted=true;};doc.addEventListener('pointerdown',acted,{capture:true,once:true});doc.addEventListener('keydown',acted,{capture:true,once:true});
  const subscription=engine.query(new EntryView()).subscribe({next:render});
@@ -40,7 +43,7 @@ export function startEntryPage({root,preferredLocale='en',win=globalThis.window,
  win.addEventListener('focus',refresh);doc.addEventListener('visibilitychange',refresh);
  let channel=null;try{if(typeof win.BroadcastChannel==='function'){channel=new win.BroadcastChannel('bindle-accounts');channel.onmessage=event=>{if(event.data?.type==='accounts-changed'&&Object.keys(event.data).length===1)refresh();};}}catch{}
  const expiry=win.setInterval(()=>{if(model.entry&&!TERMINAL.includes(model.phase)&&Date.now()>=model.entry.expiresAt)dispatch('expire');},5000);
- const dispose=()=>{disposed=true;win.clearInterval(expiry);arming.dispose();channel?.close();win.removeEventListener('focus',refresh);doc.removeEventListener('visibilitychange',refresh);subscription.unsubscribe();engine.dispose();};
+ const dispose=()=>{disposed=true;win.clearInterval(expiry);arming.dispose();channel?.close();win.removeEventListener('focus',refresh);doc.removeEventListener('visibilitychange',refresh);subscription.unsubscribe();engine.feed.removeEventListener('consent-complete',completed);engine.dispose();};
  win.addEventListener('pagehide',dispose,{once:true});
  // A back-forward-cache restore would show controls wired to a disposed engine: start over from the server.
  win.addEventListener('pageshow',event=>{if(event.persisted)win.location.reload();});

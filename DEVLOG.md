@@ -2089,3 +2089,80 @@ Wave 3a integration (Codex, coordinator-verified):
 - fixes for QR test supersession, asset-build and inspector-port races, and provider image readiness.
 
 Gates: core 1726, Worker 60, UI-state 215, BindleBox 157, DOM, build, dry run, audit; full e2e 179 with flags off and 179 with device authorization on (4 WebKit skips each).
+
+Wave 3a committed and deployed as 08ac4a7 (flags off; `/approve` returns 404 with the flag off). Wave 3b started:
+- Codex: LA7 devices/revocation UI, CX-2 consent walkthrough screens (mock-first for the new intents), IA-3 SDK incremental helpers.
+- Claude: IA-1/IA-2 incremental authorization backend and suppression; EV-2 3sln.me-hosted event bus engine with long-polls in a separate Durable Object; BB-C1b link handoff to the messaging occupant (closing the evaluate author-proof item) plus BB-B7 bridge receiver.
+
+BB-C1b and BB-B7 landed (behind `BINDLEBOX_ENABLED`, local only).
+
+C1b:
+- Links `evaluate` now requires a host-verified author-signed envelope (`packages/links/author-proof.mjs`), closing C1a review items 1, 4 and 5.
+- Contact links resolve to the current occupant's ingress at the provider (edge-stage route, uniform 503).
+- A link-type → slot table and the messaging-address declaration row.
+- The links contract is a resource method building the app actor only from verified context.
+- Links stay with the slot when the occupant changes (provisional).
+
+B7: bridged intake is checked (consumer, provenance), deduplicated and stored as an unverified channel item, classified later, with no reply path.
+
+Tests: core 1812, Worker 61. [Review](docs/release/link-handoff-bridge-review.md): LH-1, 2, 4, 5, 7a, 8 fixed. Open:
+- LH-3: needs the X4 connection ID in the occupancy port;
+- LH-6: conditional links cannot admit authors from other hosts (provisional);
+- LH-7c/d: B2 never prunes tx/jti rows, and the B8 shell does not call the bridge yet.
+
+Not yet wired: provider `describe` (EXT-X7), adapter `mounts.messagingAddress` and federation routing for the links contract. Until then descriptors answer `recipient_unavailable` and nothing is advertised. Reviewer ___ Date ___ Outcome ___.
+
+EV-2 landed (provisional, behind `EVENT_BUSES_ENABLED`): the 3sln.me-hosted bus as engine operations in `packages/events` and the `events` domain.
+- **Owner:** one bus per manifest per account, built only from the reviewed registry and revalidated with EV-1.
+- **Publish:** schema-checked, host-stamped producer, opaque receipts, a 24 h publish journal (never under 10 min).
+- **Order:** one total order per bus; retention, cap and purge losses always reported as gaps.
+- **Readers:** start at approval unless the owner opts in; cursors are MAC-bound to the read approval; grants are checked live and again at commit.
+- **Allowance:** a separate event allowance with publisher shares; charged empty reads draw a separate 25% readers' share (a provisional deviation from §9).
+- **Long-polls:** leased in the account object and held in a new `EventBusWaiter` Durable Object (binding `EVENT_BUS_WAITS`, migration v8).
+31 tests including chaos ordering and workerd. [Review](docs/release/events-consent-review.md#ev-2-implementation): S0–S3, S6 fixed; S4 partly fixed; S5 accepted.
+Integration hunks needed before apps can reach buses:
+1. federation passes `context.grant {fragment, digest, readSince}`;
+2. bus descriptors in the federation resource provider;
+3. `/bindle/rpc` holds long-polls at the edge via `holdBusRead`;
+4. approval and revocation call `eventBusReader`;
+5. the account alarm calls `eventBusSweep` (S4, a gate before enabling).
+Reviewer ___ Date ___ Outcome ___.
+
+IA-1/IA-2 landed (provisional, unmounted, `INCREMENTAL_AUTH_ENABLED` off): `grant-more` and `configure` entry intents as engine operations.
+- **Results:** granted / partial (with the full current grant) / declined; configured / unchanged.
+- **Tokens:** issued only when a commit actually changed a grant, and a new session never outlives the newest existing one.
+- **`configure`** never calls the grants port. Suggestions are taken per field, and URL, email/host, marked and shared fields need their own confirmation.
+- **Suppression** is per app site, covering own-host versions and `supersedes` chains. Apps see only declined/unchanged, with identical dwell and counters.
+- **Caps and cooldowns:** 3/h, 6/d, 20/30 d; ladder 24 h / 7 d / 30 d counting only owner decisions. Server-enforced 1.5 s minimum dwell.
+- **Tier 4:** unreviewed apps cannot ask for tier-4 access.
+36 tests. [Review](docs/release/events-consent-review.md#ia-implementation): IA-R1 high (unreviewed act-as-you when a contract was missing from consent facts) and R3–R10 fixed. **IA-R2 open, a release blocker:** re-running `login` with extra fragments on an existing connection bypasses suppression, caps and cooldowns.
+
+Wave 3b Codex streams landed:
+- **IA-3:** lazy SDK incremental helpers with full-grant outcomes, fresh configure reads, no automatic consent retries; two-line transport hook in `flows.mjs`.
+- **LA7:** devices UI with lineage, last use, lifetime and cascade confirmations, plus approval notice templates with an injected delivery adapter. App-family listing, full app-session lineage and one/all session revocation need backend work; notice host wiring and service-worker rendering are outstanding.
+- **CX-2:** default-off mock-first consent walkthrough with risk groups, attributed descriptions, separate app claims, inline setup, partial grants and explicit settings suggestions; 43 tests. Configure-in-embed uses the plain-page fallback pending IA-4.
+
+Wave 3b integration started: IA-R2 fix (Claude, owns the incremental, suppression and authorization-entries modules) in parallel with the wiring pass (Codex, everything else).
+
+IA-R2 closed: re-running `login`, select-account or reauthenticate with extra access on an existing connection (counted per app site) is treated as a `grant-more` for caps, cooldowns, suppression and tier-4 refusal. Alternating login and grant-more lands on the same counters. Blocked items are trimmed to access already held, so the app sees a plain decline. Requests become optional, and consent marks additions via `incrementalLogin`; the CX-2 UI must render this (verify after the wiring pass). The re-review found and fixed:
+- IA-R2a (high): a fresh sibling client ID counted as a first connection; "existing" is now per app site;
+- IA-R2b (medium): a suppressed login item stepped no cooldown, distinguishing it from a decline;
+- IA-R2c (low): a decision counted for every selecting account; now only the decider's.
+41 IA tests. Reviewer ___ Date ___ Outcome ___.
+
+Wave 3b wiring (Codex):
+- **IA/CX:** durable ports, token and 429 `owner_review_uri` wiring, real consent views and decisions, exact intent and result vocabulary, DPoP handling, superseded pages.
+- **EV-2:** grant context, descriptors, edge-held long-polls, approval/revocation hooks, sweep continuation, reconnect-safe reader epochs.
+- **BindleBox:** connection-ID checks (LH-3), tx/jti pruning (LH-7c), B8 bridge dispatch (LH-7d), messaging-address mount evidence; EXT-X7 `describe` deferred.
+- **LA7:** app session inventory, lineage and last use, one/all revocation, host approval notices, service-worker rendering.
+- **Tests:** configure-view parsing, sign-out confirmation flows, a beaming fixture race.
+
+Gates: core 1827, Worker 63, UI-state 253, BindleBox 162, both full e2e configurations (WebKit skips only).
+
+Follow-ups assigned to the IA agent: replay test stabilization, resumable setup retry after a partial commit, and CX-2 rendering of `incrementalLogin` additions (missing).
+
+IA handoff closed:
+- replaying an incremental code revokes its single issued session exactly once under any interleaving (15 stable repeated runs);
+- committing decisions journal validated approvals and setup values before saving, so retries after a partial failure resume without redoing work, while a different decision or cancel is refused during the attempt;
+- consent shows login additions on existing connections as "New access requested by ‹app›", separate from "Already granted to ‹app›" (en/es).
+The partial-failure path is exercised with fault-injected ports, not through the real Node ports. Gates: core 1829, Worker 63, UI-state 256, BindleBox 162, consent 24+26, approve 14, DOM, build, dry run.
