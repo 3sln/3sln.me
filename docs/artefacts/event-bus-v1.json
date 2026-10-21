@@ -1,0 +1,436 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.bindle.example/contracts/event-bus/v1",
+  "title": "Event bus RPC request v1",
+  "description": "Provisional event-bus/v1 draft. Validates the method/args projection of an ordinary RPC envelope. This source is unregistered and unadvertised; it grants no authority and implies no hosting, delivery or production conformance.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/publishRequest"
+    },
+    {
+      "$ref": "#/$defs/readRequest"
+    },
+    {
+      "$ref": "#/$defs/subscribeRequest"
+    },
+    {
+      "$ref": "#/$defs/unsubscribeRequest"
+    }
+  ],
+  "$defs": {
+    "publishArgs": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9.-]{0,47}$"
+        },
+        "data": {
+          "description": "Validated against the pinned bus payload schema and manifest/host UTF-8 JSON byte limits."
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "readArgs": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "start": {
+          "enum": [
+            "oldest",
+            "latest"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50
+        },
+        "wait": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 25,
+          "default": 0
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "not": {
+        "required": [
+          "cursor",
+          "start"
+        ]
+      }
+    },
+    "emptyArgs": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "publishResult": {
+      "type": "object",
+      "properties": {
+        "receipt": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1
+        },
+        "published_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "receipt",
+        "published_at"
+      ],
+      "additionalProperties": false
+    },
+    "publisher": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "application"
+            },
+            "client_id": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://"
+            },
+            "origin": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://"
+            }
+          },
+          "required": [
+            "kind",
+            "client_id",
+            "origin"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "provider"
+            },
+            "feature": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[a-z][a-z0-9-]{0,31}$"
+            }
+          },
+          "required": [
+            "kind",
+            "feature"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9.-]{0,47}$"
+        },
+        "published_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "publisher": {
+          "$ref": "#/$defs/publisher"
+        },
+        "attested_by": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "data": {}
+      },
+      "required": [
+        "seq",
+        "type",
+        "published_at",
+        "publisher",
+        "attested_by",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "readResult": {
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/record"
+          }
+        },
+        "cursor": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "head": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "oldest": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "gap": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "to": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "records",
+        "cursor",
+        "head",
+        "oldest",
+        "gap"
+      ],
+      "additionalProperties": false
+    },
+    "subscribeResult": {
+      "type": "object",
+      "properties": {
+        "subscribed": {
+          "const": true
+        }
+      },
+      "required": [
+        "subscribed"
+      ],
+      "additionalProperties": false
+    },
+    "unsubscribeResult": {
+      "type": "object",
+      "properties": {
+        "subscribed": {
+          "const": false
+        }
+      },
+      "required": [
+        "subscribed"
+      ],
+      "additionalProperties": false
+    },
+    "hostLimits": {
+      "type": "object",
+      "properties": {
+        "maxRecordBytes": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 16384
+        },
+        "retentionSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2592000
+        },
+        "maxRetainedRecords": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "maxRetainedBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "publishPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "maxWaitSeconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 25
+        },
+        "push": {
+          "type": "boolean"
+        },
+        "txRetentionSeconds": {
+          "type": "integer",
+          "minimum": 600,
+          "maximum": 9007199254740991
+        },
+        "maxRequestBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "maxResultBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "maxRecordBytes",
+        "retentionSeconds",
+        "maxRetainedRecords",
+        "maxRetainedBytes",
+        "publishPerMinute",
+        "maxWaitSeconds",
+        "push",
+        "txRetentionSeconds",
+        "maxRequestBytes",
+        "maxResultBytes"
+      ],
+      "additionalProperties": false
+    },
+    "publishRequest": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "publish"
+        },
+        "args": {
+          "$ref": "#/$defs/publishArgs"
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "readRequest": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "read"
+        },
+        "args": {
+          "$ref": "#/$defs/readArgs"
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "subscribeRequest": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "subscribe"
+        },
+        "args": {
+          "$ref": "#/$defs/emptyArgs"
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "unsubscribeRequest": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "unsubscribe"
+        },
+        "args": {
+          "$ref": "#/$defs/emptyArgs"
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "x-methods": {
+    "publish": {
+      "request": "#/$defs/publishRequest",
+      "result": "#/$defs/publishResult",
+      "effect": "write",
+      "introspect": true,
+      "permission": "Exact publish grant; live introspection before every brokered publish."
+    },
+    "read": {
+      "request": "#/$defs/readRequest",
+      "result": "#/$defs/readResult",
+      "effect": "read",
+      "permission": "Exact read grant; only records above this reader floor unless owner-approved history applies."
+    },
+    "subscribe": {
+      "request": "#/$defs/subscribeRequest",
+      "result": "#/$defs/subscribeResult",
+      "effect": "write",
+      "permission": "Read capability; subscribe/unsubscribe requires read. Brokered hosts reject subscribe as unsupported_method."
+    },
+    "unsubscribe": {
+      "request": "#/$defs/unsubscribeRequest",
+      "result": "#/$defs/unsubscribeResult",
+      "effect": "write",
+      "permission": "Read capability; subscribe/unsubscribe requires read. Brokered hosts reject subscribe as unsupported_method."
+    }
+  },
+  "x-status": "provisional-unmounted",
+  "x-runtime-validation": [
+    "Publish type and data match the pinned bus manifest; data UTF-8 JSON bytes fit manifest and host limits. URI payload formats permit HTTPS only; integer payloads stay in the safe integer range.",
+    "Records are totally ordered by seq within one bus. Cursor binding, reader floors, gap bounds and authenticated host attribution require runtime checks.",
+    "Descriptor limits include hostLimits; effective retention is within the manifest range. Publish journal retention is at least max(600,min(86400,retention.max_seconds)).",
+    "Publish receipts are opaque and never disclose seq. Owner purge, deletion and retention changes are not contract methods."
+  ]
+}

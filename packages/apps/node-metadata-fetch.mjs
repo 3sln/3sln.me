@@ -40,11 +40,11 @@ export function createNodeMetadataFetch({allowedOrigins,lookup=nodeLookup,reques
     req=request({protocol:'https:',hostname:u.hostname,port:443,path:u.pathname,method:'GET',servername:u.hostname,agent:false,rejectUnauthorized:true,lookup:pinnedLookup,headers:{Host:u.host,Accept:accept,'Accept-Encoding':'identity'}},incoming=>{
      res=incoming;if(done){res.destroy();return;}
      const length=res.headers['content-length'],encoding=res.headers['content-encoding'];
-     if(res.statusCode!==200||encoding&&encoding.toLowerCase()!=='identity'||length!==undefined&&(typeof length!=='string'||!/^\d+$/.test(length)||Number(length)>maxBytes)){finish(new Error('Metadata response rejected.'));return;}
+     if(![200,404,410].includes(res.statusCode)||encoding&&encoding.toLowerCase()!=='identity'||length!==undefined&&(typeof length!=='string'||!/^\d+$/.test(length)||Number(length)>maxBytes)){finish(new Error('Metadata response rejected.'));return;}
      let size=0;const chunks=[];
      res.on('data',chunk=>{if(done)return;size+=chunk.length;if(size>maxBytes){finish(new Error('Metadata response exceeds limits.'));return;}chunks.push(Buffer.from(chunk));});
      res.once('error',error=>finish(error));res.once('aborted',()=>finish(new Error('Metadata response interrupted.')));
-     res.once('end',()=>{if(done)return;try{const headers=new Headers();for(const key of ['content-type','content-length'])if(typeof res.headers[key]==='string')headers.set(key,res.headers[key]);finish(null,new Response(Buffer.concat(chunks,size),{status:200,headers}));}catch(error){finish(error);}});
+     res.once('end',()=>{if(done)return;try{const headers=new Headers();for(const key of ['content-type','content-length','cache-control'])if(typeof res.headers[key]==='string')headers.set(key,res.headers[key]);finish(null,new Response(Buffer.concat(chunks,size),{status:res.statusCode,headers}));}catch(error){finish(error);}});
     });
     req.once('error',error=>finish(error));req.end();
    }).catch(error=>finish(error));

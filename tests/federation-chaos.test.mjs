@@ -68,7 +68,7 @@ test('faults: a lost bound-refresh response is recovered by the same key within 
 test('faults: a lost code-exchange response burns the code without a second issuance, and expiry reclaims the orphan',async()=>{
  let armed=false;const store=injectFaults(new MemoryFederationStore(),[{method:'transaction',mode:'after',when:()=>{const fire=armed;armed=false;return fire;}}]),f=await serviceFixture({store}),code=await f.connect();
  armed=true;await assert.rejects(f.exchange(code),{code:'injected_fault'});await assert.rejects(f.exchange(code),{code:'invalid_grant'});
- assert.equal(await f.rows('federation/family/'),1);f.clock.advance(28800000);
+ assert.equal(await f.rows('federation/family/'),1);f.clock.advance(180*86400000);
  for(let pass=0;pass<4&&(await f.service.cleanup({limit:2})).remaining;pass++);
  for(const kind of ['code','token','refresh','family','request'])assert.equal(await f.rows(`federation/${kind}/`),0,kind);
 });
@@ -91,7 +91,7 @@ test('chaos: random storage faults (throw, partial commit, duplicate, timeout) n
   // One live successor per family: every unused refresh record is its family's current hash.
   const rows=await store.transaction(tx=>tx.list('federation/'));
   for(const {value} of rows.filter(r=>r.key.startsWith('federation/family/'))){const unused=rows.filter(r=>r.key.startsWith('federation/refresh/')&&r.value.familyId===value.familyId&&!r.value.used);assert.ok(unused.length<=1);if(unused.length)assert.equal(unused[0].key,`federation/refresh/${value.currentHash}`);}
-  f.clock.advance(28800001);for(let pass=0;pass<8&&(await f.service.cleanup()).remaining;pass++);
+  f.clock.advance(180*86400000+1);for(let pass=0;pass<8&&(await f.service.cleanup()).remaining;pass++);
   for(const kind of ['code','token','refresh','family','request','dpop'])assert.equal(await f.rows(`federation/${kind}/`),0,kind);
  });
 });

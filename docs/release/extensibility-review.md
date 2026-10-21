@@ -98,3 +98,41 @@ The reviewers found these inconsistencies:
 - `npm test` for every slice, and browser verification for the Connections console.
 
 This review changes no code, runtime or production gate.
+
+## X3 implementation
+
+Date: 2026-10-20. Subject: EXT-X3 in `packages/federation/integrations.mjs` (new) and `packages/federation/client-metadata.mjs` (extended), with tests in `tests/integrations-manifest.test.mjs`. One independent reviewer agent worked read-only, with proof-of-concept scripts, and looked at four areas: manifest spoofing, key-pinning bypass, SSRF and cache poisoning. This is an agent review, not human sign-off: reviewer ___ / date ___ / outcome ___.
+
+**What was implemented:**
+
+- **Manifest parsing.** `bindle_integration` is parsed only from client metadata, and only when the directory is constructed with `integrations:true`. Nothing in the runtime passes that flag yet. The manifest is limited to 8 KiB. Unknown members are ignored, and an invalid member is treated as absent.
+- **URL binding.** Every URL must be on the `client_id` origin and path prefix. This includes `jwks_uri` and `redirect_uris`.
+- **Rejected manifests.** A manifest is rejected when:
+  - endpoints collide;
+  - it is hosted on the issuer origin or on a configured shared host;
+  - a public document carries confidential-only members (`events_endpoint`, `resources`, `occupant`). The document and the manifest disagree in that case.
+- **Extension claims.** Claims go through `validateExtensions`. They are checked for syntax only unless trusted pins are supplied.
+- **AMD-C7.** `private_key_jwt` with a path-prefixed `jwks_uri` is accepted only with integrations. Inline keys and secrets are always refused.
+- **Key sets.** Key sets come through the same egress port, budgets, bounds and cache rules as client documents, cached per (`client_id`, `jwks_uri`). A set containing any private member is rejected. Thumbprints follow RFC 7638.
+- **Change handling.** The §2.3 change table is implemented as a pure classifier.
+- **Snapshots.** Snapshots must re-derive exactly from their client fields.
+
+| ID | Sev | Finding | Status |
+| --- | --- | --- | --- |
+| X3-S1 | High | Key pinning could be bypassed. The §2.3 row "rotated, with at least one pinned key still present → adopted" let a takeover domain republish the archived public key next to its own key. The attacker key became pinned, and endpoint moves were adopted silently on the same refetch. | **Fixed.** A pinned key that disappears is unpinned immediately. An added key is only recorded in `pendingThumbprints`, and while any key is pending no endpoint move is adopted. `promotePendingKeys` pins a pending key only after a fresh assertion signed by a currently pinned key. **This deviates from integrations §2.3** and needs a provisional spec amendment recorded in DEVLOG. |
+| X3-S2 | Medium | The Node egress adapter (`packages/apps/node-metadata-fetch.mjs`) turns every non-200 response into a generic error. As a result, 404/410 are never seen as definitive on Node, so a deleted client stays `unchanged`. That adapter also drops `Cache-Control`. | **Open.** The fix is outside X3's file ownership. The adapter should surface 404/410 as a typed `gone` result and forward `Cache-Control`. On Workers, 404/410 are detected. |
+| X3-S3 | Low | A 200 document that failed validation was negative-cached as transient, so the connection never reached `manifest-invalid`. | **Fixed.** The failure is cached as definitive `invalid` and classified as `client_invalid`. |
+| X3-S4 | Medium | Key sets had no stale fallback. A flood that exhausted the shared budgets blocked key-based authentication, and one transient error overwrote a good cached set. | **Fixed.** The last validated set is served for up to 1 h past its freshness when budgets or transport refuse a refetch. A transient failure never replaces a good set. |
+| X3-S5 | Low | A static registration that declared `private_key_jwt` with an unusable `jwksUri`, or ran without integrations, was silently downgraded to a public client. | **Fixed.** Constructing the directory throws a `TypeError` instead (fail closed). |
+
+**Reviewer notes, accepted:**
+
+- `resolveKeys` now re-resolves the client by its ID and refuses a caller-supplied `jwksUri` that differs from the resolved one.
+- `validClientSnapshot` callers must pass the provider's reserved hosts.
+
+**Required before any implementation claim:**
+
+- the runtime wiring (`integrations:true` in `packages/runtime/federation.mjs`, plus `validClientSnapshot(…,{integrations:true,reserved})` in `service.mjs` and `authorization-entries.mjs`), which belongs to X4 or the integrator;
+- the X3-S2 adapter fix;
+- token-endpoint enforcement that uses `pinnedKeys` only (LA2/X4);
+- human sign-off on the S1 spec deviation.

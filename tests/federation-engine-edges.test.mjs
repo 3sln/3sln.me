@@ -76,8 +76,8 @@ test('code and access-token lifetimes end exactly at their boundary instant',asy
  const f=await serviceFixture(),early=await f.connect(),late=await f.connect();
  f.clock.advance(59999);const issued=await f.exchange(early);
  f.clock.advance(1);await assert.rejects(f.exchange(late),{code:'invalid_grant'});
- assert.equal(issued.expires_in,300);assert.equal(await f.alive(issued.access_token),true);
- f.clock.advance(299998);assert.equal(await f.alive(issued.access_token),true,'one millisecond before expiry');
+ assert.equal(issued.expires_in,900);assert.equal(await f.alive(issued.access_token),true);
+ f.clock.advance(899998);assert.equal(await f.alive(issued.access_token),true,'one millisecond before expiry');
  f.clock.advance(1);assert.equal(await f.alive(issued.access_token),false);
  // The refresh family outlives the access token and issues a fresh one.
  const renewed=await f.refresh(issued.refresh_token);assert.equal(await f.alive(renewed.access_token),true);

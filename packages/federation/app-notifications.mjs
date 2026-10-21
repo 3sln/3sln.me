@@ -11,3 +11,12 @@ export function notificationInput(input,tx,now=Date.now()){
  if(new TextEncoder().encode(JSON.stringify(input)).byteLength>APP_NOTIFICATION_MAX_BYTES)fail('body_too_large','Notification content is limited to 16 KiB.',413);
  return {...structuredClone(input),mimeType:input.mimeType??'text/plain',tags:input.tags??[]};
 }
+// ACT-1 provisional activity contract (docs/spec/activity.md): create, replace and retract are independently grantable
+// methods on the account's activity resource. The identifier is unpublished and unadvertised; no descriptor carries
+// it unless ACTIVITY_V2_ENABLED is on and the integrator mounts the resource. Like v1, it is origin-bound.
+export const ACTIVITY_CONTRACT='https://3sln.me/artefacts/contracts/activity/v2-draft';
+export const ACTIVITY_METHODS=Object.freeze(['create','replace','retract']);
+/** Contracts whose calls require the exact registered app origin and an app connection before any effect. */
+export const originBoundContract=contract=>contract===APP_NOTIFICATIONS||contract===ACTIVITY_CONTRACT;
+/** Any app-admission method (v1 createOwn or an activity method) in a grant's methods map: admission consent. */
+export function hasAdmissionMethod(methods={}){return hasNotificationMethod(methods)||Object.values(methods).some(contracts=>contracts?.[ACTIVITY_CONTRACT]?.some(m=>ACTIVITY_METHODS.includes(m)));}

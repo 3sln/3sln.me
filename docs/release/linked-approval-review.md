@@ -118,3 +118,31 @@ Contract notes from the review, applied to §10.1:
 - the retention text is corrected (LA1-S2).
 
 Decision reviewer: __________  Date: __________  Outcome: __________
+
+## LA2 implementation
+
+Status: agent review, 2026-10-20. One independent agent reviewer worked read-only against the uncommitted LA2 federation device grant (`packages/federation/device-authorization.mjs`), the app-session lifetime rewrite (`packages/federation/app-sessions.mjs`), the lifetime hunks of `packages/identity/linked-approval.mjs` and their tests, under the user decisions of 2026-10-20 (no absolute app lifetime, 180-day idle, access tokens ≤ 15 min Bearer / ≤ 60 min DPoP, live checks on every refresh and RPC, one fresh step-up at approval). It confirmed findings with scratch tests. The author fixed the confirmed findings in LA2-owned files and added regression tests (`tests/device-authorization.test.mjs`, last test). This is not human sign-off, and production remains gated.
+
+Human reviewer: __________  Date: __________  Outcome: __________
+
+**Judged sound by the reviewer:** bound access tokens are invisible to the Bearer path; the internal owner-shard code cannot be redeemed at `/oauth/token` (PKCE challenge derived from the linked request); single redemption (transactional approval-record delete, durable proof consumption, rollback); the post-issue lineage re-check fails closed; browser and media-type refusal first; pending answers carry only `error` and `interval`; metadata-document clients get `unauthorized_client`; `dpop_jkt` bound through redemption; nonce checked after the signature; `ath`, `htu`, `htm` and `iat` checked; RPC requires the token key; refresh without the key neither renews nor revokes; reuse revokes and ends the lineage; only the current token revokes a bound family; host lifetime settings are capped; the cancel endpoint needs the request key.
+
+| ID | Severity | Finding | Disposition |
+| --- | --- | --- | --- |
+| LA2-S1 | High | A preferences read with a DPoP-bound token minted resource child tokens in the Bearer namespace (`service.mjs` `readPreferences` copies the parent record), giving a key-less credential that skipped the lineage check. | **Fixed.** The device RPC handler moves every child token it returns into the bound namespace with the parent's key, so it needs a proof with `ath` and passes the lineage check. Regression test added. `service.mjs` itself still mints Bearer children for any caller; its owner should make children inherit `jkt`. |
+| LA2-S2 | High (release blocker) | The SDK (`packages/sdk/src/tokens.mjs`) rejects `expires_in > 300`, so 60-minute device tokens and 15-minute renewals fail SDK validation. | **Open, other owner.** The SDK must accept 900 s Bearer / 3600 s DPoP. `tests/authorization-entry-sdk-contract.test.mjs` fails until then. |
+| LA2-S3 | Medium | For `ongoing` sessions `refresh_expires_in` equals the idle window, and the SDK treats it as a deadline that never moves later, forcing re-sign-in at day 180 even when active. | **Spec fixed, SDK open.** auth.md and device-authorization §7 define `refresh_expires_in` as the issued refresh token's lifetime, renewed by rotation. The SDK must follow. |
+| LA2-S4 | Medium | The global poll budget was charged before the per-network bound, so one address could exhaust it for everyone. | **Fixed.** Per-network first; refused polls are not charged globally. Test added. |
+| LA2-S5 | Medium | The per-client creation budget was charged before the per-address cap, so one address could exhaust a client's budget. | **Fixed** (address cap charged first). Unknown client addresses still skip the address cap, as in LA1, relying on per-client and global caps; adapters must supply the client IP. |
+| LA2-S6 | Medium (suspected) | `ongoing` lineage never expires, and an abandoned (idle) family never ends its lineage, slowly filling the 100-entry lineage table. | **Fixed for device families.** Before each app approval, LA2 ends idle or revoked device families of that owner and their lineage. Test added. Residual: `service.mjs` `createRefreshFamily` (memory-profile code flow) can prune a device family without ending its lineage. |
+| LA2-S7 | Medium (design risk) | A step-up within 5 minutes, possibly from before the request existed, plus the indefinite default amplifies device-code phishing. | **Mitigated.** An app approval's confirmation must postdate the request (`authAt ≥ request.createdAt`). The `ongoing` default and the indefinite lifetime remain the user's decision; residual risk recorded in architecture §13 and spec §10.1. |
+| LA2-S8 | Low | The RPC `jti` cache is per instance, the RPC nonce optional, and the proof does not cover the body, so a captured token+proof pair replays on another instance within 60 s. | **Accepted residual** (RFC 9449 resource-server profile). A shared jti store or mandatory RPC nonce is LA3 follow-up. |
+| LA2-S9 | Low | A repeated approval could overwrite the stored approval record, orphaning grants. | **Fixed.** An existing record is never overwritten; the new grants are withdrawn and `conflict` returned. Unredeemed approvals still leave inactive-in-practice grants until revoked (as unredeemed codes do today). |
+| LA2-S10 | Low | `cleanup()` never removes idle families or refresh rows with the `NO_EXPIRY` sentinel. | **Partly addressed.** Revoked families now get `expiresAt = now` and are cleaned; idle device families are revoked by the approval sweep and per-account pruning. `service.mjs` `cleanup` should also consider `idleExpiresAt` (other owner). |
+| LA2-S11 | Low | Client eligibility was checked only at creation. | **Fixed.** Refresh and device RPC re-check that the client is still a device-eligible registration and end the session otherwise. |
+| LA2-S12 | Info | Each rotation's 30 s grace is per record, so a same-key thief and the client can alternate inside 30 s windows. | **Accepted** (requires the private key; the grace is the user-specified behavior). |
+
+Also noted by the author: `dpop.mjs` lets a malformed segment's `DOMException` (numeric `code`) escape `verifyProof`; LA2 maps it to `invalid_dpop_proof`, while `http.mjs` answers a generic error (other owner). `FederationService.issueAccess` still issues 5-minute tokens for the initial code exchange (other owner).
+
+Decision reviewer: __________  Date: __________  Outcome: __________
+

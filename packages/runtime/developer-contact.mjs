@@ -3,6 +3,7 @@ import {StorageError} from '../storage/policy.mjs';
 import {key,canonical} from '../messaging/store.mjs';
 import {BILLING_STATE_KEY,entitlementFromState} from '../billing/catalog.mjs';
 import {UUID} from '../core/primitives.mjs';
+import {developerPolicy,evaluateRegisteredPolicy} from '../links/policies.mjs';
 export const DEVELOPER_CONTACT_TAGS=Object.freeze({free:['contact:developer','priority:free'],paid:['contact:developer','priority:paid'],plus:['contact:developer','priority:plus'],ultra:['contact:developer','priority:ultra']});
 export async function developerContactTier(controller,owner){
  await controller.warm(owner);await controller.billingRefresh(owner,{force:true});
@@ -14,16 +15,13 @@ export async function developerContactTier(controller,owner){
 }
 // Developer contact is one conditional link owned by the system developer identity
 // (links §7, architecture bindle-links "Developer contact"). The operator policy registry
-// holds its policy; nobody else can name or parameterize a policy.
-export const DEVELOPER_CONTACT_POLICY='https://3sln.example/policies/developer-contact/v1';
+// (packages/links/policies.mjs, slice C1a) holds its policy; nobody else can name or parameterize a policy.
+export {DEVELOPER_CONTACT_POLICY,developerPolicy,linkPolicyRegistry} from '../links/policies.mjs';
 const OPTIONAL=Object.freeze(['topic:bug','topic:feature','topic:general']),LABELS=Object.freeze({'topic:bug':{en:'Bug report',es:'Informe de error'},'topic:feature':{en:'Feature idea',es:'Idea de función'},'topic:general':{en:'General question',es:'Pregunta general'}});
-export const developerPolicy=config=>config?.DEVELOPER_CONTACT_POLICY??DEVELOPER_CONTACT_POLICY;
-export const linkPolicyRegistry=config=>[developerPolicy(config)];
 // Same-host principals only; the decision depends on nothing the audience supplies beyond the principal.
-export async function evaluateLinkPolicy(controller,policy,principal){
- if(principal?.issuer!==controller.config.APP_ORIGIN||!UUID.test(principal?.subject??''))return {eligible:false,reason:'local-only',final:false};
- if(policy===undefined)return {eligible:true,final:true};
- if(policy!==developerPolicy(controller.config))return {state:'unavailable'};
+export function evaluateLinkPolicy(controller,policy,principal){return evaluateRegisteredPolicy({origin:controller.config.APP_ORIGIN,config:controller.config,policy,principal,evaluators:{[developerPolicy(controller.config)]:subject=>developerEvaluation(controller,subject)}});}
+// The developer-contact evaluator of the registry: billing tier first, then the active-population mode.
+async function developerEvaluation(controller,principal){
  let tier;try{if(principal.subject===await controller.metadata.get('owner'))tier=await controller.gated(()=>developerContactTier(controller,principal.subject));else{const result=await controller.config.CONVERSATION_ACCOUNT?.(principal.subject)?.invoke({method:'developerContactTier',args:[principal.subject]});if(typeof result!=='string')return {state:'unavailable'};tier=result;}}catch{return {state:'unavailable'};}
  if(Object.hasOwn(DEVELOPER_CONTACT_TAGS,tier)&&tier!=='free')return {eligible:true,tier,tags:['priority:'+tier],final:tier==='ultra'};
  let population;try{population=await controller.config.DEVELOPER_CONTACT_POPULATION?.policy?.();}catch{}

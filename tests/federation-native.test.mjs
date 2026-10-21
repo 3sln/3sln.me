@@ -76,7 +76,7 @@ test('one reviewed scope save updates effective consumers, rejects stale fanout 
  assert.equal((await f.rpc(b.access_token,'@preferences',PREFERENCES,'read',{fragment},randomUUID(),secondOrigin)).status,401);
 });
 test('native standard refresh rotation preserves scoped identity and reuse revokes parent and child capabilities',async t=>{
- const f=await fixture(t),original=(await f.connect()).token;assert.equal(typeof original.refresh_token,'string');assert.equal(original.refresh_expires_in,28800);
+ const f=await fixture(t),original=(await f.connect()).token;assert.equal(typeof original.refresh_token,'string');assert.equal(original.refresh_expires_in,180*86400);
  const first=(await(await f.rpc(original.access_token,'@preferences',PREFERENCES,'read',{fragment})).json()).result.values.files;
  const renew=(refreshToken,client=clientId,appOrigin=clientOrigin)=>f.app.fetch(new Request(origin+'/oauth/token',{method:'POST',headers:{Origin:appOrigin,'Content-Type':'application/x-www-form-urlencoded','CF-Connecting-IP':'198.51.100.17'},body:new URLSearchParams({grant_type:'refresh_token',refresh_token:refreshToken,client_id:client})}));
  assert.equal((await renew(original.refresh_token,secondId,secondOrigin)).status,400,'wrong client cannot revoke another client family');

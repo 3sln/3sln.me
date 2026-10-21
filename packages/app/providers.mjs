@@ -61,6 +61,11 @@ export const PROVIDERS = Object.freeze({
   federation: row('edge', 'domain', 'planned', 'Federation authority, client directory and entries.'),
   admin: row('edge', 'domain', 'planned', 'AdminService (boot, reserved names, client blocks).'),
   extensions: row('edge', 'domain', 'planned', 'EXT-X1: unmounted slot/declaration validation and provider-wide digest pins; EXTENSIONS_ENABLED required.'),
+  activity: row('account', 'domain', 'pilot', 'ACT-1: owner-scoped activity feed/state, and app-bound create/replace/retract with signed admission evidence (packages/activity). Obtain with { actor } (owner or verified app); app handles also need { keys }. Exposure gated by ACTIVITY_V2_ENABLED.', { scoped: true }),
+  integrations: row('edge', 'domain', 'planned', 'EXT-X3: unmounted integration manifest validation, key pinning and §2.3 change classification over the client directory; INTEGRATIONS_ENABLED required.'),
+  eventBuses: row('edge', 'domain', 'planned', 'EV-1: unmounted bus manifest validation and immutable fragment pins; EVENT_BUSES_ENABLED required.'),
+  deviceGrant: row('edge', 'domain', 'planned', 'LA2: unmounted RFC 8628 device grant (device endpoint, device_code token grant, app-kind consent, DPoP RPC, lineage drain) over the linked-approval port and owner federation shards; DEVICE_AUTHORIZATION_ENABLED required.'),
+  links: row('account', 'domain', 'pilot', 'BB-C1a: links contract (issue, revoke, rotate, evaluate, list, changes) over LinkService; owner or slot-occupant app actors; BINDLEBOX_ENABLED required. Obtain with { actor }.', { scoped: true }),
 });
 
 export const systemClock = Object.freeze({ now: () => Date.now() });

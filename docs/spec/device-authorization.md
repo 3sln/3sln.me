@@ -1,6 +1,6 @@
 # Device authorization (`device-authorization.v1`) — v0 draft
 
-Status: **proposed, 2026-10-20.** Not implemented, not routed and not declared by any provider. It is a Bindle profile of the [OAuth 2.0 Device Authorization Grant, RFC 8628](https://www.rfc-editor.org/rfc/rfc8628.html), with [DPoP, RFC 9449](https://www.rfc-editor.org/rfc/rfc9449.html) sender-constraint. Normative MUST/SHOULD language applies to providers that declare the feature and to clients that use it. This specification defines interoperability only. It defines no user interface. How a provider renders its verification page, collects the code, chooses accounts or words its warnings is provider policy (the 3sln.me design is [linked approval](../architecture/linked-approval.md)). The user direction, coordinator decisions and review outcomes are recorded in DEVLOG.md (2026-10-20). Independent review: [linked-approval-review](../release/linked-approval-review.md).
+Status: **proposed, 2026-10-20.** Not routed and not declared by any provider. The 3sln.me reference host implements the provider side locally and unmounted (slices LA1 and LA2, behind `DEVICE_AUTHORIZATION_ENABLED`, default off); that is engine-tested local behavior, not production verification or conformance. It is a Bindle profile of the [OAuth 2.0 Device Authorization Grant, RFC 8628](https://www.rfc-editor.org/rfc/rfc8628.html), with [DPoP, RFC 9449](https://www.rfc-editor.org/rfc/rfc9449.html) sender-constraint. Normative MUST/SHOULD language applies to providers that declare the feature and to clients that use it. This specification defines interoperability only. It defines no user interface. How a provider renders its verification page, collects the code, chooses accounts or words its warnings is provider policy (the 3sln.me design is [linked approval](../architecture/linked-approval.md)). The user direction, coordinator decisions and review outcomes are recorded in DEVLOG.md (2026-10-20). Independent review: [linked-approval-review](../release/linked-approval-review.md).
 
 Builds on: [auth](auth.md) (application authorization, token lifetime and client sessions), [protocol §2](protocol.md#2-discovery-and-login) (manifest and feature declarations) and the [runtime profile](federation-implementation.md) (fragment requests and token response members).
 
@@ -10,7 +10,7 @@ A device-authorization client runs where a browser redirect back to the client i
 
 Out of scope:
 
-- **Provider-local cross-device sign-in.** Extending a provider's own login session to another browser (for example a TV signing into the provider's console) does not involve a client and is provider policy. A provider MAY share its verification page and code namespace between that flow and this grant. The lifetime rule in §7 is recommended for it as well.
+- **Provider-local cross-device sign-in.** Extending a provider's own login session to another browser (for example a TV signing into the provider's console) does not involve a client and is provider policy. A provider MAY share its verification page and code namespace between that flow and this grant. It keeps session semantics: a derived login session SHOULD never outlive the session that approved it (§7 item 6).
 - **Browser-based clients.** A client running in a web page uses the redirect, popup or FedCM transports in [auth](auth.md#presentation-transports-and-key-binding). Providers reject device-authorization requests sent by browsers (§4.1).
 - **Confidential clients.** v0 defines only public clients (`token_endpoint_auth_method` `none`). Confidential device clients need a later profile.
 
@@ -128,29 +128,23 @@ The error codes and HTTP 400 status follow RFC 8628 §3.5. **Pre-consent privacy
 
 ### 6.3 Token response
 
-The token response is the same as the authorization-code exchange response for that client ([runtime profile](federation-implementation.md#http-flow), [auth](auth.md#token-lifetime-and-client-sessions)). It includes `access_token`, `token_type` (MUST be `DPoP` for this grant, so access tokens are bound to `dpop_jkt` like the refresh token), `expires_in`, `issuer`, `subject`, `client_id`, `audience`, `grants`, `granted_fragments`, and a DPoP-bound `refresh_token` with `refresh_expires_in` and `refresh_idle_expires_in`. `refresh_expires_in` and `refresh_idle_expires_in` reflect the cap in §7. A client that sent an `identity` hint SHOULD abort when the returned `subject` does not match it. A client that sent no hint SHOULD show the user the signed-in account and ask for confirmation before using the tokens, so an approval made from the wrong account (or by an attacker's account, §10.3) is noticed.
+The token response is the same as the authorization-code exchange response for that client ([runtime profile](federation-implementation.md#http-flow), [auth](auth.md#token-lifetime-and-client-sessions)). It includes `access_token`, `token_type` (MUST be `DPoP` for this grant, so access tokens are bound to `dpop_jkt` like the refresh token), `expires_in`, `issuer`, `subject`, `client_id`, `audience`, `grants`, `granted_fragments`, and a DPoP-bound `refresh_token` with `refresh_expires_in` and `refresh_idle_expires_in`. `expires_in` follows the access-token limits in §7, and `refresh_expires_in` and `refresh_idle_expires_in` follow its refresh rules. A client that sent an `identity` hint SHOULD abort when the returned `subject` does not match it. A client that sent no hint SHOULD show the user the signed-in account and ask for confirmation before using the tokens, so an approval made from the wrong account (or by an attacker's account, §10.3) is noticed.
 
 ## 7. Credential lifetime
 
-The credentials from one successful device grant form one **client session** ([auth](auth.md#token-lifetime-and-client-sessions)). Let:
+Revised 2026-10-20 (user decision, provisional), superseding the earlier `E = min(S, t₀ + P, t₀ + U)` cap for credentials issued by this grant. The credentials from one successful device grant form one **client session** ([auth](auth.md#token-lifetime-and-client-sessions)). Let `t₀` be the approval time and `U` a shorter duration the user chose at approval, if the provider offered one and the user chose it.
 
-- `t₀` be the approval time;
-- `S` be the absolute expiry of the provider login session that approved (§5.1(2)), at `t₀`;
-- `P` be the provider's policy cap for client sessions created by this grant;
-- `U` be a shorter duration the user chose at approval, if the provider offered one and the user chose it.
+1. **No absolute lifetime is required.** The client session ends by revocation (§8), refresh-token reuse detection, a failed live check (items 4 and 5) or the idle limit (item 2). If the user chose `U`, the client session's absolute expiry is `t₀ + U` and refresh rotation never extends it. A provider MAY impose its own absolute cap, and then MUST state it in `refresh_expires_in`.
+2. **Idle limit.** A refresh token not used within the provider's idle limit is invalid. The idle limit restarts at every successful refresh and never extends past an absolute expiry from item 1. RECOMMENDED: 180 days; providers MAY configure it.
+3. **Access tokens** are DPoP-bound (§6.3) and live at most 60 minutes, never past an absolute expiry from item 1. Providers MAY issue shorter ones.
+4. **Live lineage.** The client session belongs to the grant, not to the approving login session, so the natural expiry of that session does not end it. If the approving login session (or any session in its approval chain, item 6) is ended explicitly — sign-out, revocation, eviction by a session-count limit, credential removal, recovery, account suspension or deletion — the provider MUST revoke the client session. The provider MUST check this lineage on every refresh and on every resource request, failing closed, so revocation takes effect immediately; a refresh then fails with `invalid_grant` and resource requests are refused.
+5. Every refresh and every resource request also performs the live checks in [auth](auth.md#token-lifetime-and-client-sessions): grants, client connection, account status. Renewal intersects only the grants approved for this request.
+6. **Chains.** A session issued by a cross-device approval can approve only after a fresh credential authentication within it (§5.1(2)). Revocation under item 4 applies transitively: ending any session in a chain revokes everything derived from it. Provider-local session extension (§1, out of scope) keeps session semantics: a derived login session never outlives the session that approved it.
+7. **Approval.** The user's one involvement is the approval itself, with its fresh credential authentication (§5.1(2)). A provider SHOULD NOT require periodic reapproval as a substitute for the checks in items 4 and 5.
 
-The client session's absolute expiry is **`E = min(S, t₀ + P, t₀ + U)`**. Then:
+`refresh_expires_in` is the lifetime of the issued refresh token: without an absolute expiry it equals `refresh_idle_expires_in`, and each rotation renews it. Clients MUST NOT assume a minimum lifetime and MUST NOT treat `refresh_expires_in` as a deadline that can only move earlier. When refresh fails with `invalid_grant`, the client starts a new device flow.
 
-1. `refresh_expires_in` never implies a time later than `E`. Refresh rotation never extends `E`.
-2. The idle limit never exceeds `E`, and never exceeds the provider's idle policy for client sessions.
-3. No access token is valid after `E`. Access tokens remain at most five minutes ([auth](auth.md#token-lifetime-and-client-sessions)).
-4. **Live lineage.** If the approving login session ends before `E` for any reason (sign-out, revocation, eviction by a session-count limit, credential removal, recovery, account suspension or deletion), the provider MUST revoke the client session. A refresh attempt then fails with `invalid_grant`, and RPC is refused once the revocation is committed. Providers SHOULD propagate the revocation immediately, and MUST at least check the approving session's liveness on every refresh.
-5. Every refresh also performs the live checks in [auth](auth.md#token-lifetime-and-client-sessions): grants, client connection, account status. Renewal intersects only the grants approved for this request.
-6. **Chains.** A session issued by a cross-device approval can approve only after a fresh credential authentication within it (§5.1(2)). Its own expiry is at most its parent's, so `E` stays bounded by the original credential sign-in through any chain. Revocation under item 4 applies transitively: ending any session in a chain revokes everything derived from it. Without these rules, chained approvals would let lifetime grow without bound.
-
-Clients MUST NOT assume a minimum lifetime. When refresh fails with `invalid_grant`, the client starts a new device flow.
-
-This rule makes "the same or shorter than the approving session" precise for refresh tokens. The refresh family belongs to the grant and the client session, not to the browser session. Its lifetime is fixed at approval to no more than the approving session's remaining lifetime, and the provider keeps it from outliving that session through the lineage check in item 4.
+Rationale. An unattended client should keep working while it is in use and the user has not revoked it; involving the user again only after long disuse keeps device-code phishing from being re-armed by routine reapproval prompts. Immediate revocation rests on the live checks at every refresh and resource request, not on short credentials.
 
 ## 8. Sender constraint and revocation
 
@@ -178,7 +172,7 @@ An attacker starts a real flow, then persuades a victim to approve its code, for
 - An `identity` hint is attacker-controlled. Providers MUST NOT present it as evidence that the request is legitimate.
 - Short codes and expiry (§4.2), and no unsolicited prompts (§5.1(7)).
 - Browser refusal (§4.1) keeps a lure page from starting the flow from the victim's own network, which would defeat network-match signals.
-- Post-approval notification, short default lifetimes (§7) and individual revocation (§8) limit the damage and help detection.
+- Post-approval notification, optional user-chosen shorter lifetimes, the idle limit and live checks (§7), and individual revocation (§8) limit the damage and help detection. Because a client session has no absolute lifetime by default, a phished approval lasts until it is noticed and revoked or left idle; providers SHOULD make app connections easy to review and revoke.
 - Providers SHOULD restrict which fragments each client may request through this grant, and MAY require extra confirmation for sensitive fragments. Well-known registered clients make the most convincing lures.
 
 ### 10.2 Client impersonation
@@ -207,7 +201,7 @@ A QR code that encodes `verification_uri_complete` can be replaced by an attacke
 | --- | --- |
 | DA1: Declaration (flat RFC 8628 members plus the feature entry), browser refusal, mandatory DPoP | Pending |
 | DA2: Approval requirements, including fresh non-derived authentication and explicit account binding | Pending |
-| DA3: Lifetime rule `E = min(S, t₀+P, t₀+U)` with transitive live lineage revocation | Pending (user decision on lineage scope is open; see [linked approval §15](../architecture/linked-approval.md#15-open-questions)) |
+| DA3: Lifetime rule (revised 2026-10-20: no absolute lifetime by default, idle limit, ≤ 60 min DPoP access tokens, live lineage and grant checks on every refresh and resource request) | Pending (user decision recorded provisionally in DEVLOG.md; no reviewer sign-off) |
 | DA4: Single use with no success replay; pre-consent privacy of poll responses | Pending |
 | DA5: Metadata-document delta for device-only clients | Pending |
 

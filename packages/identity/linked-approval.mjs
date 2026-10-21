@@ -7,9 +7,13 @@ import { secureEqual, encode } from './crypto.mjs';
 
 export const LINKED_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ', LINKED_CODE_SPACE = 20 ** 8;
 const HOUR = 3600000, DAY = 86400000;
-export const LINKED = Object.freeze({ sessionPendingMs: 300000, appPendingMs: 600000, interval: 5, maxInterval: 60, freshMs: 300000, appCapMs: 30 * DAY, appIdleMs: 7 * DAY, liveCap: 20000, slotMs: 600000, lineageLimit: 100 });
+export const LINKED = Object.freeze({ sessionPendingMs: 300000, appPendingMs: 600000, interval: 5, maxInterval: 60, freshMs: 300000, appIdleMs: 180 * DAY, appIdleMaxMs: 365 * DAY, liveCap: 20000, slotMs: 600000, lineageLimit: 100 });
 export const DEVICE_KINDS = Object.freeze({ tv: 'TV or shared screen', computer: 'Computer', phone: 'Phone or tablet' });
-export const SESSION_CHOICES = Object.freeze({ '1h': HOUR, '8h': 8 * HOUR, session: Infinity }), APP_CHOICES = Object.freeze({ '1h': HOUR, '8h': 8 * HOUR, '30d': 30 * DAY });
+// App approvals (DEVLOG 2026-10-20, superseding 30 d / 7 d): `ongoing` (the default) has no absolute lifetime and ends only
+// by revocation, lineage or the idle limit; `1h`/`8h` are optional shorter limits the user may choose.
+export const SESSION_CHOICES = Object.freeze({ '1h': HOUR, '8h': 8 * HOUR, session: Infinity }), APP_CHOICES = Object.freeze({ '1h': HOUR, '8h': 8 * HOUR, ongoing: null });
+/** The app refresh idle limit: a host override in ms (one day to 365 days, e.g. from APP_REFRESH_IDLE_DAYS), else 180 days. */
+export const appIdleMs = value => Number.isSafeInteger(value) && value >= DAY && value <= LINKED.appIdleMaxMs ? value : LINKED.appIdleMs;
 // Charged per attempt (a superset of failures) before the code is evaluated, so an exhausted budget can never be
 // passed by a correct guess. A legitimate approval spends two account units (resolve + approve).
 export const RESOLVE_BUDGETS = Object.freeze({ account: [{ windowMs: 1800000, limit: 10 }, { windowMs: DAY, limit: 30 }], prefix: [{ windowMs: 900000, limit: 20 }, { windowMs: DAY, limit: 100 }], wide: { windowMs: DAY, limit: 200 }, hardAccount: { windowMs: 1800000, limit: 5 }, globalWindowMs: DAY });
@@ -26,15 +30,16 @@ const pendingUntil = request => request.pendingUntil ?? request.expiresAt;
 const plain = (value, max) => { try { return value !== null && typeof value === 'object' && JSON.stringify(value).length <= max; } catch { return false; } };
 const text = (value, max) => typeof value === 'string' && value.trim() && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value);
 
-/** `E` and the idle bound for one approval (architecture §7.1); null for an unknown choice. */
-export function linkedLifetime({ kind, choice, now, sessionExpiresAt, sessionTtlMs }) {
+/** `E` and the idle bound for one approval (architecture §7.1); null for an unknown choice. An app's `expiresAt` is
+ * null for `ongoing` (no absolute lifetime); its idle bound is renewed by each refresh on the federation side. */
+export function linkedLifetime({ kind, choice, now, sessionExpiresAt, sessionTtlMs, idleMs }) {
   const choices = kind === 'app' ? APP_CHOICES : SESSION_CHOICES; if (!Object.hasOwn(choices, choice)) return null;
-  if (kind === 'app') { const expiresAt = Math.min(now + LINKED.appCapMs, now + choices[choice]); return { expiresAt, idleExpiresAt: Math.min(now + LINKED.appIdleMs, expiresAt) }; }
+  if (kind === 'app') { const idle = appIdleMs(idleMs), expiresAt = choices[choice] === null ? null : now + choices[choice]; return { expiresAt, idleExpiresAt: expiresAt === null ? now + idle : Math.min(now + idle, expiresAt) }; }
   return { expiresAt: Math.min(sessionExpiresAt, now + sessionTtlMs, now + choices[choice]) };
 }
 /** Duration options; session options that would reach the approving session's end collapse into `session`. */
-export function linkedDurations({ kind, now, sessionExpiresAt, sessionTtlMs }) {
-  if (kind === 'app') return Object.keys(APP_CHOICES).map(choice => ({ choice, ...linkedLifetime({ kind, choice, now }) }));
+export function linkedDurations({ kind, now, sessionExpiresAt, sessionTtlMs, idleMs }) {
+  if (kind === 'app') return Object.keys(APP_CHOICES).map(choice => ({ choice, ...linkedLifetime({ kind, choice, now, idleMs }) }));
   const last = linkedLifetime({ kind, choice: 'session', now, sessionExpiresAt, sessionTtlMs }).expiresAt;
   return [...['1h', '8h'].map(choice => ({ choice, expiresAt: linkedLifetime({ kind, choice, now, sessionExpiresAt, sessionTtlMs }).expiresAt })).filter(option => option.expiresAt < last), { choice: 'session', expiresAt: last }];
 }
@@ -67,7 +72,10 @@ export class MemoryLinkedLimits {
 
 // Approval lineage on the account record: `linkedLineage` entries (app families approved from a session chain)
 // survive natural session expiry; explicit termination moves their families to `lineageOutbox` in the same CAS.
-export function pruneLineage(account, now) { if (Array.isArray(account.linkedLineage)) account.linkedLineage = account.linkedLineage.filter(entry => entry.expiresAt > now); }
+// An ongoing app's entry carries `expiresAt: LINEAGE_OPEN` (finite, so every `expiresAt > now` reader keeps it); LA2
+// revokes the entry when its family ends. `null` is tolerated the same way.
+export const LINEAGE_OPEN = Number.MAX_SAFE_INTEGER;
+export function pruneLineage(account, now) { if (Array.isArray(account.linkedLineage)) account.linkedLineage = account.linkedLineage.filter(entry => entry.expiresAt === null || entry.expiresAt > now); }
 export function revokeLineageWhere(account, match, now) {
   if (!Array.isArray(account.linkedLineage) || !account.linkedLineage.length) return 0;
   const keep = [], outbox = [...account.lineageOutbox ?? []];
@@ -190,18 +198,21 @@ export class LinkedApproval {
     const userCodeHash = await this.mac('user-code', code), request = locator !== undefined ? await this.repository.get(locator) : await this.repository.findByUserCode(userCodeHash);
     return request && request.version === 2 && ['session', 'app'].includes(request.kind) && secureEqual(request.userCodeHash, userCodeHash) ? request : null;
   }
-  freshSignIn(session, request) { const now = this.now(); return session.source === 'credential' && Number.isSafeInteger(session.createdAt) && session.createdAt <= now && session.createdAt >= request.createdAt && session.createdAt + LINKED.freshMs > now; }
-  fresh(session, request) { return request.kind === 'app' ? this.freshSignIn(session, request) : this.identity.authAt(session) + LINKED.freshMs > this.now(); }
+  // One fresh credential confirmation at approval for both kinds (DEVLOG 2026-10-20): a passkey or password sign-in or
+  // step-up within 5 minutes. Linked-approval, email-link and recovery sessions count only after their own step-up.
+  // An app approval's confirmation must also postdate the request, binding the step-up to this approval (review LA2-S7).
+  fresh(session, request) { const at = this.identity.authAt(session); return at + LINKED.freshMs > this.now() && (request?.kind !== 'app' || at >= request.createdAt); }
+  idleMs() { return appIdleMs(this.identity.config.appRefreshIdleMs); }
   async review(request, account, session, context) {
     const identity = this.identity, now = this.now(), app = request.kind === 'app', network = request.requester?.network ?? {};
     const hint = app && typeof request.app.identityHint === 'string' ? request.app.identityHint.toLowerCase().replace(/^@/, '').replace(`@${identity.config.rpID}`, '') : null;
     const sameBrowser = Boolean(request.bindingHash && typeof context?.deviceBinding === 'string' && secureEqual(request.bindingHash, await identity.crypto.hash('device-binding', context.deviceBinding)));
     return { requestId: request.id, kind: request.kind, createdAt: request.createdAt, expiresAt: pendingUntil(request), account: { id: account.id, handle: account.handle },
       requester: { deviceKind: request.deviceKind ?? null },
-      ...app ? { app: { clientId: request.app.clientId, host: request.app.host, reviewedName: request.app.reviewedName ?? null, requests: structuredClone(request.app.requests), preselect: Boolean(hint && [account.handle, account.paidHandle].includes(hint)) }, idleLimitMs: LINKED.appIdleMs } : {},
+      ...app ? { app: { clientId: request.app.clientId, host: request.app.host, reviewedName: request.app.reviewedName ?? null, requests: structuredClone(request.app.requests), preselect: Boolean(hint && [account.handle, account.paidHandle].includes(hint)) }, idleLimitMs: this.idleMs() } : {},
       warnings: { countryMismatch: Boolean(network.trusted && network.country && context?.networkTrusted === true && typeof context.country === 'string' && context.country !== network.country), sameBrowser },
-      freshness: { required: app ? 'sign-in' : 'step-up', satisfied: this.fresh(session, request) },
-      durations: linkedDurations({ kind: request.kind, now, sessionExpiresAt: session.expiresAt, sessionTtlMs: identity.config.sessionTtlMs }), defaultChoice: app ? '1h' : 'session' };
+      freshness: { required: 'step-up', satisfied: this.fresh(session, request) },
+      durations: linkedDurations({ kind: request.kind, now, sessionExpiresAt: session.expiresAt, sessionTtlMs: identity.config.sessionTtlMs, idleMs: this.idleMs() }), defaultChoice: app ? 'ongoing' : 'session' };
   }
   /** Signed-in members only. Every miss is the same `invalid_code`; nothing is written, so the requester cannot
    * observe a resolve (pre-consent privacy). */
@@ -229,9 +240,8 @@ export class LinkedApproval {
     if (input.approved !== true || ((legacy || input.accountHandle !== undefined) && input.accountHandle !== account.handle)) this.fail('confirmation_required', 'Confirm the account and code shown on the device you are signing in.');
     const request = await check(), app = request.kind === 'app', now = this.now();
     if (legacy && app) this.invalid();
-    if (app && !this.freshSignIn(session, request)) this.fail('fresh_sign_in_required', 'Sign in with your passkey or password to approve this app.');
-    if (!app && identity.authAt(session) + LINKED.freshMs <= now) this.fail('reauthentication_required', 'Confirm your password or passkey before approving this sign-in.');
-    const choice = legacy ? 'session' : input.choice ?? (app ? '1h' : 'session'), lifetime = linkedLifetime({ kind: request.kind, choice, now, sessionExpiresAt: session.expiresAt, sessionTtlMs: identity.config.sessionTtlMs });
+    if (!this.fresh(session, request)) this.fail('reauthentication_required', 'Confirm your password or passkey before approving this sign-in.');
+    const choice = legacy ? 'session' : input.choice ?? (app ? 'ongoing' : 'session'), lifetime = linkedLifetime({ kind: request.kind, choice, now, sessionExpiresAt: session.expiresAt, sessionTtlMs: identity.config.sessionTtlMs, idleMs: this.idleMs() });
     if (!lifetime) this.fail('invalid_choice', 'Choose how long this sign-in lasts.');
     if (input.consent !== undefined && (!app || !plain(input.consent, 4096) || Array.isArray(input.consent))) this.fail('invalid_consent', 'Review the requested access again.');
     const revision = request.revision; delete request.requester?.network;
@@ -374,7 +384,7 @@ export class LinkedApproval {
     if (!reserved) return { status: 'access_denied' };
     const { approval, app } = request;
     return { status: 'approved', owner: request.owner, clientId: app.clientId, host: app.host, requests: structuredClone(app.requests), ...app.entryId ? { entryId: app.entryId } : {}, ...approval.consent ? { consent: structuredClone(approval.consent) } : {},
-      familyId: request.issuedFamilyId, lineageId: request.lineageId, approvedAt: approval.approvedAt, expiresAt: approval.expiresAt, idleExpiresAt: approval.idleExpiresAt, idleMs: LINKED.appIdleMs };
+      familyId: request.issuedFamilyId, lineageId: request.lineageId, approvedAt: approval.approvedAt, expiresAt: approval.expiresAt ?? null, idleExpiresAt: approval.idleExpiresAt, idleMs: this.idleMs() };
   }
   async reserve(request) {
     const identity = this.identity;
@@ -386,7 +396,7 @@ export class LinkedApproval {
       for (let id = parent.parentSessionId; id && !sessions.includes(id) && sessions.length < 16; id = account.sessions.find(s => s.id === id)?.parentSessionId) sessions.push(id);
       pruneLineage(account, now);
       if ((account.linkedLineage ?? []).length >= LINKED.lineageLimit) this.fail('temporarily_unavailable', 'Too many apps are signed in from this account. Sign out of some apps first.');
-      account.linkedLineage = [...account.linkedLineage ?? [], { id: request.lineageId, sessions, sessionExpiresAt: parent.expiresAt, families: [request.issuedFamilyId], clientId: request.app.clientId, host: request.app.host, createdAt: now, expiresAt: request.approval.expiresAt }];
+      account.linkedLineage = [...account.linkedLineage ?? [], { id: request.lineageId, sessions, sessionExpiresAt: parent.expiresAt, families: [request.issuedFamilyId], clientId: request.app.clientId, host: request.app.host, createdAt: now, expiresAt: request.approval.expiresAt ?? LINEAGE_OPEN }];
       parent.derivedFamilies = [...parent.derivedFamilies ?? [], request.issuedFamilyId];
       identity.audit(account, 'linked-app-approved');
       try { await identity.save(account, revision); return true; }
@@ -400,7 +410,7 @@ export class LinkedApproval {
   async lineageLive({ owner, lineageId, familyId } = {}) {
     if (this.identity.config.deviceAuthorizationEnabled !== true || !requestID(owner) || typeof lineageId !== 'string' || typeof familyId !== 'string') return false;
     const account = await this.identity.repository.get(owner), now = this.now(); if (!account || account.status !== 'active') return false;
-    const entry = account.linkedLineage?.find(item => item.id === lineageId); if (!entry || !entry.families.includes(familyId) || entry.expiresAt <= now) return false;
+    const entry = account.linkedLineage?.find(item => item.id === lineageId); if (!entry || !entry.families.includes(familyId) || (entry.expiresAt !== null && entry.expiresAt <= now)) return false;
     // Before its natural end the approving session must still exist: catches any removal path that bypassed lineage.
     if (now < entry.sessionExpiresAt && !account.sessions.some(s => s.id === entry.sessions[0] && s.expiresAt > now)) return false;
     return true;

@@ -18,7 +18,7 @@ const fail=code=>{throw Object.assign(Error(code),{code});},changed=ctx=>ctx.eng
 export function normalizeApprovalCode(value){const code=typeof value==='string'?value.toUpperCase().replace(/[- ]/g,''):'';return /^[BCDFGHJKLMNPQRSTVWXZ]{8}$/.test(code)?code:null;}
 export function approvalLocator(hash=''){const p=new URLSearchParams(hash.replace(/^#/,'')),id=p.get('r')??p.get('request');return UUID.test(id??'')?id:null;}
 export function approvalDurations(request,session,now){
- if(request.kind==='app')return [{value:HOUR,label:'1 hour'},{value:8*HOUR,label:'8 hours'},{value:30*24*HOUR,label:'30 days'}];
+ if(request.kind==='app')return [{value:'ongoing',label:'Ongoing'},{value:'1h',label:'1 hour'},{value:'8h',label:'8 hours'}];
  const remaining=Math.max(0,Math.min(session.expiresAt-(session.reviewedAt??now),session.sessionTtlMs??24*HOUR));
  return [...[{value:HOUR,label:'1 hour'},{value:8*HOUR,label:'8 hours'}].filter(option=>option.value<remaining),{value:remaining,label:'Until your sign-in here ends'}];
 }
@@ -106,7 +106,7 @@ export class ApproveAction extends Action {
      Object.assign(input,{choice:s.choice,...q.kind==='app'?{consent:r.consent.approvedSelections(s.consent),sensitive:[...s.sensitive]}:{}});
     }
     const result=await (kind==='approve'&&q.kind==='session'?freshAPI(r,ctx):r.api).request('/api/auth/linked/'+kind,input);if(!live())return;
-    if(kind==='approve'&&(!Number.isSafeInteger(result.expiresAt)||result.expiresAt<=r.browser.now()))fail('request_failed');
+    if(kind==='approve'&&!(q.kind==='app'&&s.choice==='ongoing'&&result.expiresAt===null)&&(!Number.isSafeInteger(result.expiresAt)||result.expiresAt<=r.browser.now()))fail('request_failed');
     s.phase=kind==='approve'?'approved':'denied';s.endsAt=result.expiresAt;r.secrets.code=null;s.draft='';s.locator=null;r.browser.clearDraft();return;
    }
   }catch(error){if(live()){

@@ -13,7 +13,7 @@ import {forEachSeed,createRandom,createScheduler} from '../helpers/chaos.mjs';
 test('mailbox factory requires explicit effects, rejects unknown providers and keeps its catalogue independent',async t=>{
  const effects=memoryEffects();for(const name of ['clock','random','audit']){const providers={...effects};delete providers[name];assert.throws(()=>createMailboxEngine({providers}),new RegExp(name));assert.throws(()=>createMailboxEngine({providers:{...effects,[name]:null}}),new RegExp(name));}
  assert.throws(()=>createMailboxEngine({providers:{...effects,accountStore:{}}}),/Uncatalogued/);
- assert.deepEqual(Object.keys(MAILBOX_OPERATIONS),['mailbox.ping']);assert.ok(Object.isFrozen(PROVIDERS));assert.ok(Object.isFrozen(MAILBOX_OPERATIONS));assert.equal(PROVIDERS.classifier.status,'planned');
+ assert.ok(Object.hasOwn(MAILBOX_OPERATIONS,'mailbox.ping'));for(const Operation of Object.values(MAILBOX_OPERATIONS))for(const dep of Operation.deps)assert.ok(Object.hasOwn(PROVIDERS,dep),`${Operation.operation}: ${dep}`);assert.ok(Object.isFrozen(PROVIDERS));assert.ok(Object.isFrozen(MAILBOX_OPERATIONS));assert.equal(PROVIDERS.classifier.status,'planned');
  const engine=createMailboxEngine({providers:{...effects,clock:Provider.fromSingleton(effects.clock)}});t.after(()=>engine.dispose());
  const resource=await engine.container.use(['clock'],({clock})=>clock);assert.equal(resource,effects.clock);
 });
@@ -73,5 +73,5 @@ test('CLI lists its own catalogue and drives deterministic independent peers, cl
  const source=[{as:'alice',op:'mailbox.ping',expect:{status:'skeleton'}},{as:'bob',op:'mailbox.ping'},{advance:100},{as:'alice',op:'mailbox.ping'},{as:'alice',audit:true}].map(JSON.stringify).join('\n');
  const run=cli(['--peers','3','--seed','7','-'],source);assert.equal(run.status,0,run.stderr+run.stdout);assert.notEqual(run.lines[0].result.owner,run.lines[1].result.owner);assert.equal(run.lines[3].result.now-run.lines[0].result.now,100);assert.equal(run.lines[4].audit.length,2);assert.deepEqual(cli(['--peers','3','--seed','7','-'],source).lines,run.lines);
  assert.equal(cli(['-'],'{"op":"mailbox.ping","expect":{"status":"delivered"}}').status,1);assert.equal(cli(['-'],'{"op":"send.submit"}').status,1);assert.equal(cli(['-'],'null').status,1);assert.equal(cli(['--peers','0']).status,1);
- assert.deepEqual(cli(['--list']).lines.filter(line=>line.operation).map(line=>line.operation),['mailbox.ping']);
+ assert.deepEqual(cli(['--list']).lines.filter(line=>line.operation).map(line=>line.operation),Object.keys(MAILBOX_OPERATIONS));
 });

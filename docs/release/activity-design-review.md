@@ -116,3 +116,47 @@ Independent protocol/security cross-review: reviewer ___ / date ___ / outcome __
 2. Should app replacement ever make a read item unread by default? Current recommendation preserves read/archive, with explicit owner controls for unread/update push and no automatic unarchive.
 3. Are the proposed 90-day maximum explicit expiry and 32 app-revision cap appropriate? App expiry disables actions/notifications rather than forcing deletion of the owner's retained evidence.
 4. Confirm the messaging app's eventual name/package and the owner-reviewed historical transfer approach. Versioned wire naming/signing fixtures, named time zones, and noninteractive workload authority still need focused follow-up design; none is silently published here.
+
+## ACT-1 implementation
+
+2026-10-20. Wave 2 slice ACT-1 implements the core activity model as engine operations. This section records one independent agent security review (read-only, with probes) and the fixes. It is not human sign-off. Everything is behind `ACTIVITY_V2_ENABLED` (default off). Production stays disabled.
+
+**What was built:**
+- `packages/activity/*`:
+  - the input grammar and limits;
+  - typed app tags qualified by issuer-qualified app principal;
+  - purpose-separated signed admission evidence;
+  - the transactional store;
+  - the v1 read adapter.
+- `packages/app/domains/activity.mjs`. Owner operations are registered: `activity.list/get/legacy/mark/archive/delete`. App operations `activity.create/replace/retract` are deliberately unregistered and built only by the resource handler from verified federation state.
+- Provisional unpublished contract `…/contracts/activity/v2-draft` through the `RESOURCE_METHOD_HANDLERS` seam, with origin-bound federation prechecks.
+- Flag-gated `/api/activity` owner routes.
+- Tests: `tests/engine-activity.test.mjs` and `tests/activity-resource.test.mjs`.
+
+**Review findings:**
+
+| ID | Severity | Finding | Outcome |
+| --- | --- | --- | --- |
+| ACT1-S1 | medium, confirmed | Account-wide receipt cap (256 × 48 h) could be filled by one app's create+retract traffic, refusing other apps' retractions. | **Fixed.** Receipts are split into lanes: per-app create/replace share 128, account 256, and a separate retract bound of 640. That bound is above the retract lanes' two-day maximum. Expired-row counting is now exact. Regression S1. |
+| ACT1-S2 | medium, confirmed | One app could fill account item/byte capacity permanently with expiring or retracted items. | **Fixed (bounded).** Per-app share is 500 items / 4 MiB of the account's 2000 / 16 MiB. Owner deletion credits both. Residual: four colluding apps, and no compaction of terminal content yet (ACT-2/lifecycle). |
+| ACT1-S3 | low, confirmed | Legacy adapter promoted unverified stored v1 claims. | **Fixed.** Rows are `verified:false` unless the caller verified them with `verifyLegacyAppMessage` against the issuer's keys. |
+| ACT1-S4 | low, confirmed | Subjects accepted C1, bidi override/isolate, line separators and invisible-only text. | **Fixed.** These are refused in subjects; C1 is also refused in bodies. |
+| ACT1-S5 | low | `verifyEvidence` did not bind evidence to the stored record. | **Fixed.** `verifyRevision` recomputes the content digest and compares account/item/revision/kind and every signed field. |
+| ACT1-S6 | low/info | Activity reuses the v1 ES256 key; separation is only the in-payload `purpose`. | **Open.** It needs the versioned binding: a separate kid set or an external domain prefix. |
+| ACT1-S7 | low | `hasAdmissionMethod` enables connection admission consent even with the flag off. v1 and activity share one admission toggle and generation. | **Open.** The federation service has no flag input, and no descriptor can carry the contract today. A separate activity admission toggle is ACT-2/X4 work. |
+| ACT1-S8 | info | A retry after reconnect creates a second item (dedup is per incarnation, as specified). | Documented. Spec-consistent. |
+| ACT1-S9 | info | No lock-screen leak found. Pending work holds only IDs, revisions and group names, but group names embedded the app's collapse key verbatim. Audit lacks the app principal. | **Fixed** collapse groups (hashed). Audit principal is open. |
+| ACT1-S10 | info | Owner operations are reachable by internal RPC with the flag off. `allowedMethods` lists `/api/activity` with the flag off (the route answers 404). | **Open, low.** Both HTTP and resource entry points are gated. |
+
+Self-found during fixes: the app principal used for budget, tag and receipt keys omitted the issuer (`undefined#client`). The keys were consistent but wrong. Fixed and covered by the S2 regression.
+
+**Not done in ACT-1 (reconciliation for DEVLOG):**
+- An activity resource descriptor in `packages/runtime/federation.mjs` (other owner). Until it exists the contract cannot be granted end to end.
+- Forms/postbacks for v2 items. They stay inert, with no revision-aware form authority yet.
+- A separate `message-receipt-budget` lane. Activity has its own app/account lanes in the engine plus `admitWork`.
+- An item-index partition and search.
+- Lifecycle export/erase hooks. Account purge clears the rows, but export omits them.
+- Terminal-content compaction.
+- Push dispatch from pending groups (ACT-2).
+
+Evidence: core suite, `test:worker`, `test:ui-state`, `build:assets`, `check:worker`. No browser or production evidence. Reviewer ___ / date ___ / outcome ___.

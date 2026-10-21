@@ -3,8 +3,11 @@
 import {federationEpoch} from '../federation.mjs';
 import {verifyPreparedPostbackToken} from '../message-postbacks.mjs';
 import {json,body,limit,privateHeaders,accountHandle} from './shared.mjs';
+import {ActivityFeed,ActivityItem,LegacyActivityPage,MarkActivity,ArchiveActivity,DeleteActivity} from '../../app/domains/activity.mjs';
 
 export function allowedMethods(path){
+ if(path==='/api/activity'||path==='/api/activity/legacy')return ['GET'];
+ if(/^\/api\/activity\/[a-f0-9-]{36}$/.test(path))return ['GET','PATCH','DELETE'];
  if(path==='/api/messages/page')return ['GET'];
  if(path==='/api/collections')return ['GET','POST'];
  if(path==='/api/messages')return ['GET','POST'];
@@ -28,7 +31,8 @@ export const stages={
     return json(await accountHandle(env,ownerId).messagePostbackDispatch(ownerId,postbackDispatch[1],token));
    }
  },
- async owner({request,env,url,path,id,object}){
+ async owner({request,env,url,path,id,object,dispatch}){
+    if(path==='/api/activity'||path.startsWith('/api/activity/'))return activityRoute({request,env,url,path,dispatch});
     if(path==='/api/messages/page'){const p=url.searchParams;return json(await object.messagePage(id,{limit:Number(p.get('limit')||100),...p.has('collection')?{collection:p.get('collection')}:{},...p.has('unread')?{unread:p.get('unread')==='true'}:{},...p.has('quarantined')?{quarantined:p.get('quarantined')==='true'}:{},cursor:p.get('cursor')||undefined}));}
     if(path==='/api/collections')return json(request.method==='POST'?await object.collections(id,(await body(request)).name):await object.collections(id));
     const message=/^\/api\/messages\/([a-f0-9-]{36})(?:\/(download|presentation|postbacks\/prepare))?$/.exec(path);
@@ -36,3 +40,20 @@ export const stages={
     if(path==='/api/messages')return json((await object.snapshot(id)).messages);
  },
 };
+
+// ACT-1 owner activity routes, one engine operation each; absent (404) unless ACTIVITY_V2_ENABLED.
+const invalid=()=>{throw Object.assign(new Error('Choose a valid activity request.'),{code:'invalid_args',status:400});};
+async function activityRoute({request,env,url,path,dispatch}){
+ if(env.ACTIVITY_V2_ENABLED!=='true')return json({error:'not_found'},404);
+ const p=url.searchParams,one=k=>p.getAll(k).length===1,bool=k=>p.get(k)==='true'?true:p.get(k)==='false'?false:invalid();
+ if(path==='/api/activity'){
+  if([...p.keys()].some(k=>!['app','tagApp','tag','archived','unread','state','limit','cursor'].includes(k)||!one(k))||p.has('tag')!==p.has('tagApp'))invalid();
+  return json(await dispatch(ActivityFeed,{input:{...p.has('app')?{app:p.get('app')}:{},...p.has('tag')?{tag:{app:p.get('tagApp'),id:p.get('tag')}}:{},...p.has('archived')?{archived:bool('archived')}:{},...p.has('unread')?{unread:bool('unread')}:{},...p.has('state')?{state:p.get('state')}:{},...p.has('limit')?{limit:Number(p.get('limit'))}:{},...p.has('cursor')?{cursor:p.get('cursor')}:{}}}));
+ }
+ if(path==='/api/activity/legacy'){if([...p.keys()].some(k=>k!=='cursor'||!one(k)))invalid();return json(await dispatch(LegacyActivityPage,{input:p.has('cursor')?{cursor:p.get('cursor')}:{}}));}
+ const item=/^\/api\/activity\/([a-f0-9-]{36})$/.exec(path)?.[1];if(!item)return json({error:'not_found'},404);
+ if(request.method==='GET'){if([...p.keys()].some(k=>k!=='revision'||!one(k)))invalid();return json(await dispatch(ActivityItem,{id:item,...p.has('revision')?{input:{revision:Number(p.get('revision'))}}:{}}));}
+ if(request.method==='DELETE')return json(await dispatch(DeleteActivity,{id:item}));
+ const input=await body(request,1024);if(input&&typeof input==='object'&&Object.hasOwn(input,'archived'))return json(await dispatch(ArchiveActivity,{id:item,input}));
+ return json(await dispatch(MarkActivity,{id:item,input}));
+}

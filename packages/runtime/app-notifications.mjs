@@ -1,5 +1,8 @@
 import {validateContent} from '../messaging/content.mjs';
-import {APP_NOTIFICATIONS,notificationInput} from '../federation/app-notifications.mjs';
+import {APP_NOTIFICATIONS,ACTIVITY_CONTRACT,ACTIVITY_METHODS,notificationInput} from '../federation/app-notifications.mjs';
+import {perform} from '../app/engine.mjs';
+import {ACTIVITY_APP_OPERATIONS} from '../app/domains/activity.mjs';
+import {activityEnabled} from '../activity/index.mjs';
 import {StorageError} from '../storage/policy.mjs';
 import {key,canonical,digest,base64url} from '../messaging/store.mjs';
 import {initialTags,applyRules,escapeLegacyTag,isSystemTag} from '../messaging/tags.mjs';
@@ -28,8 +31,8 @@ export async function appNotificationCheck(c,owner,connection,clientId){
  await c.apps.check(owner,connection.id,connection.generation,clientId);
  const r=await c.metadata.get('resource/'+connection.id);if(!r?.notifications?.enabled||r.appOrigin!==connection.appOrigin||r.notifications.generation!==connection.notifications.generation)fail('forbidden','App messages are disabled or need fresh consent.',403);return true;
 }
-async function configuredContext(c,owner,context){
- if(context.authority!=='bindle'||context.resource!==`${c.config.APP_ORIGIN}/entities/${owner}/app-messages`||context.resourceGeneration!==owner||context.contract!==APP_NOTIFICATIONS||context.method!=='createOwn'||!context.epoch||!c.config.FEDERATION_IDENTITY_CHECK||await c.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true)fail('forbidden','App message authority is unavailable.',403);
+async function configuredContext(c,owner,context,{path='app-messages',contract=APP_NOTIFICATIONS,methods=['createOwn']}={}){
+ if(context.authority!=='bindle'||context.resource!==`${c.config.APP_ORIGIN}/entities/${owner}/${path}`||context.resourceGeneration!==owner||context.contract!==contract||!methods.includes(context.method)||!context.epoch||!c.config.FEDERATION_IDENTITY_CHECK||await c.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true)fail('forbidden','App message authority is unavailable.',403);
  const clients=parsed(c.config.FEDERATION_CLIENTS)||[];if(!Array.isArray(clients))fail();const client=clients.find(x=>x.id===context.clientId);if(!client||context.requestOrigin!==client.origin||context.app?.id!==client.id||context.app?.origin!==client.origin||context.app?.name!==client.name)fail('forbidden','Use the approved application origin.',403);
  await appNotificationCheck(c,owner,context.connection,context.clientId);return client;
 }
@@ -63,4 +66,17 @@ export async function createAppNotification(c,owner,context){
    const usage=await tx.get(key('message-usage',owner))||{bytes:0,messages:0};if(!Number.isSafeInteger(usage.bytes)||!Number.isSafeInteger(usage.messages)||usage.bytes<0||usage.messages<0)fail();usage.bytes+=bytes.length;usage.messages++;await tx.set(key('message-usage',owner),usage);await tx.set(key('message',owner,id),message);await tx.set(receiptKey,{fingerprint,state:'done',result,expiresAt:now+2*86400000});if(!message.quarantined)await tx.set(key('notification-event',owner,id),{id,owner,messageId:id,createdAt:now});
   });await c.scheduleAlarm(Date.now()+1000);return result;
  }finally{c.messageReservation=null;await c.quota.release(id);}
+}
+// ACT-1 activity methods (create | replace | retract) on the provisional activity contract. The same live federation,
+// client, exact-origin and admission-consent checks as v1 run before any effect; the engine transaction re-checks the
+// connection. The app actor and signer are built here from verified state only; content fields cannot name another
+// app, account, sender or channel. Off unless ACTIVITY_V2_ENABLED, where the contract is unknown (not_found).
+export async function activityResourceMethod(c,owner,context){
+ if(!activityEnabled(c.config))fail('not_found','Activity is unavailable.',404);
+ if(!ACTIVITY_METHODS.includes(context.method))fail('unsupported_method','Unsupported activity method.',400);
+ await c.warm(owner);const client=await configuredContext(c,owner,context,{path:'activity',contract:ACTIVITY_CONTRACT,methods:ACTIVITY_METHODS});
+ if(typeof context.tx!=='string')fail('invalid_args','A stable operation identifier is required.',400);
+ await c.admitWork(owner,{clientId:client.id});const keys=await appNotificationSigner(c.config);
+ const actor={kind:'app',owner,issuer:c.config.APP_ORIGIN,app:{clientId:client.id,origin:client.origin,name:client.name},connection:{id:context.connection.id,generation:context.connection.generation,admissionGeneration:context.connection.notifications.generation}};
+ return perform(c.engine,new ACTIVITY_APP_OPERATIONS[context.method]({actor,input:context.args,keys,operationId:context.tx.toLowerCase()}));
 }

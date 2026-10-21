@@ -1,21 +1,71 @@
 import {FederationService} from './service.mjs';
 import {fail} from './schema.mjs';
 import {canonical,digest} from '../messaging/store.mjs';
+import {AppQuery} from '../app/engine.mjs';
+import {validateExtensions} from './extensions.mjs';
+const declarationObject=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+const declarationBytes=value=>new TextEncoder().encode(JSON.stringify(value)).length;
+const declarationFlag=(config,name)=>typeof name==='string'&&Object.hasOwn(config,name)&&(config[name]===true||config[name]==='true');
+/** Trusted composition data, never request input. Each row requires explicit flags AND a mounted predicate;
+ * neither a populated key nor an injected service is a mount. Order is wire order; duplicate map keys fail closed.
+ * The provider and Query share this synchronous projection so existing local manifest() adapters stay synchronous. */
+export function createManifestDeclarationProvider({registry=[],context={}}={}){return Object.freeze({declarations(config={}){
+ const result={},ctx={...context,config};
+ for(const row of registry){
+  const flags=Array.isArray(row.flag)?row.flag:[row.flag];
+  if(!flags.length||!flags.every(name=>declarationFlag(config,name))||typeof row.mounted!=='function'||row.mounted(ctx)!==true)continue;
+  const declaration=row.declare(ctx);if(!declarationObject(declaration))throw new TypeError('Invalid manifest declaration.');
+  for(const [name,value] of Object.entries(declaration)){
+   if(['features','profiles'].includes(name)){
+    if(!declarationObject(value))throw new TypeError('Invalid manifest declaration container.');
+    const map=result[name]??={};for(const [key,members] of Object.entries(value)){
+     const validKey=name==='features'?/^[a-z][a-z0-9-]{0,31}\.v[1-9][0-9]{0,2}$/.test(key):validProfile(key);
+     if(!validKey||!declarationObject(members)||declarationBytes(members)>(name==='features'?4096:8192)||Object.hasOwn(map,key))throw new TypeError('Invalid or duplicate manifest declaration.');
+     Object.defineProperty(map,key,{value:structuredClone(members),enumerable:true,configurable:true,writable:true});
+    }
+    if(Object.keys(map).length>(name==='features'?32:8))throw new TypeError('Too many manifest declarations.');
+   }else if(name==='extensions'){
+    if(!Array.isArray(value))throw new TypeError('Invalid extension declarations.');(result.extensions??=[]).push(...structuredClone(value));
+   }else if(['grant_types_supported','token_endpoint_auth_methods_supported'].includes(name)){
+    if(!Array.isArray(value)||value.some(item=>typeof item!=='string'||!item||item.length>256))throw new TypeError('Invalid OAuth declaration.');result[name]=[...new Set([...(result[name]??[]),...value])];
+   }else if(name==='device_authorization_endpoint'){
+    const url=new URL(value);if(url.origin!==new URL(ctx.issuer).origin||url.username||url.password||url.hash||Object.hasOwn(result,name))throw new TypeError('Invalid device authorization endpoint.');result[name]=value;
+   }else throw new TypeError('Unsupported manifest declaration member.');
+  }
+ }
+ if(result.extensions){
+  const entries=declarationFlag(config,'EXTENSIONS_ENABLED')&&Object.hasOwn(result.features??{},'extensions.v1')?validateExtensions(result.extensions).filter(value=>value.status!=='invalid').map(value=>value.entry):[];
+  if(entries.length)result.extensions=entries;else delete result.extensions;
+ }
+ for(const name of ['features','profiles'])if(result[name]&&!Object.keys(result[name]).length)delete result[name];
+ if(declarationBytes(result)>65536)throw new TypeError('Manifest declarations exceed 64 KiB.');return result;
+}});}
+function validProfile(value){try{const url=new URL(value);return value.length<=256&&url.protocol==='https:'&&!url.username&&!url.password&&!value.includes('?')&&!value.includes('#');}catch{return false;}}
+/** Unrouted engine Query; mounts and registry belong to its federation provider, never its payload. */
+export class ManifestDeclarations extends AppQuery {static operation='federation.manifest-declarations';static deps=['config','federation'];fetch({config,federation}){return federation.declarations(config);}}
+export function withManifestDeclarations(manifest,declarations={}){
+ const result={...manifest};for(const [name,value] of Object.entries(declarations)){
+  if(['features','profiles'].includes(name)){const prior=result[name]??{};if(Object.keys(value).some(key=>Object.hasOwn(prior,key)))throw new TypeError('Duplicate manifest declaration.');result[name]={...prior,...value};}
+  else if(['grant_types_supported','token_endpoint_auth_methods_supported'].includes(name))result[name]=[...new Set([...(result[name]??[]),...value])];
+  else if(name==='extensions')result[name]=[...(result[name]??[]),...value];else result[name]=value;
+ }
+ if(declarationBytes(result)>65536)throw new TypeError('Manifest exceeds 64 KiB.');return result;
+}
 const readMethods=new Set(['get','list','read','describe','capabilities','presign']);
 const faultResult=(code,message,error={})=>({__federationError:{code,message,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0&&error.retryAfter<=2678400?{retryAfter:error.retryAfter}:{}}});
 /** Portable composition boundary. Both hosted and self-hosted runtimes inject
  * metadata, live owner authentication and actual contract adapters here. */
 export class FederationController {
-  constructor({metadata,auth,issuer,clients=[],schemaFetcher,schemaHosts=[],dispatcher,crypto=globalThis.crypto,clock=()=>Date.now(),allowInsecureLocalhost=false,enabled=true,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs,dpop,embedView,embedOrigin,clientMetadata=false}){
+  constructor({metadata,auth,issuer,clients=[],schemaFetcher,schemaHosts=[],dispatcher,crypto=globalThis.crypto,clock=()=>Date.now(),allowInsecureLocalhost=false,enabled=true,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs,dpop,embedView,embedOrigin,clientMetadata=false,manifestDeclarations,appSessions}){
     if(!metadata?.transaction||!auth?.owner)throw new TypeError('Transactional metadata and authenticated owner resource required');
-    Object.assign(this,{metadata,auth,issuer,clients,dispatcher,clock,enabled,allowInsecureLocalhost,clientMetadata:clientMetadata===true});
-    this.service=new FederationService({store:metadata,issuer,clients,crypto,clock,schemaFetcher,schemaHosts,allowInsecureLocalhost,routingKey,validateSubject,resourceProvider,connections,refreshEnabled,objectURLs,dpop,embedView,embedOrigin,clientMetadata:clientMetadata===true,authenticateOwner:(authority)=>auth.owner(authority.context,{mutation:authority.mutation}),dispatchCapability:ctx=>this.dispatch(ctx,crypto)});
+    Object.assign(this,{metadata,auth,issuer,clients,dispatcher,clock,enabled,allowInsecureLocalhost,clientMetadata:clientMetadata===true,manifestDeclarations});
+    this.service=new FederationService({store:metadata,issuer,clients,crypto,clock,schemaFetcher,schemaHosts,allowInsecureLocalhost,routingKey,validateSubject,resourceProvider,connections,refreshEnabled,objectURLs,dpop,embedView,embedOrigin,appSessions,clientMetadata:clientMetadata===true,authenticateOwner:(authority)=>auth.owner(authority.context,{mutation:authority.mutation}),dispatchCapability:ctx=>this.dispatch(ctx,crypto)});
     // Persisted metadata-client snapshots load once per instance before any operation that may consult a client.
     if(this.clientMetadata)for(const method of ['beginAuthorization','inspect','approve','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','configure','preferences','grants','revoke','exchange','refresh','tokenClient','rpc','inspectObjectURL','objectURL']){const call=this[method].bind(this);this[method]=async(...args)=>{this.requireReady();await this.service.ensureClients();return call(...args);};}
   }
   ready(){return this.enabled&&(this.clients.length>0||this.clientMetadata)&&typeof this.service.schemaFetcher==='function'&&(typeof this.dispatcher==='function'||typeof this.dispatcher?.execute==='function');}
   requireReady(){if(!this.ready())fail('temporarily_unavailable','Federation is not configured and release enabled.');}
-  manifest(){this.requireReady();return {version:'0',issuer:this.issuer,grant_types_supported:['authorization_code',...this.service.refreshEnabled?['refresh_token']:[]],authorization_request_endpoint:`${this.issuer}/api/oauth/requests`,preferences_contract:'https://3sln.me/artefacts/contracts/preferences/v1',authorization_endpoint:`${this.issuer}/oauth/authorize`,token_endpoint:`${this.issuer}/oauth/token`,rpc_endpoint:`${this.issuer}/bindle/rpc`,jwks_uri:`${this.issuer}/oauth/jwks`,login_presentation:['redirect'],revocation_endpoint:`${this.issuer}/oauth/revoke`,...this.service.dpopNonces?{dpop_signing_alg_values_supported:['ES256']}:{},contracts:[]};}
+  manifest(){this.requireReady();return withManifestDeclarations({version:'0',issuer:this.issuer,grant_types_supported:['authorization_code',...this.service.refreshEnabled?['refresh_token']:[]],authorization_request_endpoint:`${this.issuer}/api/oauth/requests`,preferences_contract:'https://3sln.me/artefacts/contracts/preferences/v1',authorization_endpoint:`${this.issuer}/oauth/authorize`,token_endpoint:`${this.issuer}/oauth/token`,rpc_endpoint:`${this.issuer}/bindle/rpc`,jwks_uri:`${this.issuer}/oauth/jwks`,login_presentation:['redirect'],revocation_endpoint:`${this.issuer}/oauth/revoke`,...this.service.dpopNonces?{dpop_signing_alg_values_supported:['ES256']}:{},contracts:[]},this.manifestDeclarations?.()??{});}
   authority(context,mutation){return {context,mutation};}
   beginAuthorization(input,options){this.requireReady();return this.service.beginAuthorization(input,options);}
   inspect(context,id){this.requireReady();return this.service.inspect(id,context?.sessionToken?this.authority(context,false):undefined);}

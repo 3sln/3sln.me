@@ -1,6 +1,6 @@
-import { fail } from '../messaging/store.mjs';
-import { signContactToken } from '../messaging/contact-tokens.mjs';
-import { parseLinkQuery, parseLinkMeta, parseLinkData, metaDigest, verifyLinkSignature, replayDigest, exactMembers, exactOrigin, randomToken, base64urlRandom, plainObject, LINK_DATA_TYP, CONTACT_LINK_TYPE } from '../messaging/bindle-links.mjs';
+import { fail } from '../core/records.mjs';
+// Core links envelope (slice C1a); the signer is the link-position JWS signer, never the contact-token one.
+import { parseLinkQuery, parseLinkMeta, parseLinkData, metaDigest, verifyLinkSignature, replayDigest, exactMembers, exactOrigin, randomToken, base64urlRandom, plainObject, signLinkJWS, LINK_DATA_TYP, CONTACT_LINK_TYPE } from '../links/envelope.mjs';
 import { isUUID as uuid } from '../core/primitives.mjs';
 
 // Audience responses for conditional contact links (links §7.2, §7.3, §9).
@@ -36,7 +36,7 @@ export async function signLinkResponse({ meta, principal, key, crypto = globalTh
   const iat = Math.floor(clock() / 1000), exp = iat + lifetime;
   const header = { alg: 'ES256', kid: key.kid, typ: LINK_DATA_TYP };
   const claims = { bindle: 'link-data', v: 1, type: parsed.claims.type, md: await metaDigest(crypto, parsed), aud: parsed.claims.aud, iat, exp, iss, sub, handle, nonce: base64urlRandom(crypto, 16) };
-  const data = await signContactToken({ header, claims, privateKey: key.privateKey, crypto });
+  const data = await signLinkJWS({ header, claims, privateKey: key.privateKey, crypto });
   return { data, url: `${parsed.claims.aud}?bindle_meta=${parsed.value}&bindle_data=${data}`, expiresAt: exp * 1000 };
 }
 

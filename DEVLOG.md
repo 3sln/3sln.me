@@ -1929,3 +1929,66 @@ Device session approvals keep session semantics, capped by the approving session
 Slices EV/IA/CX are added to the roadmap; AMD-C12–C20 are proposed and unsigned. Reviewer ___ Date ___ Outcome ___.
 
 BB-B1 landed: `packages/bindlebox-protocol`, a pure, deterministic Bindle Messaging v1 library (Web Crypto only, no I/O, clock or randomness). It covers envelope, genesis, invitation-response, receipt and descriptor shapes for all kinds and 11 record types; digests, event IDs and domain-separated signers; delegation certificate parsing/verification with injected directory/status ports; receipts returning `unknown` on any doubt; pair-gate credentials, audience freezing and author-keyed replay; strict delivery/multicast/RPC parsers; failure classification. 21 fixed signed vectors plus multipart, multicast and pair-token vectors; seeded fuzzing caught one bug. Core 1470 (6 todo), BindleBox suite 44 including the import boundary. [Review](docs/release/bindlebox-protocol-review.md): BR-1 high (a signed `identityURI` could redirect the status check and bypass revocation; now pinned to the directory value), BR-2/3 medium and BR-4–10 low, all fixed. Spec items for the design owner: `secret-share` should require a status check; envelopes are signed per recipient; multicast results lack per-context status; gap/introduction liveness. Reviewer ___ Date ___ Outcome ___.
+
+Wave 1 integration (Codex, coordinator-verified):
+- legacy QR approval works through the LA1 aliases, with a Worker CAS fix for consumed requests extending expiry; the code-revealing review page stays removed;
+- the moved form-policy dependency is bundled for fixtures;
+- link HTTP tests no longer depend on prebuilt assets;
+- fixed DOM sleeps replaced with event waits;
+- a Worker test transport upload race (EPIPE) fixed, 12 stress runs passing;
+- S1: suspension and tombstoning atomically revoke approval lineage, with the durable outbox kept and tests proving reactivation cannot revive app authority;
+- S2: bounded cleanup of expired approval records with Node alarm restoration;
+- EXT-X5 brokering JWKS wired into federation behind its flag.
+
+Gates: core 1470 (46 s), Worker 55, UI-state 215, DOM, build, dry run, browser gate 179 with 4 WebKit skips. Wave 1 committed as ec34575.
+
+Wave 2a started:
+- Codex: EXT-X2 declaration registry, BB-B3 send queue/events, EV-1 bus manifest validation.
+- Claude: LA2 device grant (also applying the new app lifetime model), EXT-X3 integration manifest, BB-C1a core links (link minting moves to the current registry key), ACT-1 activity backend, BB-B2 receive/contacts/intake with spam tiers.
+
+IDKEYS-2 proceeds next with 24 h delegation certificates as a provisional default pending the user's answer.
+User decision (2026-10-20): app/integration access tokens last 15 minutes when bearer and up to 60 minutes when DPoP-bound, both host-configurable. Rationale: every RPC checks the live grant, so revocation stays immediate regardless of token lifetime, and longer lifetimes cut refresh writes (288 per active day at 5 minutes vs 96 at 15) and rotation races. Rotation, reuse detection, no absolute lifetime and the 180-day idle expiry are unchanged. Sent to LA2.
+
+EXT-X3 landed (unmounted): `packages/federation/integrations.mjs` parses `bindle_integration` from client metadata only. Every URL must sit on the `client_id` origin and path prefix, with an 8 KiB bound; confidential members in a public document invalidate the manifest. AMD-C7 accepts `private_key_jwt` clients only with integrations.v1. Key sets use the client-metadata egress and cache, with RFC 7638 thumbprints pinned, and the §2.3 classifier adopts only narrowing changes. [X3 review](docs/release/extensibility-review.md): S1 high (a copied public key bypassed pinning) fixed by keeping added keys pending until a pinned key vouches for them, a provisional deviation from integrations §2.3 needing sign-off; S3–S5 fixed. S2 open: the Node egress adapter hides 404/410 and drops `Cache-Control` (queued for the Wave 2 integration pass). The spec example names setup fragments `id` while code uses `fragment`; both accepted pending a spec fix. Reviewer ___ Date ___ Outcome ___.
+
+Wave 2a Codex streams landed:
+- **EXT-X2:** append-only manifest declaration registry with flag-and-mount gates and bounds; existing manifests byte-identical.
+- **EV-1:** bus manifest validation and pinning with engine Query/Action behind a new default-off `EVENT_BUSES_ENABLED`; provisional unpublished `docs/artefacts/event-bus-v1.json`; 11 tests.
+- **BB-B3:** durable per-recipient send tasks, retry budgets, host breakers, cancellation fencing, Retry missing/catch-up, and resumable progress (finite SSE replay batches). 23 tests including SQLite recovery and the 1000-recipient bound. Submission accepts prepared signed envelopes; manual retry grants one additional ten-attempt allowance.
+
+Pending for later integration: alarm wiring, receive catch-up wiring, archive capacity reclamation, Worker queue recovery verification. Cross-stream test failures await the Wave 2a integration pass after the Claude streams land.
+
+BB-C1a landed (provisional): generic link machinery in `packages/links/{envelope,replay,audience,preview,profile,policies}.mjs`, with identical re-exports from the old paths (test-asserted). Contact links are minted with the current registry key, re-checked at commit; retired keys still verify, revoked keys never do. A flag-gated links contract (`issuance`, `types`, `engine`: issue, revoke, rotate, evaluate, list, changes) authorizes app actors by current slot occupancy through a `LINK_SLOT_OCCUPANT` port, refusing everything without it. Owner account slice and routes; no RPC exposure yet. 13 new tests. [Review](docs/release/core-links-review.md): revoked links holding the cap for about 13 months, orphan grants after a rotation race and a missing owner check, all fixed. `evaluate` trusts the app-supplied principal (rate-limited); C1b must send a verifiable author proof before mounting. Provisional rule: a new slot occupant inherits the previous app's links. Identity key rotation may now get a route. Reviewer ___ Date ___ Outcome ___.
+
+ACT-1 landed (provisional, behind `ACTIVITY_V2_ENABLED`): `packages/activity` plus engine domain `activity`.
+- App-bound create/replace/retract with per-revision ES256 admission evidence.
+- Namespaced app tags, refusing all `sys:` and colon look-alikes.
+- Incarnation-scoped deduplication; hashed collapse groups that coalesce only pending work.
+- Exact-revision replace/retract with a reserved tombstone slot; terminal expiry; private read/archive.
+- Per-app limits across reconnections plus account totals, with a separate retract reserve and receipt lane. App operations are not owner-dispatchable.
+- v1 messages are surfaced through a read adapter, marked unverified unless the caller checks them. `/api/activity` route added.
+
+16 new tests. [Review](docs/release/activity-design-review.md#act-1-implementation): S1/S2 medium (receipt starvation, per-app storage exhaustion) and S3–S5/S9 fixed, plus an issuer omission in budget, tag and receipt keys found during fixes; S6, S7 and S10 open. Pending: an activity resource descriptor in `packages/runtime/federation.mjs` (integration pass), v2 forms, lifecycle export, ACT-2 dispatch. Reviewer ___ Date ___ Outcome ___.
+
+BB-B2 landed (provisional, unmounted): the BindleBox receive path for link-kind deliveries.
+- **Cheapest refusal first:** the edge-index credential check runs without waking a mailbox, followed by exact meta segments, framing, owner key and author verification. Live status is checked per spec §3.4, and known revocations are refused otherwise.
+- **One admission transaction** covers replay, the live authorization recheck, budgets, storage and the receipt, so a receipt is never issued before commit.
+- **Contacts:** parents via the links contract, local-first revocation, adding contacts from a link, blocks.
+- **Budgets** per sender, per domain and per owner, plus §12.1 public-request limits.
+- **Spam tiers** apply after custody: model-pinned thresholds, calibration mode, heuristics that never reject, an allowlist, and a 500-item / 7-day recoverable Rejected view. Bridged intake checks provenance.
+- **Delegation:** status caches and a recheck sweep quarantine items when a revocation is learned.
+
+23 simulator tests; BindleBox suite 93/93. [Review](docs/release/bindlebox-receive-review.md): BB2-R1–R8 fixed (orphaned staged bodies, body overwrite on conflict, refusal amplification, intake dedup binding, occupant self-calibration, spoofed allowlist, incomplete erasure, allowance overspend). BB2-I1 open: owner policy changes do not yet clear cached audience decisions. Operation registration is left for integration. Reviewer ___ Date ___ Outcome ___.
+
+LA2 landed (unmounted, flag off): the RFC 8628 provider for reviewed clients only, as engine `AppAction`s over a `deviceGrant` provider (`DeviceAuthorize`, `DeviceToken`, `DeviceReview`, `DeviceApprove`, `DeviceRpc`, `DeviceCancel`, `DeviceLineageDrain`). DPoP-bound access and refresh, single redemption, lineage checks on every refresh and RPC. The wiring contract for LA3 is in linked-approval §10.2. App lifetimes per user decisions now apply to every app grant: no absolute limit, `APP_REFRESH_IDLE_DAYS`=180, `APP_ACCESS_TOKEN_MINUTES`=15, `APP_DPOP_ACCESS_TOKEN_MINUTES`=60, a 30 s grace, live checks on refresh and RPC (RPC already rechecked grants). App approval duration choices are now `ongoing` (default), `1h` and `8h`, consistent with the later no-absolute-lifetime direction, superseding the earlier 1 h default. 13 tests with seeded single-redemption chaos. [Review](docs/release/linked-approval-review.md): LA2-S1, S4–S7, S9, S11 fixed. Open: SDK token ceilings and `refresh_expires_in` semantics (a release blocker), `service.mjs` initial `issueAccess` still 5 min, LA4 duration list, LA7 `expiresAt:null`. Reviewer ___ Date ___ Outcome ___.
+
+Wave 2a integration (Codex, coordinator-verified):
+- SDK and federation lifetimes aligned (15 min bearer / 60 min DPoP access, rotating refresh, sliding 180-day idle, bounded history, child tokens, cleanup);
+- approval choices `ongoing`/`1h`/`8h` with en/es copy and null expiry;
+- the flag-gated activity resource descriptor, with consent → token → RPC coverage;
+- Node egress preserves 404/410 and Cache-Control;
+- the integrations spec example uses `fragment`;
+- BindleBox operations and providers registered, and the CLI simulator wired with an end-to-end send → receive → verified receipt → status proof;
+- CLI operation expectations derived from registries.
+
+Gates: core 1595, Worker 55, UI-state 215, BindleBox 96, DOM, build, dry run, audit; browser gate 179 with 4 WebKit skips.

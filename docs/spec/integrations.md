@@ -63,7 +63,7 @@ A provider that does not declare `integrations.v1` MUST refuse a confidential cl
     "v": 1,
     "setup": {
       "fragments": [
-        {"id": "https://inbox.example/preferences/inbox-settings/v1", "required": true,
+        {"fragment": "https://inbox.example/preferences/inbox-settings/v1", "required": true,
          "purpose": "Where to store your messages.", "fields": ["store", "retention"]}
       ]
     },

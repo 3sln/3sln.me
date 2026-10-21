@@ -127,44 +127,49 @@ test('global resolve budget: sized to live codes, then a challenge per typed att
   } finally { await conservative.engine.dispose(); }
 });
 
-test('lifetime caps: session E = min(S, now+24h, U) with collapsing options; app E = min(now+30d, U), 7 d idle, 1 h default', async () => {
+test('lifetime caps: session E = min(S, now+24h, U) with collapsing options; apps have no absolute lifetime by default, 180 d idle (host-configurable)', async () => {
   const now = 1e12, S = now + 2 * HOUR, ttl = DAY;
   assert.deepEqual(linkedLifetime({ kind: 'session', choice: '1h', now, sessionExpiresAt: S, sessionTtlMs: ttl }), { expiresAt: now + HOUR });
   assert.deepEqual(linkedLifetime({ kind: 'session', choice: '8h', now, sessionExpiresAt: S, sessionTtlMs: ttl }), { expiresAt: S });
   assert.deepEqual(linkedLifetime({ kind: 'session', choice: 'session', now, sessionExpiresAt: now + 3 * DAY, sessionTtlMs: ttl }), { expiresAt: now + DAY });
   assert.deepEqual(linkedDurations({ kind: 'session', now, sessionExpiresAt: S, sessionTtlMs: ttl }).map(o => o.choice), ['1h', 'session']);
-  assert.deepEqual(linkedLifetime({ kind: 'app', choice: '30d', now }), { expiresAt: now + 30 * DAY, idleExpiresAt: now + 7 * DAY });
+  assert.deepEqual(linkedLifetime({ kind: 'app', choice: 'ongoing', now }), { expiresAt: null, idleExpiresAt: now + 180 * DAY });
+  assert.deepEqual(linkedLifetime({ kind: 'app', choice: 'ongoing', now, idleMs: 30 * DAY }), { expiresAt: null, idleExpiresAt: now + 30 * DAY }, 'host-configured idle');
+  assert.deepEqual(linkedLifetime({ kind: 'app', choice: 'ongoing', now, idleMs: 400 * DAY }).idleExpiresAt, now + 180 * DAY, 'out-of-range idle falls back to the default');
   assert.deepEqual(linkedLifetime({ kind: 'app', choice: '1h', now }), { expiresAt: now + HOUR, idleExpiresAt: now + HOUR });
-  assert.equal(linkedLifetime({ kind: 'app', choice: 'session', now }), null); assert.equal(linkedLifetime({ kind: 'session', choice: '30d', now, sessionExpiresAt: S, sessionTtlMs: ttl }), null);
+  assert.equal(linkedLifetime({ kind: 'app', choice: '30d', now }), null, 'the superseded 30-day choice is gone');
+  assert.equal(linkedLifetime({ kind: 'app', choice: 'session', now }), null); assert.equal(linkedLifetime({ kind: 'session', choice: 'ongoing', now, sessionExpiresAt: S, sessionTtlMs: ttl }), null);
   const f = fixture(); try {
     const { owner } = await activate(f.act); f.clock.advance(23 * HOUR); await f.step(owner);
     const request = await startSession(f), view = await f.resolve({ code: request.userCode }, sessionContext(owner));
     assert.deepEqual(view.durations, [{ choice: 'session', expiresAt: owner.expiresAt }], 'options reaching S collapse');
-    await assert.rejects(approve(f, request, owner, { choice: '30d' }), { code: 'invalid_choice' });
+    await assert.rejects(approve(f, request, owner, { choice: 'ongoing' }), { code: 'invalid_choice' });
     assert.equal((await approve(f, request, owner, { choice: '8h' })).expiresAt, owner.expiresAt);
     f.clock.advance(5000); await f.la('linkedPoll', request, tv); const child = await f.la('linkedAccept', request, tv);
     assert.equal(child.expiresAt, owner.expiresAt, 'a derived session never outlives its approver');
-    const short = await approvedApp(f), long = await approvedApp(f, '30d'), t1 = short.grant.approvedAt, t2 = long.grant.approvedAt;
+    const short = await approvedApp(f), long = await approvedApp(f, 'ongoing'), t1 = short.grant.approvedAt, t2 = long.grant.approvedAt;
     assert.deepEqual([short.grant.expiresAt, short.grant.idleExpiresAt], [t1 + HOUR, t1 + HOUR]);
-    assert.deepEqual([long.grant.expiresAt, long.grant.idleExpiresAt, long.grant.idleMs], [t2 + 30 * DAY, t2 + 7 * DAY, 7 * DAY]);
-    assert(long.grant.expiresAt > long.approver.expiresAt, 'app authority is not capped by S');
+    assert.deepEqual([long.grant.expiresAt, long.grant.idleExpiresAt, long.grant.idleMs], [null, t2 + 180 * DAY, 180 * DAY]);
+    assert.equal((await f.repository.get(long.ref.owner)).linkedLineage.find(entry => entry.id === long.ref.lineageId).expiresAt, Number.MAX_SAFE_INTEGER, 'ongoing lineage never ends by time');
+    f.clock.advance(400 * DAY); assert.equal(await f.live(long.ref), true, 'no absolute lifetime: only revocation ends the lineage'); assert.equal(await f.live(short.ref), false);
   } finally { await f.engine.dispose(); }
 });
 
-test('fresh credential: session approval needs credential evidence within 5 minutes; app approval needs a sign-in made for it', async () => {
+test('fresh credential: one passkey/password confirmation within 5 minutes at approval, for sessions and apps alike', async () => {
   const f = fixture(); try {
     const { owner } = await activate(f.act); f.clock.advance(LINKED.freshMs); const session = await startSession(f);
     await assert.rejects(approve(f, session, owner), { code: 'reauthentication_required' });
     assert.equal((await f.resolve({ code: session.userCode }, sessionContext(owner))).freshness.satisfied, false);
     await f.step(owner); await approve(f, session, owner);
-    const early = await f.login(); f.clock.advance(1000); const app = await startApp(f);
-    await assert.rejects(approve(f, app, owner), { code: 'fresh_sign_in_required' }, 'step-up alone never qualifies');
-    await assert.rejects(approve(f, app, early), { code: 'fresh_sign_in_required' }, 'a sign-in from before the request does not count');
-    f.clock.advance(1000); const fresh = await f.login(), view = await f.resolve({ code: app.userCode }, sessionContext(fresh));
-    assert.deepEqual(view.freshness, { required: 'sign-in', satisfied: true }); assert.equal(view.defaultChoice, '1h'); assert.equal(view.app.host, 'acme.example');
-    f.clock.advance(LINKED.freshMs); await assert.rejects(approve(f, app, fresh), { code: 'fresh_sign_in_required' });
-    await f.step(owner); const child = await derive(f, owner); await f.step(child); f.clock.advance(1000); const app2 = await startApp(f);
-    await assert.rejects(approve(f, app2, child), { code: 'fresh_sign_in_required' }, 'derived sessions cannot approve apps');
+    const early = await f.login(); f.clock.advance(LINKED.freshMs); const app = await startApp(f);
+    await assert.rejects(approve(f, app, early), { code: 'reauthentication_required' }, 'a stale sign-in does not count');
+    let view = await f.resolve({ code: app.userCode }, sessionContext(early));
+    assert.deepEqual(view.freshness, { required: 'step-up', satisfied: false }); assert.equal(view.defaultChoice, 'ongoing'); assert.equal(view.idleLimitMs, 180 * DAY); assert.equal(view.app.host, 'acme.example');
+    await f.step(owner); const child = await derive(f, owner), app2 = await startApp(f);
+    await assert.rejects(approve(f, app2, child), { code: 'reauthentication_required' }, 'a derived session is never fresh by itself');
+    await f.step(child); assert.equal((await approve(f, app2, child)).expiresAt, null, 'after its own step-up a derived session may approve; lineage covers its chain');
+    await f.step(early); view = await f.resolve({ code: app.userCode }, sessionContext(early)); assert.equal(view.freshness.satisfied, true);
+    assert.equal((await approve(f, app, early)).approved, true, 'one step-up of an existing session suffices');
   } finally { await f.engine.dispose(); }
 });
 
@@ -226,7 +231,7 @@ test('lineage cascade is atomic: one account CAS ends the session chain and move
 
 for (const path of ['revokeSession', 'revokeOtherSessions', 'removePasskey', 'recover', 'linkedLineageRevoke', 'linkedCancelApp', 'suspension']) test(`lineage ends through ${path}`, async () => {
   const f = fixture(); try {
-    const { owner, file } = await activate(f.act), { approver, ref, request } = await approvedApp(f, '30d'), unrelated = await f.login();
+    const { owner, file } = await activate(f.act), { approver, ref, request } = await approvedApp(f, 'ongoing'), unrelated = await f.login();
     if (path === 'revokeSession') await f.act(path, { sessionId: approver.sessionContext }, sessionContext(owner));
     else if (path === 'revokeOtherSessions') { await f.step(unrelated); await f.act(path, {}, sessionContext(unrelated)); }
     else if (path === 'removePasskey') { const account = await f.repository.get(ref.owner); account.credentials = [{ id: 'approver-key' }, { id: 'other-key' }]; account.sessions.find(s => s.id === approver.sessionContext).credentialId = 'approver-key'; await f.repository.compareAndSwap(account.id, account.revision, account); await f.act(path, { credentialId: 'approver-key' }, sessionContext(owner)); }
@@ -240,15 +245,15 @@ for (const path of ['revokeSession', 'revokeOtherSessions', 'removePasskey', 're
   } finally { await f.engine.dispose(); }
 });
 
-test('natural expiry of the approving session keeps app lineage until E; the backstop fails closed for inactive accounts and E', async () => {
+test('natural expiry of the approving session keeps app lineage (no absolute lifetime); the backstop fails closed for other lineages', async () => {
   const f = fixture(); try {
-    await activate(f.act); const { approver, ref } = await approvedApp(f, '30d');
+    await activate(f.act); const { approver, ref } = await approvedApp(f, 'ongoing');
     f.clock.advance(DAY + 1000); await f.login(); // prunes the naturally expired approver
     assert.equal((await f.repository.get(ref.owner)).sessions.some(s => s.id === approver.sessionContext), false);
     assert.equal(await f.live(ref), true);
     assert.equal(await f.live({ ...ref, familyId: 'another-family' }), false); assert.equal(await f.live({ ...ref, lineageId: 'another-lineage' }), false);
     await f.act('logout', {}, sessionContext(await f.login())); assert.equal(await f.live(ref), true, 'unrelated sign-out leaves it');
-    f.clock.advance(30 * DAY); assert.equal(await f.live(ref), false, 'never past E');
+    f.clock.advance(365 * DAY); assert.equal(await f.live(ref), true, 'an ongoing app has no absolute end'); await f.sys('linkedLineageRevoke', { owner: ref.owner, lineageId: ref.lineageId }); assert.equal(await f.live(ref), false);
   } finally { await f.engine.dispose(); }
 });
 
@@ -314,7 +319,7 @@ test('notices go out only after approval and name only the verified host or devi
     f.clock.advance(1000); const fresh = await f.login(); assert.equal((await f.resolve({ code: app.userCode }, sessionContext(fresh))).app.preselect, true);
     const denied = await startSession(f); await f.la('linkedDeny', { requestId: denied.requestId, code: denied.userCode }, ownerContext); assert.equal(notices.length, 0);
     await approve(f, app, fresh); assert.equal(notices.length, 1);
-    assert.deepEqual({ ...notices[0], subject: { ...notices[0].subject } }, { type: 'linked-approval', owner: owner.account.id, kind: 'app', subject: { host: 'acme.example' }, approvedAt: f.clock.now(), expiresAt: f.clock.now() + HOUR, consoleUrl: config.origin + '/' });
+    assert.deepEqual({ ...notices[0], subject: { ...notices[0].subject } }, { type: 'linked-approval', owner: owner.account.id, kind: 'app', subject: { host: 'acme.example' }, approvedAt: f.clock.now(), expiresAt: null, consoleUrl: config.origin + '/' });
     assert(!JSON.stringify(notices).includes('Bank'));
     const session = await startSession(f); fail = true; assert.equal((await approve(f, session, owner)).approved, true); fail = false;
     const another = await startSession(f); await approve(f, another, owner); assert.deepEqual({ ...notices.at(-1).subject }, { deviceKind: 'tv' });
@@ -377,7 +382,7 @@ test('review fixes: a full lineage table closes redemption with access_denied be
     assert.deepEqual(await redeem(f, request), { status: 'access_denied' }); assert.equal((await f.deviceRequests.get(request.requestId)).status, 'approved');
   } finally { await f.engine.dispose(); }
   const g = fixture(); try {
-    await activate(g.act); const { ref, approver } = await approvedApp(g, '30d'); g.clock.advance(DAY - 10000); const other = await g.login();
+    await activate(g.act); const { ref, approver } = await approvedApp(g, 'ongoing'); g.clock.advance(DAY - 10000); const other = await g.login();
     g.clock.advance(20000); assert((await g.repository.get(ref.owner)).sessions.some(s => s.id === approver.sessionContext && s.expiresAt <= g.clock.now()), 'approver expired but still stored');
     await g.act('revokeOtherSessions', {}, sessionContext(other)); assert.equal(await g.live(ref), true, 'natural expiry is deterministic');
   } finally { await g.engine.dispose(); }
@@ -387,7 +392,7 @@ test('review fixes: a full lineage table closes redemption with access_denied be
 });
 
 test('lifecycle tombstone atomically revokes naturally expired app lineage and retains its durable outbox',async()=>{
- const f=fixture();try{await activate(f.act);const {ref}=await approvedApp(f,'30d');f.clock.advance(2*DAY);assert.equal(await f.live(ref),true);
+ const f=fixture();try{await activate(f.act);const {ref}=await approvedApp(f,'ongoing');f.clock.advance(2*DAY);assert.equal(await f.live(ref),true);
  const port=lifecycleIdentityPort(f.repository,{clock:f.clock.now});await port.tombstone(ref.owner);assert.equal(await f.live(ref),false);const account=await f.repository.get(ref.owner);assert.equal(account.status,'deleted');assert.deepEqual(account.linkedLineage,undefined);assert.equal(account.lineageOutbox[0].familyId,ref.familyId);assert.deepEqual(account.sessions,[]);
  await port.tombstone(ref.owner);assert.deepEqual((await f.repository.get(ref.owner)).lineageOutbox,account.lineageOutbox);
  }finally{await f.engine.dispose();}

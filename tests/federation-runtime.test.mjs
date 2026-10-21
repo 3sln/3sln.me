@@ -52,7 +52,7 @@ test('refresh refuses a disconnected app and cannot adopt a reconnect generation
  const f=await fixture({live:true});f.controller.service.refreshEnabled=true;let generation=0,active=false;f.controller.service.connections={binding:async()=>({id:'app',generation}),connect:async(_client,expected)=>{assert.equal(expected.generation,generation);active=true;generation++;return {id:'app',generation};},check:async connection=>active&&connection.generation===generation};const original=await flow(f,{session:true});active=false;generation++;await assert.rejects(f.controller.refresh({refreshToken:original.refresh_token,clientId}),{code:'unauthorized'});active=true;await assert.rejects(f.controller.refresh({refreshToken:original.refresh_token,clientId}),{code:'unauthorized'});
 });
 
-test('bounded family admission reclaims recovery-invalid sessions without evicting valid devices',async()=>{
- const f=await fixture({live:true});f.controller.service.refreshEnabled=true;for(let index=0;index<32;index++)await flow(f,{session:true});await assert.rejects(f.controller.metadata.transaction(tx=>f.controller.service.pruneRefreshFamilies(tx,{subject:`${issuer}/entities/${f.account.id}`,epoch:f.account.recoveryHash})),{code:'rate_limited'});
+test('family admission bounds each client and reclaims recovery-invalid sessions',async()=>{
+ const f=await fixture({live:true});f.controller.service.refreshEnabled=true;for(let index=0;index<32;index++)await flow(f,{session:true});assert.equal((await f.controller.metadata.transaction(tx=>tx.list('federation/family/'))).filter(row=>row.value.status==='active').length,8);
  f.account.recoveryHash='new-recovery';const replacement=await flow(f,{session:true});assert.equal(typeof replacement.refresh_token,'string');const families=await f.controller.metadata.transaction(tx=>tx.list('federation/family/'));assert.equal(families.length,1);assert.equal(families[0].value.epoch,'new-recovery');
 });

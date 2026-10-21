@@ -1,8 +1,8 @@
 // AccountController slice 6, Storage, quota, resources and Google Drive (docs/architecture/app-engine.md §12): built-in storage, resources, hosted objects and the resource RPC.
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists the methods
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
-import {APP_NOTIFICATIONS} from '../../federation/app-notifications.mjs';
-import {createAppNotification} from '../app-notifications.mjs';
+import {APP_NOTIFICATIONS,ACTIVITY_CONTRACT} from '../../federation/app-notifications.mjs';
+import {createAppNotification,activityResourceMethod} from '../app-notifications.mjs';
 import {RESOURCE_SCOPING,storageScopeOptions} from '../../storage/scoping.mjs';
 import {retryReady,retryFailure} from '../cleanup-retry.mjs';
 import {key,canonical} from '../../messaging/store.mjs';
@@ -16,6 +16,7 @@ import {archiveDigest} from './support.mjs';
 // and own method validation, live authorization and replay checks before effects or cached results.
 export const RESOURCE_METHOD_HANDLERS=Object.freeze({
   [APP_NOTIFICATIONS]:createAppNotification,
+  [ACTIVITY_CONTRACT]:activityResourceMethod,
 });
 
 export const methods={

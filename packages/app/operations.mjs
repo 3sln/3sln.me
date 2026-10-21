@@ -4,4 +4,5 @@
 import {operations} from './engine.mjs';
 import {VIEW_OPERATIONS} from './domains/views.mjs';
 import {TAG_OPERATIONS} from './domains/tags.mjs';
-export const ACCOUNT_OPERATIONS=operations(...VIEW_OPERATIONS,...TAG_OPERATIONS);
+import {ACTIVITY_OPERATIONS} from './domains/activity.mjs';
+export const ACCOUNT_OPERATIONS=operations(...VIEW_OPERATIONS,...TAG_OPERATIONS,...ACTIVITY_OPERATIONS);

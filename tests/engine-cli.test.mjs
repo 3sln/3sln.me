@@ -1,6 +1,7 @@
 // The engine CLI (scripts/engine.mjs) runs scripted dispatches against the same
 // provider set as the engine tests, and reports unexpected outcomes by exit code.
 import test from 'node:test';
+import {ACCOUNT_OPERATIONS} from '../packages/app/operations.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -38,5 +39,5 @@ test('engine CLI: an unmet expectation or unknown operation exits 1; --db persis
   assert.equal(cli(['--db', bound, '-'], script([{ op: 'views.list' }])).status, 2, 'a file bound to an account is refused');
   const listed = cli(['--list']).lines;
   assert.ok(listed.some(line => line.provider === 'accountStore' && line.status === 'pilot'));
-  assert.deepEqual(listed.filter(line => line.operation).map(line => line.operation).sort(), ['incoming.query', 'incoming.update', 'rules.delete', 'rules.list', 'rules.replace', 'rules.restore-default', 'tags.labels', 'tags.set-label', 'views.create', 'views.delete', 'views.list', 'views.update']);
+  assert.deepEqual(listed.filter(line => line.operation).map(line => line.operation).sort(), Object.keys(ACCOUNT_OPERATIONS).sort());
 });

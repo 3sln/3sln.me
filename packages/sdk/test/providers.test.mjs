@@ -131,14 +131,14 @@ test('DPoP: bound refresh with a non-extractable key, nonce retry, lifted lifeti
   const exchanges=provider.log.filter(call=>call.path==='/oauth/token');assert.equal(exchanges.length,2,'one use_dpop_nonce retry');assert.ok(exchanges.every(call=>call.dpop));
   const result=await session.client.rpc({resource:'@profile',contract:'https://contracts.example/x',method:'read'});assert.equal(result.result.subject,tokens.subject);
   const rpc=provider.log.filter(call=>call.path==='/rpc');assert.ok(rpc.every(call=>call.dpop),'every DPoP-typed RPC carries a proof');
-  const renewed=await session.client.refresh();assert.equal(renewed.dpopJkt,tokens.dpopJkt);assert.ok(renewed.refreshExpiresAt<=renewed.refreshAbsoluteAt);
-  // Memory-only (unbound) refresh tokens keep the 8 h ceiling; a DPoP-typed token without a proven key is refused.
+  const renewed=await session.client.refresh();assert.equal(renewed.dpopJkt,tokens.dpopJkt);assert.ok(renewed.refreshExpiresAt>0);
+  // Unbound refresh stays in memory, with the same provider idle policy; DPoP access requires a key.
   const base={issuer:'https://i.example',client_id:'c',token_type:'Bearer',access_token:'a',expires_in:300,audience:'https://i.example/rpc',subject:'https://i.example/u/1',granted_fragments:[],refresh_token:'r',refresh_expires_in:2592000};
   const context={issuer:'https://i.example',clientId:'c',rpcEndpoint:'https://i.example/rpc',clock:Date.now};
-  assert.throws(()=>validateAccessResponse(base,context),/renewal credential/);
+  assert.ok(validateAccessResponse(base,context));
   assert.ok(validateAccessResponse({...base,refresh_idle_expires_in:604800},{...context,dpopJkt:'k'.repeat(43)}));
-  // A long lifetime needs both the proven key and the provider's bound-session description (refresh_idle_expires_in).
-  assert.throws(()=>validateAccessResponse(base,{...context,dpopJkt:'k'.repeat(43)}),/renewal credential/);
+  // Refresh lifetime is per issued credential, even when the idle field is absent.
+  assert.ok(validateAccessResponse(base,{...context,dpopJkt:'k'.repeat(43)}));
   assert.throws(()=>validateAccessResponse({...base,token_type:'DPoP',refresh_expires_in:100},context),/access token/);
 });
 
@@ -202,4 +202,15 @@ test('island hooks: prepare keeps PKCE in memory; codes are validated like callb
   assert.equal(session.client.session.dpopJkt,prepared.dpopJkt);
   assert.deepEqual(await session.completeIslandCode({code,state:prepared.state,iss:'https://full.example'}),{outcome:'network-error',code:'invalid-callback'},'single use');
   release({decision:'approve'});assert.deepEqual(await popupFlow,{outcome:'completed'});assert.equal(driver.opened.length,1);
+});
+
+test('token lifetimes: Bearer/DPoP ceilings and 180-day idle credentials renew from each request start',()=>{
+ let now=100000;const context={issuer:'https://i.example',clientId:'c',rpcEndpoint:'https://i.example/rpc',clock:()=>now},base={issuer:context.issuer,client_id:'c',subject:'https://i.example/u/1',audience:context.rpcEndpoint,token_type:'Bearer',access_token:'a',expires_in:900,refresh_token:'r',refresh_expires_in:180*86400,refresh_idle_expires_in:180*86400,granted_fragments:[]};
+ const first=validateAccessResponse(base,context);assert.equal(first.expiresAt,now+900000);assert.equal(first.refreshExpiresAt,now+180*86400000);assert.equal(first.refreshAbsoluteAt,undefined);
+ now+=30*86400000;const second=validateAccessResponse({...base,refresh_token:'r2'},{...context,previous:first});assert.equal(second.refreshExpiresAt,first.refreshExpiresAt+30*86400000);
+ assert.throws(()=>validateAccessResponse({...base,expires_in:901},context),/access token/);
+ assert.ok(validateAccessResponse({...base,token_type:'DPoP',expires_in:3600},{...context,dpopJkt:'k'.repeat(43)}));
+ assert.throws(()=>validateAccessResponse({...base,token_type:'DPoP',expires_in:3601},{...context,dpopJkt:'k'.repeat(43)}),/access token/);
+ assert.throws(()=>validateAccessResponse({...base,refresh_token:'r'},{...context,previous:first}),/reused/);
+ assert.throws(()=>validateAccessResponse({...base,refresh_idle_expires_in:base.refresh_expires_in+1},context),/renewal credential/);
 });

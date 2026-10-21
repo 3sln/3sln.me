@@ -35,3 +35,26 @@ test('daily process budget persists after minute rate window and defaults reject
  let now=100000;const f=fixture();const fetch=createNodeMetadataFetch({allowedOrigins:[origin],lookup:f.lookup,request:f.request,clock:()=>now,maxRequestsPerDay:1});await fetch(origin+'/a');now+=61000;await assert.rejects(fetch(origin+'/b'),/budget/);
  for(const allowedOrigins of [[],['http://app.example'],['https://app.example:8443'],['https://app.example/path']])assert.throws(()=>createNodeMetadataFetch({allowedOrigins}));
 });
+
+test('client metadata Node egress preserves removal statuses and cache policy without following redirects',async()=>{
+ const {createNodeClientMetadataFetch}=await import('../packages/federation/node-client-metadata-fetch.mjs');
+ for(const status of [200,404,410]){
+  const f=fixture({status,headers:{'content-type':'application/json','cache-control':'max-age=73'},chunks:['{"removed":true}']}),fetch=createNodeClientMetadataFetch({lookup:f.lookup,request:f.request});
+  const response=await fetch(origin+'/client.json');assert.equal(response.status,status);assert.equal(response.headers.get('Cache-Control'),'max-age=73');assert.deepEqual(await response.json(),{removed:true});assert.equal(f.stats().calls,1);
+ }
+ for(const status of [301,302,307,308,500]){const f=fixture({status,headers:{location:origin+'/elsewhere'}});await assert.rejects(createNodeClientMetadataFetch({lookup:f.lookup,request:f.request})(origin+'/client.json'));assert.equal(f.stats().calls,1);}
+ for(const status of [404,410])for(const headers of [{'content-encoding':'gzip'},{'content-length':'131073'}]){const f=fixture({status,headers});await assert.rejects(f.fetch(origin+'/client.json'));}
+});
+
+test('Node egress drives metadata and integration key cache expiry and definitive removal',async()=>{
+ const {createNodeClientMetadataFetch}=await import('../packages/federation/node-client-metadata-fetch.mjs'),{ClientDirectory}=await import('../packages/federation/client-metadata.mjs');
+ const clientId=origin+'/bindle/client.json',jwksUri=origin+'/bindle/jwks.json',pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']),publicJwk=await crypto.subtle.exportKey('jwk',pair.publicKey);
+ const document={client_id:clientId,client_name:'Node integration',redirect_uris:[origin+'/bindle/callback'],token_endpoint_auth_method:'private_key_jwt',jwks_uri:jwksUri,grant_types:['authorization_code','refresh_token'],response_types:['code'],bindle_integration:{v:1,setup:{fragments:[{fragment:'https://schema.example/settings/v1',required:true,purpose:'Settings',fields:['value']}]}}};
+ let now=100000,removal=0;const calls=[];
+ const lookup=fixture().lookup,request=(options,callback)=>{calls.push(options.path);const key=options.path.endsWith('jwks.json'),f=fixture({status:key&&removal?removal:200,headers:{'content-type':'application/json','cache-control':'max-age=600'},chunks:[JSON.stringify(key?{keys:[publicJwk]}:document)]});return f.request(options,callback);};
+ const directory=new ClientDirectory({enabled:true,integrations:true,clock:()=>now,fetch:createNodeClientMetadataFetch({lookup,request})});
+ const client=await directory.resolve(clientId);assert.equal(client.integration.status,'valid');assert.ok((await directory.resolveKeys(client)).keys.length);const first=calls.length;
+ now+=599999;await directory.resolve(clientId);await directory.resolveKeys(client);assert.equal(calls.length,first);
+ now++;await directory.resolve(clientId);await directory.resolveKeys(client);assert.equal(calls.length,first+2,'both caches honor the Node max-age');
+ for(const status of [404,410]){now+=600000;removal=status;assert.equal(await directory.resolveKeys(client),null,'removed keys never reuse the stale valid set');}
+});

@@ -1,6 +1,8 @@
 import { fail, key, canonical, fromBase64url, strictText, textEncoder, boundedString } from './store.mjs';
 import { signContactToken } from './contact-tokens.mjs';
-import { parseLinkQuery, parseLinkMeta, exactMembers, httpsURI, randomToken, base64urlRandom, LINK_META_TYP, CONTACT_LINK_TYPE } from './bindle-links.mjs';
+import { parseLinkQuery, parseLinkMeta, exactMembers, httpsURI, randomToken, base64urlRandom, LINK_META_TYP, CONTACT_LINK_TYPE } from '../links/envelope.mjs';
+// Issuance half (slice C1a): new-form metas are minted with the owner's current registry key (packages/links/issuance.mjs).
+import { currentLinkKey, mintableSigningKey, signLinkMeta } from '../links/issuance.mjs';
 import { CONTACT_DELIVERY_CONTRACT } from './contact-delivery.mjs';
 import { contactIntake, validateIntake } from './tag-policy.mjs';
 
@@ -71,18 +73,26 @@ export class ContactEndpointService {
     if (!validKinds(kinds)) fail('invalid_link_kinds');
     if (audience !== undefined && (!exactMembers(audience, [], ['policy']) || (audience.policy !== undefined && !this.linkPolicies.includes(audience.policy)))) fail('invalid_link_policy');
     const intake = validateIntake({ autoTags: requiredTags, optionalTags, labels: tagLabels }, 1, this.clock());
+    // Minted with the CURRENT key: a caller-named kid is used only without a registry-held current key, and then
+    // must itself be active; a retired key verifies what it signed but never signs anything new.
+    const signing = await currentLinkKey(this.tokens.keys, owner, { kid: options.kid });
+    if (!signing?.kid || !await this.store.transaction(tx => mintableSigningKey(tx, owner, signing.kid))) fail('invalid_key');
     // Base grant claims carry no tags, so minted bearers never disclose auto tags.
-    const issued = await this.tokens.createGrant(owner, { ...options, requiredTags: [], optionalTags: [] });
+    const issued = await this.tokens.createGrant(owner, { ...options, kid: signing.kid, requiredTags: [], optionalTags: [] });
     const { grant } = issued, base = grant.claims;
     const endpoint = `${this.issuer}/users/${encodeURIComponent(handle)}/contact/${encodeURIComponent(grant.id)}`;
     const claims = { bindle: 'link-meta', v: 1, type: CONTACT_LINK_TYPE, iss: base.iss, aud: endpoint, jti: base.jti, iat: base.iat, exp: base.exp, sub: base.sub, resource: `${this.issuer}/entities/${encodeURIComponent(owner)}/contacts/${encodeURIComponent(grant.id)}`, kinds: [...kinds], collections: base.collections, mimeTypes: base.mimeTypes, maxMessages: base.maxMessages, maxBytes: base.maxBytes, maxMessageBytes: base.maxMessageBytes, ...(audience ? { audience: { challenge: base64urlRandom(this.crypto, 16), ...(audience.policy ? { policy: audience.policy } : {}) } } : {}) };
     const header = { alg: grant.header.alg, kid: grant.header.kid, typ: LINK_META_TYP };
     const privateKey = await this.signer({ owner, kid: header.kid, alg: header.alg });
-    const value = await signContactToken({ header, claims, privateKey, crypto: this.crypto });
+    const { value, input } = await signLinkMeta({ header, claims, privateKey, crypto: this.crypto });
+    // A key rotated between createGrant and this commit refuses; the endpoint-less grant is removed, never left to
+    // count toward grant_limit (core-links review finding 3).
+    if (!await this.store.transaction(tx => mintableSigningKey(tx, owner, header.kid))) { await this.store.transaction(async tx => { const orphan = await tx.get(key('contact-grant', grant.id)); if (orphan && !orphan.endpoint) await tx.delete(key('contact-grant', grant.id)); }); fail('invalid_key'); }
     return this.store.transaction(async tx => {
       const current = await this.tokens.live(tx, { header: issued.protectedHeader, claims: issued.claims });
       if (current.endpoint) fail('invalid_grant_metadata');
-      current.endpoint = { url: endpoint, form: 'link', header, claims, input: value.split('.').slice(0, 2).join('.') }; current.quarantined = false; current.intake = intake;
+      if (!await mintableSigningKey(tx, owner, header.kid)) fail('invalid_key');
+      current.endpoint = { url: endpoint, form: 'link', header, claims, input }; current.quarantined = false; current.intake = intake;
       current.delivery = { resource: claims.resource, kinds: claims.kinds, collection: claims.collections[0] };
       await tx.set(key('contact-grant', grant.id), current);
       return { grant: current, url: `${endpoint}?bindle_meta=${value}`, endpoint };
@@ -90,16 +100,21 @@ export class ContactEndpointService {
   }
   // Challenge rotation (links §7.1): new meta for the same parent. Quotas,
   // receipts and intake are untouched; every outstanding response's md breaks.
+  // The new meta is signed with the CURRENT key, so rotation keeps working after an identity key rotation; the
+  // header's kid moves with it and the stored exact header is replaced in the same write.
   async rotateChallenge(owner, id) {
     const signed = await this.store.transaction(async tx => tx.get(key('contact-grant', id)));
     if (!signed?.endpoint?.claims?.audience || signed.owner !== owner || !signed.active) fail('not_found');
-    const privateKey = await this.signer({ owner, kid: signed.endpoint.header.kid, alg: signed.endpoint.header.alg });
+    const signing = await currentLinkKey(this.tokens.keys, owner, { kid: signed.endpoint.header.kid, alg: signed.endpoint.header.alg });
+    const header = { alg: signing.alg ?? signed.endpoint.header.alg, kid: signing.kid, typ: LINK_META_TYP };
+    const privateKey = await this.signer({ owner, kid: header.kid, alg: header.alg });
     return this.store.transaction(async tx => {
       const path = key('contact-grant', id), current = await tx.get(path), now = Math.floor(this.clock()/1000);
       if (!current?.active || current.owner !== owner || current.endpoint?.input !== signed.endpoint.input || current.claims.exp <= now) fail('rotation_conflict');
-      const { header } = current.endpoint, claims = { ...current.endpoint.claims, iat: now, audience: { ...current.endpoint.claims.audience, challenge: base64urlRandom(this.crypto, 16) } };
-      const value = await signContactToken({ header, claims, privateKey, crypto: this.crypto });
-      current.endpoint = { ...current.endpoint, claims, input: value.split('.').slice(0, 2).join('.') };
+      if (!await mintableSigningKey(tx, owner, header.kid)) fail('rotation_conflict');
+      const claims = { ...current.endpoint.claims, iat: now, audience: { ...current.endpoint.claims.audience, challenge: base64urlRandom(this.crypto, 16) } };
+      const { value, input } = await signLinkMeta({ header, claims, privateKey, crypto: this.crypto });
+      current.endpoint = { ...current.endpoint, header, claims, input };
       await tx.set(path, current);
       return { url: `${current.endpoint.url}?bindle_meta=${value}` };
     });

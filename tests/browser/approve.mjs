@@ -24,7 +24,7 @@ function harness({accounts=[member()],value=review(),hash='',draft=null,failReso
   if(path==='/api/auth/linked/resolve'){if(failResolve)throw Object.assign(Error('untrusted server text'),{code:failResolve});return structuredClone(value);}
   if(path==='/api/auth/step-up/begin')return {passkey:true,password:true,authenticationOptions:{}};
   if(path==='/api/auth/step-up'){stepUp=true;return {};}
-  if(path==='/api/auth/linked/approve')return {expiresAt:NOW+input.choice};if(path==='/api/auth/linked/deny')return {};
+  if(path==='/api/auth/linked/approve')return {expiresAt:input.choice==='ongoing'?null:NOW+({'1h':HOUR,'8h':8*HOUR}[input.choice]??input.choice)};if(path==='/api/auth/linked/deny')return {};
   if(path==='/api/auth/linked/configure')return value;throw Error(path);
  }};
  const i18n=approveLocalization('en'),root=document.createElement('div'),kit=consentKit({model:state.model,t:i18n.t,root,rerender(){},onConfigure(){}});
@@ -40,7 +40,7 @@ test('code, locator, draft and review validation discard URL codes and unreviewe
  for(const origin of ['https://evil:pw@acme.example','http://acme.example','https://acme.example/path'])assert.throws(()=>validApprovalReview(review('app',{client:{origin,reviewed:true}}),NOW));
  assert.throws(()=>validApprovalReview(review('app',{client:{origin:'https://acme.example',reviewed:false}}),NOW));assert.throws(()=>validApprovalReview(review('session',{expiresAt:NOW}),NOW));
  const nonfresh=review();nonfresh.session.authAt=null;assert.equal(validApprovalReview(nonfresh,NOW).session.authAt,0);
- assert.equal(approvalDurations(v.request,v.session,NOW)[0].value,HOUR);assert.equal(approvalDurations({kind:'session'},{expiresAt:NOW+5000},NOW).length,1);
+ assert.equal(approvalDurations(v.request,v.session,NOW)[0].value,'ongoing');assert.equal(approvalDurations({kind:'session'},{expiresAt:NOW+5000},NOW).length,1);
  assert.equal(approvalDurations({kind:'session'},{expiresAt:NOW+24*HOUR},NOW).at(-1).value,24*HOUR);
 });
 
@@ -58,11 +58,11 @@ test('engine harness: explicit multi-account selection, session binding and lost
  h.setAccounts([member()]);await h.run('accounts');assert.equal(h.state.model.request,null);assert.equal(h.state.model.session,null);assert.equal(h.state.model.phase,'choose');await h.run('approve');assert.equal(h.calls.filter(c=>c.path.endsWith('/approve')).length,0);
 });
 
-test('engine harness: app requires new credential sign-in, 1 h default and optional sensitive consent',async t=>{
+test('engine harness: app requires new credential sign-in, ongoing default and optional sensitive consent',async t=>{
  const value=review('app');value.consent.requests=[fragment()];const h=harness({value});t.after(h.dispose);await choose(h);assert.equal(h.state.model.phase,'signin');assert.equal(h.state.model.signInReason,'app');
- await h.run('signin',{method:'passkey',values:{handle:'alice'}});assert.equal(h.state.model.phase,'review');assert.equal(h.state.model.choice,HOUR);
+ await h.run('signin',{method:'passkey',values:{handle:'alice'}});assert.equal(h.state.model.phase,'review');assert.equal(h.state.model.choice,'ongoing');
  await h.run('approve');assert.equal(h.calls.filter(c=>c.path.endsWith('/approve')).length,0,'sensitive access needs its separate tick');
- await h.run('sensitive',{fragment:value.consent.requests[0].fragment,checked:true});await h.run('duration',{value:8*HOUR});await h.run('approve');assert.equal(h.state.model.phase,'approved');const input=h.calls.find(c=>c.path.endsWith('/approve')).input;assert.equal(input.choice,8*HOUR);assert.deepEqual(input.consent[0].fields,['theme']);assert.equal(input.sensitive.length,1);
+ await h.run('sensitive',{fragment:value.consent.requests[0].fragment,checked:true});await h.run('duration',{value:'8h'});await h.run('approve');assert.equal(h.state.model.phase,'approved');const input=h.calls.find(c=>c.path.endsWith('/approve')).input;assert.equal(input.choice,'8h');assert.deepEqual(input.consent[0].fields,['theme']);assert.equal(input.sensitive.length,1);
  const h2=harness({value});t.after(h2.dispose);await choose(h2);await h2.run('signin',{method:'password',values:{handle:'alice',password:'x'}});h2.kit.selection(value.consent.requests[0]).declined=true;await h2.run('approve');assert.deepEqual(h2.calls.find(c=>c.path.endsWith('/approve')).input.consent,[]);
 });
 
@@ -101,7 +101,7 @@ test('transport keeps selected owner/context and CSRF on mutations; no codes ent
 });
 
 test('DOM: en/es code entry is accessible, does not prefill fragments, and review names only verified hosts',async t=>{
- for(const locale of ['en','es']){const h=harness({value:review('app')});t.after(h.dispose);await h.run('boot');const render=()=>dodo.reconcile(h.root,[approveView(h.state.model,{...approveLocalization(locale),dispatch(){},kit:h.kit,armed:true})]);render();const code=h.root.querySelector('input[name=code]');assert.equal(code.autocomplete,'off');assert.equal(code.getAttribute('autocapitalize'),'characters');assert.equal(code.spellcheck,false);assert.ok(code.closest('label'));assert.ok(h.root.querySelector('[aria-live=polite]'));assert.equal(code.value,'');await h.run('code',{code:'BCDFGHJK'});await h.run('choose',{id:A,sessionContext:'ca'});await h.run('signin',{method:'password',values:{handle:'alice',password:'x'}});render();assert.match(h.root.textContent,/acme.example/);assert.doesNotMatch(h.root.textContent,/EVIL CLAIMED NAME/);assert.equal(h.root.querySelector('input[name=duration]:checked').value,String(HOUR));assert.equal(h.root.querySelectorAll('input[type=radio]').length,3);}
+ for(const locale of ['en','es']){const h=harness({value:review('app')});t.after(h.dispose);await h.run('boot');const render=()=>dodo.reconcile(h.root,[approveView(h.state.model,{...approveLocalization(locale),dispatch(){},kit:h.kit,armed:true})]);render();const code=h.root.querySelector('input[name=code]');assert.equal(code.autocomplete,'off');assert.equal(code.getAttribute('autocapitalize'),'characters');assert.equal(code.spellcheck,false);assert.ok(code.closest('label'));assert.ok(h.root.querySelector('[aria-live=polite]'));assert.equal(code.value,'');await h.run('code',{code:'BCDFGHJK'});await h.run('choose',{id:A,sessionContext:'ca'});await h.run('signin',{method:'password',values:{handle:'alice',password:'x'}});render();assert.match(h.root.textContent,/acme.example/);assert.doesNotMatch(h.root.textContent,/EVIL CLAIMED NAME/);assert.equal(h.root.querySelector('input[name=duration]:checked').value,'ongoing');assert.equal(h.root.querySelectorAll('input[type=radio]').length,3);}
  assert.deepEqual(Object.keys(approveCatalogue.en['']),Object.keys(approveCatalogue.es['']));
 });
 
@@ -115,7 +115,7 @@ test('real Chromium: same-tab sign-in, code echo, consent and approval at 320/39
   else if(path==='/api/auth/linked/resolve'){const v=review(old?'session':'app');const now=Date.now();v.request.createdAt=now-60000;v.request.expiresAt=now+600000;v.session.authAt=old?0:now;v.session.expiresAt=now+24*HOUR;res.end(JSON.stringify(v));}
   else if(path==='/api/auth/step-up/begin')res.end(JSON.stringify({password:true,passkey:false}));
   else if(path==='/api/auth/step-up'){assert.equal(input.method,'password');res.end('{}');}
-  else if(path==='/api/auth/linked/approve'){assert.equal(input.code,'BCDFGHJK');assert.equal(req.headers['x-bindle-account'],A);assert.equal(req.headers['x-csrf-token'],'csrf-fresh');res.end(JSON.stringify({expiresAt:Date.now()+input.choice}));}
+  else if(path==='/api/auth/linked/approve'){assert.equal(input.code,'BCDFGHJK');assert.equal(req.headers['x-bindle-account'],A);assert.equal(req.headers['x-csrf-token'],'csrf-fresh');res.end(JSON.stringify({expiresAt:input.choice==='ongoing'?null:Date.now()+({'1h':HOUR,'8h':8*HOUR}[input.choice]??input.choice)}));}
   else {res.statusCode=404;res.end('{}');}
  });await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));const origin='http://127.0.0.1:'+server.address().port;
  const browser=await chromium.launch({headless:true});t.after(()=>browser.close());
@@ -123,7 +123,7 @@ test('real Chromium: same-tab sign-in, code echo, consent and approval at 320/39
   const context=await browser.newContext({viewport:{width,height:1000},colorScheme}),page=await context.newPage();const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto(origin+'/approve?lang='+locale+'#request='+R+'&code=URLSECRET');const code=page.locator('input[name=code]');await code.waitFor();assert.equal(await code.inputValue(),'');assert.equal(await page.evaluate(()=>location.hash),'');await code.fill('bcdf ghjk');assert.equal(await page.locator('.approval-code').textContent(),'BCDF-GHJK');
   await page.getByRole('button',{name:locale==='en'?'Continue':'Continuar',exact:true}).click();await page.locator('details summary').click();await page.locator('details input[name=handle]').fill('alice');await page.locator('input[name=password]').fill('mock-password');await page.locator('details button[type=submit]').click();await page.getByRole('heading',{name:locale==='en'?'Review this sign-in':'Revisa este inicio de sesión'}).waitFor();
-  assert.equal(new URL(page.url()).pathname,'/approve');assert.equal(await page.locator('input[name=duration]:checked').inputValue(),String(HOUR));assert.match(await page.locator('main').textContent(),/acme.example/);assert.equal(await context.pages().length,1);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  assert.equal(new URL(page.url()).pathname,'/approve');assert.equal(await page.locator('input[name=duration]:checked').inputValue(),'ongoing');assert.match(await page.locator('main').textContent(),/acme.example/);assert.equal(await context.pages().length,1);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   if(process.env.LA4_SCREENSHOTS)await page.screenshot({path:resolve(process.env.LA4_SCREENSHOTS,`approve-${locale}-${width}-${colorScheme}.png`),fullPage:true});
   const approve=page.getByRole('button',{name:locale==='en'?'Approve':'Aprobar',exact:true});await approve.click();await page.getByRole('heading',{name:locale==='en'?'Approved. Return to your device.':'Aprobado. Vuelve a tu dispositivo.'}).waitFor();assert.deepEqual(errors,[]);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await context.close();
  }

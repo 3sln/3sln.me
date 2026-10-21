@@ -5,9 +5,8 @@ import {createProof} from './dpop.mjs';
 
 const coded=(message,code)=>Object.assign(new Error(message),{code});
 const nonceValue=/^[\x21-\x7e]{1,512}$/;
-// Unbound refresh tokens stay memory-only for at most 8 h; DPoP-bound ones take
-// the provider's lifetime (bounded only as a sanity check).
-export const refreshLimits=Object.freeze({memory:28800,bound:31536000});
+// Refresh credentials last for the issued token's idle window; only key-bound ones may persist.
+export const refreshLimits=Object.freeze({memory:31536000,bound:31536000});
 
 export async function boundedJSON(response){
   const type=response.headers.get('Content-Type')??'';if(!type.toLowerCase().includes('application/json'))throw new Error('Provider response must be JSON.');
@@ -38,13 +37,11 @@ async function tokenRequest(client,{endpoint,issuer,body,key,signal}){
 export function validateAccessResponse(token,{issuer,clientId,rpcEndpoint,tokenEndpoint,preferencesContract,revocationEndpoint,dpopJkt,clock,requestStartedAt=clock(),previous}) {
   const type=typeof token?.token_type==='string'?token.token_type.toLowerCase():'';
   // Bearer access tokens are accepted on every session; DPoP-typed ones only when this exchange proved a key.
-  if(!token||token.issuer!==issuer||token.client_id!==clientId||!(type==='bearer'||type==='dpop'&&dpopJkt)||typeof token.access_token!=='string'||!token.access_token||token.access_token.length>8192||!Number.isSafeInteger(token.expires_in)||token.expires_in<=0||token.expires_in>300||token.audience!==rpcEndpoint||typeof token.subject!=='string'||token.subject.length>2048||!Array.isArray(token.granted_fragments)||token.granted_fragments.length>8)throw new Error('Provider returned an invalid access token response.');
+  if(!token||token.issuer!==issuer||token.client_id!==clientId||!(type==='bearer'||type==='dpop'&&dpopJkt)||typeof token.access_token!=='string'||!token.access_token||token.access_token.length>8192||!Number.isSafeInteger(token.expires_in)||token.expires_in<=0||token.expires_in>(type==='dpop'?3600:900)||token.audience!==rpcEndpoint||typeof token.subject!=='string'||token.subject.length>2048||!Array.isArray(token.granted_fragments)||token.granted_fragments.length>8)throw new Error('Provider returned an invalid access token response.');
   // Any HTTPS identity URL on the issuer origin; the path shape belongs to the provider.
   let subject;try{subject=new URL(token.subject);}catch{throw new Error('Provider returned an invalid identity subject.');}
   if(subject.origin!==issuer||subject.href!==token.subject||subject.search||subject.hash||subject.username||subject.password)throw new Error('Provider returned an invalid identity subject.');
-  // The provider's (longer) lifetime applies only to a refresh token the exchange bound to a key AND that the
-  // provider describes as an idle-limited bound session (auth.md); anything else keeps the memory limit.
-  const idle=token.refresh_idle_expires_in,limit=dpopJkt&&idle!==undefined?refreshLimits.bound:refreshLimits.memory;
+  const idle=token.refresh_idle_expires_in,limit=dpopJkt?refreshLimits.bound:refreshLimits.memory;
   if(token.refresh_token!==undefined&&(typeof token.refresh_token!=='string'||!token.refresh_token||token.refresh_token.length>8192||!Number.isSafeInteger(token.refresh_expires_in)||token.refresh_expires_in<=0||token.refresh_expires_in>limit||token.expires_in>token.refresh_expires_in||idle!==undefined&&(!Number.isSafeInteger(idle)||idle<=0||idle>token.refresh_expires_in)))throw new Error('Provider returned an invalid session renewal credential.');
   for(const grant of token.granted_fragments)if(!grant||typeof grant.grant!=='string'||typeof grant.fragment!=='string'||typeof grant.digest!=='string'||!Array.isArray(grant.fields)||grant.fields.some(field=>typeof field!=='string')||new Set(grant.fields).size!==grant.fields.length)throw new Error('Provider returned invalid fragment grants.');
   if(previous){
@@ -52,10 +49,10 @@ export function validateAccessResponse(token,{issuer,clientId,rpcEndpoint,tokenE
     for(const grant of token.granted_fragments){const prior=previous.granted_fragments.find(item=>item.grant===grant.grant);if(!prior||prior.fragment!==grant.fragment||prior.digest!==grant.digest||grant.fields.some(field=>!prior.fields.includes(field)))throw new Error('Session renewal attempted to expand its approved grants.');}
     if(Array.isArray(token.grants)&&token.grants.some(grant=>!previous.grants?.includes(grant)))throw new Error('Session renewal attempted to expand its approved grants.');
   }
-  // The absolute deadline never moves later; an idle deadline (DPoP sessions) is renewed by each rotation.
-  const absolute=token.refresh_token?Math.min(requestStartedAt+token.refresh_expires_in*1000,previous?.refreshAbsoluteAt??Infinity):undefined;
-  const refreshExpiresAt=absolute&&Math.min(absolute,idle?requestStartedAt+idle*1000:Infinity);
-  return deepFreeze({...token,tokenType:type==='dpop'?'DPoP':'Bearer',clientId,...dpopJkt?{dpopJkt}:{},rpcEndpoint,tokenEndpoint,preferencesContract,...revocationEndpoint?{revocationEndpoint}:{},expiresAt:Math.min(requestStartedAt+token.expires_in*1000,refreshExpiresAt??Infinity),renewalCount:previous?(previous.renewalCount??0)+1:0,...absolute?{refreshAbsoluteAt:absolute,refreshExpiresAt}:{}});
+  // Each rotation issues a fresh credential. Its deadline can move later (auth.md);
+  // anchor to request start so response transit never extends the advertised lifetime.
+  const refreshExpiresAt=token.refresh_token?requestStartedAt+Math.min(token.refresh_expires_in,idle??Infinity)*1000:undefined;
+  return deepFreeze({...token,tokenType:type==='dpop'?'DPoP':'Bearer',clientId,...dpopJkt?{dpopJkt}:{},rpcEndpoint,tokenEndpoint,preferencesContract,...revocationEndpoint?{revocationEndpoint}:{},expiresAt:Math.min(requestStartedAt+token.expires_in*1000,refreshExpiresAt??Infinity),renewalCount:previous?(previous.renewalCount??0)+1:0,...refreshExpiresAt?{refreshExpiresAt}:{}});
 }
 
 // Exchanges a code that was already validated against its pending record.
