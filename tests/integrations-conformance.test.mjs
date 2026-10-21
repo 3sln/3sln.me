@@ -1,5 +1,4 @@
-// EXT-X9a: passing cases prove fixture behavior only. Provider/JWS conformance
-// stays explicitly todo until X5–X8 land; this file makes no production claim.
+// EXT-X9b: local provider/fixture conformance; external services and production remain unverified.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createTestEngine} from './helpers/app-engine.mjs';
@@ -86,8 +85,6 @@ test('fixture supports loopback HTTP with logical HTTPS audiences and rejects ma
  assert.equal((await server.fetch(server.endpoints.events,{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body:'x'.repeat(65537)})).status,413);
 });
 
-test.todo('EXT-X3/X4: provider manifest snapshots, confidential-client authentication and lifecycle binding');
-test.todo('EXT-X5/X9b: ES256 JWS/SET verification, lookup before fetch, key rotation and DPoP vectors');
 // EXT-X6: the provider side of §6 against this fixture. The fixture verifies every SET with the X6 reference verifier
 // (lookup before any key, ES256 under the event-purpose brokering key, typ, aud, sub, iat) instead of opaque stubs.
 test('EXT-X6: provider outbox SETs are verified, coalesced, re-signed on retry and applied in seq order',async t=>{
@@ -109,7 +106,67 @@ test('EXT-X6: provider outbox SETs are verified, coalesced, re-signed on retry a
  assert.equal(claims[1].jti,claims[2].jti);assert.notEqual(claims[1].iat,claims[2].iat);
  const state=await server.snapshot();assert.deepEqual(state.events.map(e=>e.seq),[1,2]);assert.deepEqual(state.connections[0].preferences[FRAGMENT].values,{v:3});
 });
-test.todo('EXT-X8: push/pull seq comparison against preferences/v2 read results');
-test.todo('EXT-X7: provider SSRF-safe discovery, item validation, hints and unavailable-record reconfirmation');
-test.todo('EXT-X8: preferences v1/v2 projection and atomic severance under mint/refresh races and offline delivery');
-test.todo('EXT-X8/X9b: write-capable contracts require live introspection without cached authorization');
+
+import {brokeredProvider,OWNER as ACCOUNT_OWNER,ISSUER as PROVIDER,SUBJECT as OWNER_SUBJECT,MODEL,FRAGMENT as MODELS,APP as CONSUMER} from './fixtures/brokered-provider.mjs';
+import * as X8 from '../packages/federation/introspection.mjs';
+import * as X7 from '../packages/federation/brokered.mjs';
+import * as X4 from '../packages/app/domains/connections.mjs';
+import {perform} from '../packages/app/engine.mjs';
+import {brokeringKeys,mintAccessToken,verifyAccessToken,DEFAULT_LEAD} from '../packages/federation/signing.mjs';
+import {verifySecurityEventToken} from '../packages/runtime/integration-events.mjs';
+import {MemoryFederationStore,PREFERENCES} from '../packages/federation/index.mjs';
+import {SqliteMetadata} from '../apps/node/resources.mjs';
+const storage=()=>{const map=new Map();return {map,transaction:fn=>fn({get:async k=>structuredClone(map.get(k)),set:async(k,v)=>map.set(k,structuredClone(v)),delete:async k=>map.delete(k)})};};
+async function providerResource(t,{write=false}={}){const f=await brokeredProvider(t,{introspection:write,refreshEnabled:true}),record=await f.register('https://models.example/r/fast'),resource=X8.brokeredResourceId(OWNER_SUBJECT,record.id);await f.configure({theme:'dark',model:[resource],store:[]});const token=await f.authorize({resources:{model:[resource],store:[]},methods:{model:{[MODEL]:write?['decide','train']:['decide']}}});return {...f,record,resource,token};}
+
+test('EXT-X3/X4: approved manifest pins remain generation-fenced through suspension and resume',async t=>{
+ const f=await providerResource(t),id=f.integration.id,old=(await f.read(f.token)).values.model[0].token;
+ await perform(f.cx,new X4.SuspendConnection({actor:{kind:'owner',owner:ACCOUNT_OWNER},input:{connection:id,expectedGeneration:f.integration.generation}}));
+ assert.equal((await f.read(f.token)).values.model[0].status,'unavailable');
+ const suspended=(await f.q(X8.BrokeredIntegrationAuth,{connection:id}));assert.equal(suspended.serving,false);
+ await perform(f.cx,new X4.ResumeConnection({actor:{kind:'owner',owner:ACCOUNT_OWNER},input:{connection:id,expectedGeneration:f.integration.generation+1}}));
+ assert.equal((await f.read(f.token)).values.model[0].status,'unavailable','old generation is never silently revived');assert.equal(typeof old,'string');
+});
+
+test('EXT-X5/X9b: ES256 purpose, audience, lookup-before-key, rotation, and read-only verification',async()=>{
+ const clock=fakeClock(Date.now()),db=storage(),keys=brokeringKeys({issuer:ISSUER,secret:Buffer.alloc(32,6).toString('base64'),metadata:db,clock:clock.now});
+ const input={subject:SUBJECT,audience:INTEGRATION+'/bindle/rpc',clientId:'https://consumer.example/client',connection:CONNECTION,generation:1,resource:RESOURCE,grant:'g',methods:{[CONTRACT]:['deliver']}};
+ const minted=await mintAccessToken(keys,input,{clock:clock.now});let fetches=0;
+ await assert.rejects(verifyAccessToken(minted.token,{issuer:ISSUER,audience:input.audience,connection:()=>false,keys:()=>{fetches++;return keys.jwks();}}));assert.equal(fetches,0);
+ const before=JSON.stringify([...db.map]);await keys.verify(minted.token,{audience:input.audience,now:clock.now()});assert.equal(JSON.stringify([...db.map]),before,'verification never advances or writes the key ring');
+ await assert.rejects(keys.verify(minted.token,{audience:INTEGRATION+'/foreign'}));await assert.rejects(keys.verify(minted.token,{audience:input.audience,purposes:['discover']}));
+ await keys.rotate('invoke');clock.advance(DEFAULT_LEAD);const next=await mintAccessToken(keys,input,{clock:clock.now});assert.notEqual(minted.kid,next.kid);assert.ok((await keys.jwks()).keys.some(k=>k.kid===minted.kid));
+});
+
+test('EXT-X8: push/pull seq and snapshots use the current federation projection without credentials',async t=>{
+ // A real connection binding (approval connects the reader), so the reader's tokens, family and grants all carry it.
+ const f=await brokeredProvider(t,{connections:true,refreshEnabled:true,seq:async()=>17}),record=await f.register('https://models.example/r/fast'),resource=X8.brokeredResourceId(OWNER_SUBJECT,record.id);
+ await f.configure({theme:'dark',model:[resource],store:[]});const token=await f.authorize({resources:{model:[resource],store:[]},methods:{model:{[MODEL]:['decide']}}});
+ const out=await f.read(token),binding=f.bindings.get(CONSUMER);assert.equal(out.seq,17);assert.equal(typeof out.values.model[0].token,'string');
+ const snapshot=await f.s.integrationSnapshot({connection:binding.id,generation:binding.generation,clientId:CONSUMER,fragment:MODELS});
+ assert.equal(snapshot.revision,out.revision);assert.equal(snapshot.values.model[0].id,out.values.model[0].id);for(const k of ['token','token_type','expires_at'])assert.equal(snapshot.values.model[0][k],undefined);
+ assert.deepEqual(await f.s.integrationSnapshot({connection:binding.id,generation:binding.generation+1,clientId:CONSUMER,fragment:MODELS}),{revision:out.revision,values:null},'another generation sees nothing');
+});
+
+test('EXT-X7: discovery rejects private egress and unavailable records require explicit reconfirmation',async t=>{
+ const {createIntegrationEgress}=await import('../packages/federation/resource-discovery.mjs');let sent=0;
+ const egress=createIntegrationEgress({publicRouting:true,resolve:async()=>['127.0.0.1'],fetcher:async()=>{sent++;return Response.json({});}});
+ await assert.rejects(egress.send({url:'https://private.example/bindle/resources',method:'POST',body:'{}'}));assert.equal(sent,0);
+ const f=await providerResource(t);f.presence.available=false;await perform(f.x7,new X7.RevalidateBrokeredRecords({actor:{kind:'owner',owner:ACCOUNT_OWNER},input:{connection:f.integration.id}}));assert.equal((await f.read(f.token)).values.model[0].status,'unavailable');f.presence.available=true;await perform(f.x7,new X7.RevalidateBrokeredRecords({actor:{kind:'owner',owner:ACCOUNT_OWNER},input:{connection:f.integration.id}}));assert.equal((await f.read(f.token)).values.model[0].status,'unavailable');await perform(f.x7,new X7.ReconfirmBrokeredRecord({actor:{kind:'owner',owner:ACCOUNT_OWNER},input:{record:f.record.id}}));await perform(f.x7,new X7.UnassignBrokeredRecord({actor:{kind:'owner',owner:ACCOUNT_OWNER},input:{record:f.record.id,grant:f.record.assignments[0].grant}}));
+ assert.equal((await f.read(f.token)).values.model[0].status,'unavailable');const drain=await f.q(X8.DrainBrokeredSeverance);assert.ok(drain.drained>0);
+});
+
+test('EXT-X8: real brokered tokens stop by 360 s with every webhook lost, including worst verifier clock skew',async t=>{
+ const f=await providerResource(t),read=await f.read(f.token),m=read.values.model[0],clock=fakeClock(f.clock.now());
+ const server=createIntegrationServer({issuer:PROVIDER,subject:OWNER_SUBJECT,integration:'https://models.example',clock,connections:[{iss:PROVIDER,id:f.integration.id,sub:OWNER_SUBJECT,generation:1}],resources:[{iss:PROVIDER,connection:f.integration.id,sub:OWNER_SUBJECT,item:{id:m.broker.resource,label:'Fast',contracts:[MODEL]}}],verifyToken:async(token,{audience})=>(await verifyAccessToken(token,{issuer:PROVIDER,audience,keys:await import('./fixtures/brokered-provider.mjs').then(x=>x.providerKeys.jwks()),now:clock.now()})).claims});t.after(()=>server.close());
+ const post=()=>server.fetch(server.endpoints.rpc,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+m.token},body:JSON.stringify({resource:m.broker.resource,contract:MODEL,method:'decide',args:{}})});
+ assert.equal((await post()).status,200);await perform(f.x7,new X7.DetachBrokeredRecord({actor:{kind:'owner',owner:ACCOUNT_OWNER},input:{record:f.record.id}}));
+ assert.equal((await f.read(f.token)).values.model?.[0]?.token,undefined);clock.advance(360000-30000);assert.equal((await post()).status,401,'360 s real time with verifier 30 s slow and leeway 30 s');
+});
+
+test('EXT-X8/X9b: write methods introspect on every call and fail closed without caching',async t=>{
+ const f=await providerResource(t,{write:true}),m=(await f.read(f.token)).values.model[0];let calls=0;const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']),pub=await crypto.subtle.exportKey('jwk',pair.publicKey),set=await import('../packages/federation/integrations.mjs').then(x=>x.validateJwks(crypto,{keys:[{...pub,kid:'client',alg:'ES256',use:'sig'}]}));await f.metadata.transaction(async tx=>{const key='resource/'+f.integration.id,c=await tx.get(key);c.integration.snapshot.thumbprints=set.thumbprints;await tx.put(key,c);});
+ const server=createIntegrationServer({issuer:PROVIDER,subject:OWNER_SUBJECT,integration:'https://models.example',clock:f.clock,connections:[{iss:PROVIDER,id:f.integration.id,sub:OWNER_SUBJECT,generation:1}],resources:[{iss:PROVIDER,connection:f.integration.id,sub:OWNER_SUBJECT,item:{id:m.broker.resource,label:'Fast',contracts:[MODEL]}}],verifyToken:async(token,{audience})=>(await verifyAccessToken(token,{issuer:PROVIDER,audience,keys:await import('./fixtures/brokered-provider.mjs').then(x=>x.providerKeys.jwks())})).claims,requiresIntrospection:(_,method)=>method==='train',introspect:async token=>{calls++;const b64=v=>Buffer.from(JSON.stringify(v)).toString('base64url'),now=Math.floor(f.clock.now()/1000),client=f.integration.clientId,input=b64({alg:'ES256',kid:'client',typ:'JWT'})+'.'+b64({iss:client,sub:client,aud:PROVIDER+X8.INTROSPECTION_PATH,iat:now,exp:now+60,jti:crypto.randomUUID()}),sig=Buffer.from(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,new TextEncoder().encode(input))).toString('base64url'),response=await X8.handleBrokeredIntrospection(new Request(PROVIDER+X8.INTROSPECTION_PATH,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token,client_assertion_type:X8.CLIENT_ASSERTION_TYPE,client_assertion:input+'.'+sig})}),{issuer:PROVIDER,enabled:true,clock:f.clock.now,verifyToken:(token,options)=>import('./fixtures/brokered-provider.mjs').then(x=>x.providerKeys.verify(token,options)),clientKeys:async()=>set,account:()=>({brokeredIntegrationAuth:input=>f.q(X8.BrokeredIntegrationAuth,input),brokeredIntrospect:input=>f.q(X8.IntrospectBrokeredToken,input)}),federation:()=>f.s});return response.json();}});t.after(()=>server.close());
+ const post=()=>server.fetch(server.endpoints.rpc,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+m.token},body:JSON.stringify({resource:m.broker.resource,contract:MODEL,method:'train',args:{}})});
+ assert.equal((await post()).status,200);await f.s.revoke(f.owner,f.token.grants[0]);assert.equal((await post()).status,401);assert.equal(calls,2);assert.equal((await server.snapshot()).invocations.length,1);
+});

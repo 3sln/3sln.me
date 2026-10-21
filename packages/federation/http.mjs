@@ -21,8 +21,9 @@ const preflightOrigin=(origin,path,directory)=>{if(!directory?.enabled||!['/api/
 /** Returns null for unrelated routes. Root HTTP adapters remain responsible for
  * caller IP/rate limits and asset serving; no platform SDK appears here. `ownerContext(request)`
  * lets an adapter resolve its own session cookies (multi-account members); default: the legacy cookie. */
-/** `brokering` ({enabled, jwks()}) exists only when BROKERING_ENABLED is true; otherwise its JWKS route and manifest
- * member do not exist. */
+/** `brokering` ({enabled, jwks()}) exists only when BROKERING_ENABLED is true; otherwise its JWKS route does not exist.
+ * Once the EXT-X8 registry row declares `brokered-resources.v1`, its `jwks_uri` replaces the provisional top-level
+ * `brokering_jwks_uri` (X8-R6: X6/X7 verifiers keep finding the key set until then). */
 async function brokeringJwks(request,brokering){const body=JSON.stringify(await brokering.jwks()),etag=`"${btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(body))))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')}"`;
  const headers={...privateHeaders,'Cache-Control':`public, max-age=${JWKS_MAX_AGE}, must-revalidate`,'Content-Type':'application/jwk-set+json','Access-Control-Allow-Origin':'*',ETag:etag};
  return request.headers.get('If-None-Match')===etag?new Response(null,{status:304,headers}):new Response(body,{status:200,headers});}
@@ -33,7 +34,7 @@ export async function handleFederation(request,{controller,issuer,clients=contro
   if(!enabled||!controller||!await controller.ready())throw error('temporarily_unavailable','Federation is not configured and release enabled.',503);
   const path=url.pathname,origin=request.headers.get('Origin'),context=typeof ownerContext==='function'?await ownerContext(request):sessionContext(request,allowInsecureLocalhost,issuer);
   if(request.method==='OPTIONS'){if(origin!==issuer&&!clients.some(c=>c.origin===origin)&&!preflightOrigin(origin,path,directory))throw error('forbidden','Application origin is not registered.',403);return new Response(null,{status:204,headers:{...privateHeaders,'Access-Control-Allow-Origin':origin,Vary:'Origin','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, DPoP','Access-Control-Max-Age':'600'}});}
-  if(path==='/.well-known/bindle/manifest.json'&&request.method==='GET')return json({...await controller.manifest(),...brokered?brokeringManifest(issuer):{}},200,{'Access-Control-Allow-Origin':'*'});
+  if(path==='/.well-known/bindle/manifest.json'&&request.method==='GET'){const manifest=await controller.manifest();return json({...manifest,...brokered&&!manifest.features?.['brokered-resources.v1']?brokeringManifest(issuer):{}},200,{'Access-Control-Allow-Origin':'*'});}
   if(brokered&&path===BROKERING_JWKS_PATH&&request.method==='GET')return await brokeringJwks(request,brokering);
   if(path==='/oauth/jwks'&&request.method==='GET')return json({keys:[]},200,{'Access-Control-Allow-Origin':'*'});
   if(path==='/oauth/authorize'&&request.method==='GET'){const id=url.searchParams.get('request_id');if(!id||!/^(?:[a-f0-9-]{36}\.)?[A-Za-z0-9_-]{43}$/.test(id)||[...url.searchParams.keys()].some(k=>k!=='request_id'))throw error('invalid_request','A provider-stored request identifier is required.');await controller.inspect(undefined,id);if(!assets?.fetch)throw error('temporarily_unavailable','Authorization interface is unavailable.',503);const page=await assets.fetch(new Request(new URL('/authorize.html',issuer),{method:'GET'}));const headers=new Headers(page.headers);for(const[k,v]of Object.entries(privateHeaders))headers.set(k,v);return new Response(page.body,{status:page.status,headers});}
@@ -50,10 +51,11 @@ export async function handleFederation(request,{controller,issuer,clients=contro
     if(request.headers.get('Content-Type')?.split(';')[0].trim()==='application/x-www-form-urlencoded'){
       const params=new URLSearchParams(await readBody(request,8192));if(new Set(params.keys()).size!==[...params.keys()].length)throw error('invalid_request','Repeated token parameters are not allowed.');
       const grant=params.get('grant_type');refresh=grant==='refresh_token';
-      const allowed=refresh?['grant_type','refresh_token','client_id']:['grant_type','code','code_verifier','client_id','redirect_uri'];
+      const allowed=[...(refresh?['grant_type','refresh_token','client_id']:['grant_type','code','code_verifier','client_id','redirect_uri']),...directory?.integrations?['client_assertion','client_assertion_type']:[]];
       if(!['authorization_code','refresh_token'].includes(grant)||[...params.keys()].some(key=>!allowed.includes(key)))throw error('invalid_request','Invalid token exchange.');
       input=refresh?{refreshToken:params.get('refresh_token'),clientId:params.get('client_id')}:{code:params.get('code'),verifier:params.get('code_verifier'),clientId:params.get('client_id'),redirectUri:params.get('redirect_uri')};
-    }else {input=await jsonBody(request);if(Object.hasOwn(input,'dpop'))throw error('invalid_request','Send DPoP proofs in the DPoP header.');if(input.grantType==='refresh_token'){refresh=true;const {grantType,...fields}=input;input=fields;}}
+      if(params.has('client_assertion'))input.clientAssertion=params.get('client_assertion');if(params.has('client_assertion_type'))input.clientAssertionType=params.get('client_assertion_type');
+    }else {input=await jsonBody(request);if(Object.hasOwn(input,'clientAssertion')||Object.hasOwn(input,'clientAssertionType'))throw error('invalid_request','Client assertions require form encoding.');if(Object.hasOwn(input,'dpop'))throw error('invalid_request','Send DPoP proofs in the DPoP header.');if(input.grantType==='refresh_token'){refresh=true;const {grantType,...fields}=input;input=fields;}}
     // RFC 9449: exactly one proof header; a repeated header joins with a comma and is rejected.
     const proof=request.headers.get('DPoP');if(proof!==null){if(proof.includes(',')||proof.length>4096)throw error('invalid_dpop_proof','Send exactly one DPoP proof.');input.dpop=proof;}
     cors=await clientOrigin(request,clients,input.clientId,issuer,directory);const result=await(refresh?controller.refresh(input):controller.exchange(input));return json(result,200,{...cors,...await tokenNonce(controller)});

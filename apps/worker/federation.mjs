@@ -9,7 +9,7 @@ import {ENTRY_SHARDS} from '../../packages/federation/authorization-entries.mjs'
 import {federationRemote} from '../../packages/federation/runtime.mjs';
 import {UUID_V4} from '../../packages/core/primitives.mjs';
 export {federationMetadata,federationRemote} from '../../packages/federation/runtime.mjs';
-const METHODS=['ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','dpopNonce','incrementalPort','appSessions','eventDoorbellGrant'];
+const METHODS=['ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','dpopNonce','incrementalPort','appSessions','eventDoorbellGrant','integrationSnapshot','brokeredGrantLive','integrationClientAuth'];
 /** Each UUID addresses independent permanent preferences, grants and journals.
  * The UUID is a locator, never an authorization credential. Further instances, named entryStoreName(shard), hold
  * the pre-owner authorization-entry store, sharded by entry ID (review M5); the two roles never share an instance.
@@ -28,6 +28,7 @@ export class FederationObject extends DurableObject {
   }catch(error){return {ok:false,error:{code:error.code??'temporarily_unavailable',message:error.code?error.message:'Federation operation could not be completed.',status:error.status,retryAfter:error.retryAfter,ownerReviewUri:error.ownerReviewUri}};}
  }
  /** Provider-wide brokering keys use their own durable instance, separate from owner and entry stores. */
+ async brokeringVerify(token,options){return (await this.brokeringStore()).verify(token,options);}
  async brokeringJwks(){return (await this.brokeringStore()).jwks();}
  async brokeringSign(purpose,claims){if(purpose!=='event')throw new TypeError('Unsupported signing purpose.');return (await this.brokeringStore()).sign(purpose,claims);}
  async brokeringMint(claims){return mintAccessToken(await this.brokeringStore(),claims);}

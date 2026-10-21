@@ -34,9 +34,12 @@ export const stages={
      if(!secret)return json({error:'temporarily_unavailable',message:'Application connections are not configured.'},503);
      const ip=entryRemote=await pseudonym(remote,secret),network=await pseudonym(subnet(remote),secret),lane=parseInt(ip.slice(0,2),16)%16;
      const readOnly=request.method==='GET'||request.method==='HEAD',rpc=path==='/bindle/rpc'||path.startsWith('/bindle/objects/');
-     const rateClass=rpc?'rpc':readOnly?'read':'mutation';
-     if(!await env.ABUSE.consume(`bindle/${rateClass}/ip/${ip}`,{windowMs:60000,limit:rpc?120:readOnly?120:30})||!await env.ABUSE.consume(`bindle/${rateClass}/subnet/${network}`,{windowMs:60000,limit:rpc?400:200})||!await env.ABUSE.consume(`bindle/${rateClass}/service-v1-${lane}`,{windowMs:60000,limit:rpc?400:200})){const appOrigin=request.headers.get('Origin');const cors=path.startsWith('/bindle/objects/')?{'Access-Control-Allow-Origin':'*'}:appOrigin&&env.FEDERATION_AUTHORITY?.clients?.some(client=>client.origin===appOrigin)?{'Access-Control-Allow-Origin':appOrigin,Vary:'Origin'}:{};return json({error:'rate_limited',message:'Please wait before continuing this application connection.'},429,{'Retry-After':'60',...cors});}
+     // X8-R4/R5: introspection is server-to-server on every brokered write, so it has its own per-IP/subnet class (not
+     // the token endpoint's 30/min) ahead of the handler's per-connection window and its pre-authentication account call.
+     const introspect=path==='/oauth/brokering/introspect'&&env.BROKERED_INTROSPECTION_MOUNTED===true,rateClass=introspect?'introspect':rpc?'rpc':readOnly?'read':'mutation';
+     if(!await env.ABUSE.consume(`bindle/${rateClass}/ip/${ip}`,{windowMs:60000,limit:introspect?300:rpc?120:readOnly?120:30})||!await env.ABUSE.consume(`bindle/${rateClass}/subnet/${network}`,{windowMs:60000,limit:introspect?1200:rpc?400:200})||!await env.ABUSE.consume(`bindle/${rateClass}/service-v1-${lane}`,{windowMs:60000,limit:introspect?1200:rpc?400:200})){const appOrigin=request.headers.get('Origin');const cors=path.startsWith('/bindle/objects/')?{'Access-Control-Allow-Origin':'*'}:appOrigin&&env.FEDERATION_AUTHORITY?.clients?.some(client=>client.origin===appOrigin)?{'Access-Control-Allow-Origin':appOrigin,Vary:'Origin'}:{};return json({error:'rate_limited',message:'Please wait before continuing this application connection.'},429,{'Retry-After':'60',...cors});}
     }
+    if(path==='/oauth/brokering/introspect'&&env.BROKERED_INTROSPECTION_MOUNTED===true)return env.BROKERED_INTROSPECTION(request);
     if(path.startsWith('/bindle/objects/'))return passthrough(handleObjectURL(request,{controller:env.FEDERATION_AUTHORITY,enabled:env.FEDERATION_ENABLED==='true'}));
     // Device authorization grant (LA3): only where the adapter mounted DEVICE_GRANT, which requires the flag.
     if(deviceMounted&&path!=='/oauth/token'){const device=await deviceRoutes(request,env,path,local);if(device)return device;}

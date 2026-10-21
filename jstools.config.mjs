@@ -8,6 +8,7 @@ export const publicSources = [
   'apps/embed',
   'vendor/dodo',
   'vendor/ngin',
+  'vendor/tldts/index.js',
   'packages/sdk/src',
   'packages/i18n',
   'packages/consent/model.mjs','packages/consent/localization.mjs','packages/consent/reviewed-contracts.mjs',

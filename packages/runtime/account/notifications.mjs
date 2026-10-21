@@ -12,7 +12,7 @@ export const methods={
   async appConnections(owner){return this.apps.list(owner);},
   async appConnectionBinding(owner,clientId){return this.apps.binding(owner,clientId);},
   async appConnect(owner,client,expected){return this.apps.register(owner,client,expected);},
-  async appBindleConnect(owner,client,expected,permissions={}){return this.apps.register(owner,client,expected,{transport:'bindle',notifications:permissions.notifications===true,expectedNotificationGeneration:permissions.expectedNotificationGeneration,provenance:{kind:'oauth-consent',issuer:this.config.APP_ORIGIN}});},
+  async appBindleConnect(owner,client,expected,permissions={}){return this.apps.register(owner,client,expected,{transport:'bindle',...permissions.integration?{integration:permissions.integration}:{},notifications:permissions.notifications===true,expectedNotificationGeneration:permissions.expectedNotificationGeneration,provenance:{kind:'oauth-consent',issuer:this.config.APP_ORIGIN}});},
   async appDisconnect(owner,id){return this.apps.disconnect(owner,id);},
   async appNotificationSettings(owner,id,input){await this.warm(owner);return this.apps.notificationSettings(owner,id,input);},
   async appNotificationCheck(owner,connection,clientId){await this.warm(owner);return appNotificationCheck(this,owner,connection,clientId);},

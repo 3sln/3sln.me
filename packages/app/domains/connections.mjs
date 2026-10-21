@@ -50,9 +50,10 @@ function scope(service, actor, account) {
     connect: value => { systemOnly(); const v = input(value, ['client', 'snapshot', 'expectedGeneration']); return service.connect(owner, v); },
     connectBuiltIn: value => { ownerOnly(); return service.connectBuiltIn(owner, input(value, ['integration'])); },
     transition: (op, value) => {
-      const v = input(value, ['connection', 'expectedGeneration', 'configured', 'degraded']);
+      const v = input(value, ['connection', 'expectedGeneration', 'configured', 'degraded', 'stagedRevision']);
       if (['suspend', 'resume', 'approve'].includes(op)) ownerOnly(); else systemOnly();
-      const { connection, ...rest } = v; return service.transition(owner, connection, op, rest);
+      // W5-S3: approving a staged change (possibly a replaced key set) needs a recent owner verification, like occupy.
+      const { connection, ...rest } = v; return service.transition(owner, connection, op, rest, op === 'approve' ? { authTime: actor.authTime } : {});
     },
     disconnect: value => { const v = input(value, ['connection', 'expectedGeneration']); return service.disconnect(owner, typeof v.connection === 'string' ? v.connection : '', { reason: system ? 'system' : 'uninstalled', expectedGeneration: v.expectedGeneration }); },
     revalidated: value => { systemOnly(); const v = input(value, ['connection', 'expectedGeneration', 'result']); return service.revalidated(owner, v.connection, v); },

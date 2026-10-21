@@ -2228,3 +2228,40 @@ Wave 4 integration (Codex, coordinator-verified; [notes](docs/release/wave4-inte
 Gates: core 1929, Worker 65, UI-state 258, BindleBox 194, BindleBox web 41, DOM, build, dry run, audit; full e2e 180 with flags off and 180 with device authorization on (4 WebKit skips each).
 
 Deferred: the X8 snapshot stub, X7 hints/AMD-C10, app-initiated push configuration, production key-holder/service verification. Legacy or redacted imports remain explicitly unverified.
+
+Wave 4 committed and deployed as 4829b79 (flags off). Wave 5 started:
+- Codex: EXT-X11 unified Apps & integrations console, CX-3 access views ("what this app can do"; who has access per fragment, resource and bus), EV-4 integration-hosted bus conformance suite.
+- Claude: EXT-X8 `preferences/v2`, brokered token minting, live introspection for write contracts, and severance with a guaranteed bound.
+EXT-X9b conformance follows X8; then BB-CUT.
+
+Wave 5 streams:
+- **EV-4:** integration-hosted bus conformance suites (host and client) with a default-off engine fixture `tests/fixtures/integration-bus.mjs`; narrow `packages/events/client.mjs` validation fixes (malformed records/metadata, reader claims/bounds, publish receipts); third-party instructions in `docs/integration.md`. 18 tests plus 13 adapter tests.
+- **CX-3:** flag-gated access components in `apps/web/src/ui/access/**` with en/es copy, CX-1 risk tiers, attributed wording and explicit revocation confirmations; 28 tests. Removal revokes the whole fragment, since method narrowing is unavailable. Shell composition, request history and integration-hosted feed management pending.
+- **EXT-X11:** the Codex job stopped mid-way on a "model at capacity" error; a Claude agent is finishing from the partial work (fallback per user preference).
+
+Watch items: islands Firefox theme and Chromium avatar timeouts in one broader e2e run; a `brokered-severance` 403 in the X8 work in progress.
+
+EXT-X11 landed (provisional, behind `INTEGRATIONS_ENABLED`; started by Codex, finished by Claude): one Apps & integrations console listing apps, external integrations and built-ins with state and verified host.
+- Built-in and external connect; setup through config fragments.
+- Slot occupancy per selection policy; exclusive replacement needs a reviewed confirmation and inline step-up.
+- Picking third-party resources through X7 discovery.
+- Disconnect with the cascade explained.
+- Manifest-pinned management links, the creation-hint management link (integrations §4.5), and CX-3 access links; cancel keeps the setup draft.
+18 engine tests and 13 Chromium checks (en/es, light/dark, 320/390/1440 px; screenshots in `artifacts/browser/connections/`). Pending: shell mounting; server adapters for the X4 owner RPC, setup save and SSRF-safe client-metadata lookup (no HTTP routes exist yet); approving staged manifests. Reviewer ___ Date ___ Outcome ___.
+
+EXT-X8 landed (provisional, flags off, unmounted):
+- `preferences/v2` returns uniform references; brokered members carry an endpoint, the resource, a 300 s RFC 9068 token and exact methods. v1 withholds brokered members (AMD-C3/C9).
+- Minting checks, signs, then rechecks against X7 severance, and the federation shard checks before and after, so a released token's `exp` is at most commit + 300 s.
+- Severance rows drain into X6 revocations carrying `access_ends_by`.
+- RFC 7662 introspection with `private_key_jwt` and pinned keys; write methods are mintable only while introspection is mounted.
+- A `brokered-resources.v1` registry row; `brokering_jwks_uri` stays top-level until that row is declared.
+18 tests. [Review](docs/release/extensibility-review.md#x8-implementation): R1, R3, R4, R6 fixed; R2 partly fixed; R5, R7 open. The agent ran a prohibited `git checkout --` on three test files containing only its own edits; no other agent was affected.
+
+Wave 5 integration (provisional, flags off; Codex started, Claude finished after Codex capacity errors):
+- **X8:** a single mount setting, `BROKERED_INTROSPECTION_MOUNTED`, enables together the introspection route (own rate limit), the `integrations.v1` and `brokered-resources.v1` declarations, minting, the severance drain and the snapshot port (R7 closed). `brokering_jwks_uri` moved into `brokered-resources.v1`. R2 is closed except that grant IDs don't rotate on reapproval; only a changed field revokes tokens. R5 partly fixed (verify read-only, per-IP limit).
+- **X11/CX-3:** the connections console and access views are mounted behind `INTEGRATIONS_ENABLED`, with owner action, setup save, SSRF-safe client-metadata lookup and staged-manifest approval routes. The domain library is vendored as `vendor/tldts` (7.4.19, MIT, provenance recorded) in place of a bare npm import, which had broken beaming and multi-account e2e. Request history needs an audit store that does not exist.
+- **X9b:** the integration conformance suite has no remaining todos, and third-party docs are added.
+- **Islands flakes fixed at root:** Chromium avatar swaps waited on rAF, which hidden frames never run; Firefox restores that lost the race with the code exchange backed off 2/4/8 s, now starting at 250 ms. Each has a regression test.
+- **Security review:** S1 high (token-endpoint auth downgrade), S2, S3, S5 fixed; S4, S6 partly fixed. Open: a durable assertion-replay store, hints and `bindle_connection` support, and a diff in the review screen.
+
+Gates (coordinator-verified): core 1980, Worker 65, UI-state 290, BindleBox 194/41, DOM, build, dry run, audit; e2e 213 twice (flags off and device authorization on, 4 WebKit skips each). Reviewer ___ Date ___ Outcome ___.

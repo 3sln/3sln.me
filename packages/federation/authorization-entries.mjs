@@ -91,7 +91,7 @@ export class AuthorizationEntries {
   if(!object(input)||Object.keys(input).some(k=>!entryKeys.includes(k)))generic();
   let client=this.clients.get(input.clientId);const embed=input.delivery!==undefined;
   if(!client&&this.metadataClient(input.clientId)){
-   if(resolved!==undefined){if(resolved?.id!==input.clientId||!validClientSnapshot(resolved))generic();client=structuredClone(resolved);}
+   if(resolved!==undefined){if(resolved?.id!==input.clientId||!validClientSnapshot(resolved,{integrations:this.directory?.integrations===true||this.integrations===true}))generic();client=structuredClone(resolved);}
    else{if(!this.directory)generic();if(typeof remote!=='string'||!remote)fail('temporarily_unavailable','Application sign-in is not available.');if(!admitted){await this.admit({clientId:input.clientId,remote});admitted=true;}
     try{client=await this.directory.resolve(input.clientId);}catch(error){if(error?.code==='rate_limited')throw error;generic();}}
    // Unreviewed clients have no island shell, so they cannot use the embedded delivery.
@@ -137,7 +137,7 @@ export class AuthorizationEntries {
  async checkPage(entryId,record,page){const token=page?.token;if(typeof token!=='string'||!ID.test(token)||await digest(this.crypto,`page\0${token}`)!==await digest(this.crypto,`page\0${await this.pageToken(entryId,record)}`))fail('csrf','Reload the provider page before continuing.');}
  /** Session-independent request metadata for the static provider page, and its page token. */
  async view(entryId){
-  const {hash,store}=await this.locate(entryId),record=await store.transaction(tx=>this.load(tx,hash)),client=this.clients.get(record.clientId)??(this.clientMetadata&&record.client?.id===record.clientId&&validClientSnapshot(record.client)?record.client:null);if(!client)expired();
+  const {hash,store}=await this.locate(entryId),record=await store.transaction(tx=>this.load(tx,hash)),client=this.clients.get(record.clientId)??(this.clientMetadata&&record.client?.id===record.clientId&&validClientSnapshot(record.client,{integrations:this.directory?.integrations===true||this.integrations===true})?record.client:null);if(!client)expired();
   // An unreviewed client is labelled by its verified origin; its self-declared name is marked as unverified.
   return {entry:{client:{id:client.id,name:client.name,origin:client.origin,...client.reviewed===false?{reviewed:false,...client.claimedName?{claimedName:client.claimedName}:{}}:{}},redirectUri:record.redirectUri,intent:record.intent,requests:structuredClone(record.requests),presentation:record.presentation,delivery:record.delivery,nonce:record.nonce,expiresAt:record.expiresAt,...record.loginHint?{loginHint:record.loginHint}:{},...record.subjectConstraint?{subjectConstraint:record.subjectConstraint}:{},...record.maxAge!==undefined?{maxAge:record.maxAge}:{},...record.reason!==undefined?{reason:record.reason}:{},...record.target?{target:structuredClone(record.target)}:{},...record.suggestion?{suggestion:structuredClone(record.suggestion)}:{},...record.uiLocales?{uiLocales:record.uiLocales}:{},...record.colorScheme?{colorScheme:record.colorScheme}:{},...record.delivery==='embed-popup'?{embed:{attested:!!record.attested,plain:!!record.plain,...this.embedOrigin?{origin:this.embedOrigin}:{}}}:{}},pageToken:await this.pageToken(entryId,record)};
  }

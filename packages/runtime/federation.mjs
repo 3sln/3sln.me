@@ -18,7 +18,12 @@ import {createManifestDeclarationProvider,ManifestDeclarations,withManifestDecla
 import {ClientDirectory,CLIENT_METADATA_FEATURE,clientSite} from '../federation/client-metadata.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
 import {MESSAGING_ADDRESS_DECLARATION,LINKS_CONTRACT} from '../links/types.mjs';
+import {GOOGLE_DRIVE_SETUP_FRAGMENT} from '../storage/google-drive-integration.mjs';
 import {ITEM_CLASSIFIER_MANIFEST} from '../apps/connections.mjs';
+import {brokeringMounts} from './integration-ports.mjs';
+import {verifyClientAssertion,memoryReplayCache,CLIENT_ASSERTION_TYPE} from '../federation/introspection.mjs';
+import {pinnedKeys} from '../federation/integrations.mjs';
+import {brokeredResourcesDeclaration} from '../federation/introspection.mjs';
 
 export const messagingAddressMounted=config=>config.BINDLEBOX_ENABLED==='true'&&config.INTEGRATIONS_ENABLED==='true'&&typeof config.MESSAGING_DESCRIBE==='function';
 export const BROKERING_STORE='bindle-brokering-v1';
@@ -32,6 +37,7 @@ export const FEDERATION_LAYOUT='bindle-federation-v1';
  * extensions additionally requires EXTENSIONS_ENABLED and a separately mounted extensions.v1 declaration.
  * Do not declare integrations/brokering merely because their keys or JWKS route exist: full protocol slices own those claims. */
 export const MANIFEST_DECLARATIONS=Object.freeze([
+ {flag:['INTEGRATIONS_ENABLED','BROKERING_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.integrations===true&&c.mounts.brokeredResources===true,declare:()=>({features:{'integrations.v1':{}},token_endpoint_auth_methods_supported:['none','private_key_jwt']})},
  {flag:'CLIENT_METADATA_ENABLED',mounted:c=>c.target==='authority'&&c.directory?.enabled===true,declare:()=>({features:{[CLIENT_METADATA_FEATURE]:{}}})},
  {flag:'FEDERATION_ENTRY_ENABLED',mounted:c=>c.target==='entries'&&!!c.entries,declare:c=>entryManifest(c.issuer,{intents:c.entries.intents()})},
  {flag:'FEDERATION_ENTRY_ENABLED',mounted:c=>c.target==='entries'&&c.components===true&&!!c.entries?.embedOrigin&&c.entries.dpop===true,declare:c=>componentsDeclaration(componentsProfile(c.config),{incremental:c.entries?.incremental?.mounted===true})},
@@ -46,6 +52,10 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  // IA-1: `grant-more`/`configure` need no row of their own (a second `authorization-entry.v1` would fail closed as a
  // duplicate). They ride the FEDERATION_ENTRY_ENABLED row through `entries.intents()`, which lists them only when the
  // adapter passed AuthorizationEntries a mounted INCREMENTAL_AUTHORIZATION port (INCREMENTAL_AUTH_ENABLED on).
+ // EXT-X8: brokered-resources.v1 (integrations §12; it replaces the provisional top-level brokering_jwks_uri) only where
+ // the adapter mounted integrations.v1 (`mounts.integrations`) AND preferences/v2 minting, severance draining and the
+ // brokering JWKS route (`mounts.brokeredResources`); introspection_endpoint only with `mounts.brokeredIntrospection`.
+ {flag:['INTEGRATIONS_ENABLED','BROKERING_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.integrations===true&&c.mounts.brokeredResources===true,declare:c=>brokeredResourcesDeclaration(c.issuer,{introspection:c.mounts.brokeredIntrospection===true})},
 ]);
 /** Synchronous adapter over the same provider Query used by the engine harness. Mounts never come from query input. */
 export function federationDeclarations(config,context={}){return new ManifestDeclarations().fetch({config,federation:createManifestDeclarationProvider({registry:MANIFEST_DECLARATIONS,context:{...context,issuer:config.APP_ORIGIN,mounts:context.mounts??{}}})});}
@@ -56,6 +66,7 @@ export function federationConfig(value,fallback){if(value===undefined||value==='
 /** X10's recognized immutable slot joins reviewed fragments only while its implementation is enabled. */
 export function federationSchemas(config){
  const schemas=federationConfig(config.FEDERATION_SCHEMAS,{});
+ if([true,'true'].includes(config.INTEGRATIONS_ENABLED))schemas[GOOGLE_DRIVE_SETUP_FRAGMENT.id]=structuredClone(GOOGLE_DRIVE_SETUP_FRAGMENT);
  if(!schemas||Array.isArray(schemas)||typeof schemas!=='object'||Object.keys(schemas).length>100)throw new TypeError('Invalid reviewed fragment registry.');
  if([true,'true'].includes(config.INTEGRATIONS_ENABLED)&&[true,'true'].includes(config.EXTENSIONS_ENABLED))schemas[ITEM_CLASSIFIER_MANIFEST.id]=structuredClone(ITEM_CLASSIFIER_MANIFEST);
  return schemas;
@@ -68,7 +79,7 @@ export const clientMetadataEnabled=config=>config.CLIENT_METADATA_ENABLED==='tru
  * (the adapter's SSRF-safe egress), `limiter` (`consume`, fleet-wide where available) and `blocked(host)` (admin). */
 export function federationClientDirectory(config,{fetch,limiter,blocked,clock}={}){
  const reservedHosts=[config.APP_ORIGIN,config.EMBED_ORIGIN].flatMap(value=>{try{return value?[new URL(value).hostname]:[];}catch{return [];}});
- return new ClientDirectory({clients:federationClients(config),enabled:clientMetadataEnabled(config),fetch,limiter,blocked,reservedHosts,...clock?{clock}:{}});}
+ return new ClientDirectory({clients:federationClients(config),enabled:clientMetadataEnabled(config),integrations:[true,'true'].includes(config.INTEGRATIONS_ENABLED),fetch,limiter,blocked,reservedHosts,...clock?{clock}:{}});}
 export function federationAccount(accounts,owner){const native=accounts.get(owner);return new Proxy({}, {get:(_,method)=>async(...args)=>{const result=await native.invoke({method,args});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),result.$fault);return result;}});}
 export async function federationEpoch(account){return digest(crypto,`bindle-account-authority-v1\0${account.assignmentId??account.id}\0${account.recoveryHash??''}`);}
 const unsupported=()=>{throw Object.assign(new Error('Credential operations use the identity service.'),{code:'unsupported_method'});};
@@ -88,7 +99,8 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
  const account=federationAccount(accounts,owner);
  const validateSubject=async(candidate,epoch)=>{if(candidate!==subject)return false;const current=await repository.get(owner);return current?.status==='active'&&await federationEpoch(current)===epoch;};
  return {issuer,clients:federationClients(config),routingKey:owner,crypto,manifestDeclarations:()=>federationDeclarations(config,{target:'controller',mounts:manifestMounts}),objectURLs:{...objectURLAuthority({issuer,secret:config.KEY_ENCRYPTION_KEY}),seal:value=>encryptSecret(value,config.KEY_ENCRYPTION_KEY),open:record=>decryptSecret(record,config.KEY_ENCRYPTION_KEY)},enabled:config.FEDERATION_ENABLED==='true',appSessions:appSessionPolicy(config),refreshEnabled:config.FEDERATION_REFRESH_ENABLED!=='false',allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true',dpop:federationDpopSecret(config)?{secret:federationDpopSecret(config)}:undefined,embedOrigin:componentsProfile(config)?.embedOrigin,clientMetadata:clientMetadataEnabled(config),
-  incremental,
+  incremental,integrations:[true,'true'].includes(config.INTEGRATIONS_ENABLED),clientAuth:clientId=>account.connectionClientAuth(owner,clientId),
+  brokering:config.BROKERED_INTROSPECTION_MOUNTED===true?{enabled:true,mint:input=>account.brokeredMint(owner,input),seq:input=>account.brokeredSeq(owner,input),event:input=>account.brokeredFederationEvent(owner,input)}:undefined,
   deriveAppSession:appSessionDerivation({repository,owner}),
   appSessionLineage:async candidate=>candidate===subject?(await repository.get(owner))?.linkedLineage??[]:[],
   incrementalIdentity:async candidate=>{if(candidate!==subject)return null;const current=await repository.get(owner);return current?.status==='active'?{epoch:await federationEpoch(current)}:null;},
@@ -102,13 +114,14 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
    const current=await repository.get(owner),profile=await account.beamProfile(owner);
    if(!current||current.status!=='active')fail('unauthorized','Application authorization is no longer active.');
    if(config.ACTIVITY_V2_ENABLED==='true')descriptors.push({id:`${subject}/activity`,label:'Activity from this app',provider:'bindle',contracts:{[ACTIVITY_CONTRACT]:ACTIVITY_METHODS},generation:owner,limits:{maxRequestBytes:16384,maxResultBytes:1024,txRetentionSeconds:86400}});
+   if(config.BROKERED_INTROSPECTION_MOUNTED===true)descriptors.push(...await account.brokeredDescriptors(owner));
    if(config.EVENT_BUSES_ENABLED==='true')descriptors.push(...await account.eventBusDescriptors(owner));
    if([true,'true'].includes(config.INTEGRATIONS_ENABLED)&&[true,'true'].includes(config.EXTENSIONS_ENABLED))descriptors.push(...await account.classifierDescriptors(owner));
    if(config.BINDLEBOX_ENABLED==='true')descriptors.push({id:`${subject}/links`,label:'Contact links',provider:'bindle',contracts:{[LINKS_CONTRACT]:['issue','revoke','rotate','evaluate','list','changes']},generation:owner});
    descriptors.push({id:`${subject}/app-messages`,label:'Messages from this app',provider:'bindle',contracts:{[APP_NOTIFICATIONS]:['createOwn']},generation:owner,limits:{maxRequestBytes:16384,maxResultBytes:1024,txRetentionSeconds:86400}});descriptors.push({id:`${subject}/profile`,label:'Identity profile',provider:'identity',alias:'@profile',contracts:{[PROFILE]:['read']},generation:owner,preview:{entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null}});return descriptors;
   },
   dispatcher:{durableJournal:true,execute:async context=>{if(!await validateSubject(context.subject,context.epoch))fail('unauthorized','Application authorization is no longer active.');if(context.connection)await account.appConnectionCheck(owner,context.connection.id,context.connection.generation,context.clientId);if(context.resource===`${subject}/profile`&&context.contract===PROFILE&&context.method==='read'){if(Object.keys(context.args).length)fail('invalid_args','Profile read takes no arguments.');const current=await repository.get(owner),profile=await account.beamProfile(owner);return {entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null};}return account.federationRPC({...context,authority:'bindle'});}},
-  connections:{notificationCheck:(connection,clientId)=>account.appNotificationCheck(owner,connection,clientId),binding:clientId=>account.appConnectionBinding(owner,clientId),connect:(client,expected,permissions)=>account.appBindleConnect(owner,client,expected?.generation,{...permissions,expectedNotificationGeneration:expected?.notificationGeneration}),check:(connection,clientId)=>account.appConnectionCheck(owner,connection.id,connection.generation,clientId)}
+  connections:{notificationCheck:(connection,clientId)=>account.appNotificationCheck(owner,connection,clientId),binding:clientId=>account.appConnectionBinding(owner,clientId),connect:async(client,expected,permissions)=>account.appBindleConnect(owner,client,expected?.generation,{...permissions,...client.integration?.status==='valid'&&typeof config.INTEGRATION_CLIENT_SNAPSHOT==='function'?{integration:{kind:'external',snapshot:await config.INTEGRATION_CLIENT_SNAPSHOT(client)}}:{},expectedNotificationGeneration:expected?.notificationGeneration}),check:(connection,clientId)=>account.appConnectionCheck(owner,connection.id,connection.generation,clientId)}
  };
 }
 
@@ -119,7 +132,7 @@ export function federationEntries({config,store,shard,authority,endSession=false
  if(config.FEDERATION_ENTRY_ENABLED!=='true')return null;
  const schemas=federationSchemas(config);
  const entries=new AuthorizationEntries({store,shard,issuer:config.APP_ORIGIN,clients:federationClients(config),authority,...directory?{directory}:{},clientMetadata:clientMetadataEnabled(config),embedOrigin:componentsProfile(config)?.embedOrigin,dpop:!!federationDpopSecret(config),...clock?{clock}:{},pinSchema:async url=>{if(!Object.hasOwn(schemas,url))fail('untrusted_schema_host','This fragment has not been registered with this provider.');return {digest:await digest(crypto,canonical(schemas[url]))};},endSession:endSession===true,incremental});
- entries.manifest=options=>federationEntryManifest(config,entries,{...options,mounts:manifestMounts});return entries;
+ entries.integrations=[true,'true'].includes(config.INTEGRATIONS_ENABLED);entries.manifest=options=>federationEntryManifest(config,entries,{...options,mounts:manifestMounts});return entries;
 }
 
 export const ENTRY_METHODS=['admit','admitHost','create','view','documentPolicy','challenge','verify','declarePlain','select','decide','endTarget','finishSession'];
@@ -149,15 +162,23 @@ export async function federationEntriesCleanup(entries,now=Date.now(),shard){con
 
 /** Requests are targeted by the discovered handle; every later opaque locator
  * carries its account shard prefix. Prefixes are validated before instantiation. */
-export function federationAuthority({config,repository,shard,clock=()=>Date.now(),directory,manifestMounts={}}){
+// W5-S4: Worker adapters rebuild the authority per request, so the token-endpoint assertion jti cache lives per isolate
+// (not per call). Per-isolate only: a durable cross-isolate store remains required before production.
+const systemNow=()=>Date.now(),isolateAssertionReplay=memoryReplayCache({clock:systemNow});
+export function federationAuthority({config,repository,shard,clock=systemNow,directory,manifestMounts={}}){
  const issuer=config.APP_ORIGIN,clients=federationClients(config),objectURLs=objectURLAuthority({issuer,secret:config.KEY_ENCRYPTION_KEY}),nonces=federationDpopSecret(config)?dpopNonces({secret:federationDpopSecret(config),clock}):null;
  const routedOrDenied=async id=>{try{return await controllerFor(id);}catch{fail('unauthorized','The embedded session is unavailable.');}};
  const objectController=async(url,operation)=>{const claims=await objectURLs.verify(url,operation);const current=await repository.get(claims.owner);if(!current||current.status!=='active')fail('unauthorized','This object URL is no longer active.');return {claims,controller:shard(claims.owner)};};
  const controllerFor=async id=>{const match=typeof id==='string'&&routed.exec(id);if(!match)fail('invalid_request','Invalid provider authorization identifier.');const current=await repository.get(match[1]);if(!current||current.status!=='active')fail('unauthorized','Application authorization is unavailable.');return shard(match[1]);};
+ const assertionReplay=clock===systemNow?isolateAssertionReplay:memoryReplayCache({clock});
+ // W5-S1: the connection's pinned auth method governs, never the live metadata alone (§2.3: an auth-method change is
+ // staged for review), so a taken-over domain cannot downgrade a pinned private_key_jwt client to none. §3.3: a
+ // `configuring` connection still exchanges and refreshes.
+ const authenticateClient=async(input,controller)=>{const client=await directory?.resolve(input.clientId),pin=directory?.integrations===true&&metadataClient(input.clientId)?await controller.integrationClientAuth(input.clientId):null;if(pin||client?.authMethod==='private_key_jwt'){if(!pin||client?.authMethod!=='private_key_jwt'||client.jwksUri!==pin.jwksUri||!pin.tokenAuth||input.clientAssertionType!==CLIENT_ASSERTION_TYPE)fail('invalid_client','Client authentication required.');const keys=pinnedKeys(await directory.resolveKeys({id:pin.clientId,authMethod:'private_key_jwt',jwksUri:pin.jwksUri}),pin.thumbprints);await verifyClientAssertion(input.clientAssertion,{clientId:input.clientId,audience:issuer+'/oauth/token',keys,now:clock(),replay:assertionReplay});}else if(input.clientAssertion!==undefined||input.clientAssertionType!==undefined)fail('invalid_client','Unsupported client authentication.');const {clientAssertion,clientAssertionType,...safe}=input;return safe;};
  const metadataClient=id=>!!directory?.isMetadataId(id),allowed=async id=>{if(metadataClient(id))await directory.assertAllowed(id);};
  return {clients,directory,
   ready:()=>config.FEDERATION_ENABLED==='true'&&(clients.length>0||!!directory?.enabled),
-  manifest:()=>withManifestDeclarations({version:'0',issuer,authorization_endpoint:`${issuer}/oauth/authorize`,authorization_request_endpoint:`${issuer}/api/oauth/requests`,token_endpoint:`${issuer}/oauth/token`,rpc_endpoint:`${issuer}/bindle/rpc`,jwks_uri:`${issuer}/oauth/jwks`,preferences_contract:PREFERENCES,grant_types_supported:config.FEDERATION_REFRESH_ENABLED==='false'?['authorization_code']:['authorization_code','refresh_token'],login_presentation:['redirect'],revocation_endpoint:`${issuer}/oauth/revoke`,...nonces?{dpop_signing_alg_values_supported:['ES256']}:{},contracts:[]},federationDeclarations(config,{target:'authority',directory,mounts:manifestMounts})),
+  manifest:()=>withManifestDeclarations({version:'0',issuer,authorization_endpoint:`${issuer}/oauth/authorize`,authorization_request_endpoint:`${issuer}/api/oauth/requests`,token_endpoint:`${issuer}/oauth/token`,rpc_endpoint:`${issuer}/bindle/rpc`,jwks_uri:`${issuer}/oauth/jwks`,preferences_contract:PREFERENCES,grant_types_supported:config.FEDERATION_REFRESH_ENABLED==='false'?['authorization_code']:['authorization_code','refresh_token'],login_presentation:['redirect'],revocation_endpoint:`${issuer}/oauth/revoke`,...nonces?{dpop_signing_alg_values_supported:['ES256']}:{},contracts:[]},federationDeclarations(config,{target:'authority',directory,mounts:{...manifestMounts,...brokeringMounts(config)}})),
   async beginAuthorization(input){if(!input||typeof input.identity!=='string'||input.identity.length>320)fail('invalid_request','The discovered identity handle is required.');const parts=input.identity.split('@'),host=new URL(issuer).host;if(parts.length!==2||parts[1].toLowerCase()!==host)fail('invalid_request','The identity must belong to this provider.');let handle;try{handle=normalizeHandle(parts[0]);}catch{fail('invalid_request','Invalid identity handle.');}const current=await repository.findByHandle(handle);if(!current||current.status!=='active')fail('invalid_request','This identity cannot authorize an application.');const {identity,...request}=input;
    // Resolved here, never taken from the caller: the owner shard receives a validated snapshot as a separate argument.
    if(metadataClient(request.clientId))return shard(current.id).beginAuthorization(request,{client:await directory.resolve(request.clientId)});
@@ -167,8 +188,8 @@ export function federationAuthority({config,repository,shard,clock=()=>Date.now(
   async appSessions(context,input){const owner=context?.sessionToken?.split('.')[0];if(!UUID.test(owner??'')||(await repository.get(owner))?.status!=='active')fail('unauthorized');return shard(owner).appSessions(context,input);},
   async grants(context){const owner=typeof context?.sessionToken==='string'?context.sessionToken.split('.')[0]:'';if(!UUID.test(owner))fail('unauthorized','Sign in to continue.');const current=await repository.get(owner);if(!current||current.status!=='active')fail('unauthorized','Sign in to continue.');return shard(owner).grants(context);},
   async preferences(context){const owner=typeof context?.sessionToken==='string'?context.sessionToken.split('.')[0]:'';if(!UUID.test(owner))fail('unauthorized','Sign in to continue.');const current=await repository.get(owner);if(!current||current.status!=='active')fail('unauthorized','Sign in to continue.');return shard(owner).preferences(context);},
-  revoke:async(context,id)=>(await controllerFor(id)).revoke(context,id),exchange:async input=>{await allowed(input?.clientId);return (await controllerFor(input.code)).exchange(input);},tokenClient:async token=>(await controllerFor(token)).tokenClient(token),rpc:async(token,envelope,transport)=>{const controller=await controllerFor(token),waits=busWaitsPort(config.EVENT_BUS_WAITS)??config.EVENT_BUS_WAITER;if(config.EVENT_BUSES_ENABLED!=='true'||!waits||envelope?.contract!==EVENT_BUS_CONTRACT||envelope.method!=='read')return controller.rpc(token,envelope,transport);return holdBusRPC({owner:token.split('.')[0],waits,rpc:lease=>controller.rpc(token,envelope,{...transport,busWaits:true,...lease?{busResume:lease}:{}}),recheck:()=>controller.tokenClient(token)});},
-  refresh:async input=>{await allowed(input?.clientId);return (await controllerFor(input.refreshToken)).refresh(input);},
+  revoke:async(context,id)=>(await controllerFor(id)).revoke(context,id),exchange:async input=>{await allowed(input?.clientId);const controller=await controllerFor(input.code);return controller.exchange(await authenticateClient(input,controller));},tokenClient:async token=>(await controllerFor(token)).tokenClient(token),rpc:async(token,envelope,transport)=>{const controller=await controllerFor(token),waits=busWaitsPort(config.EVENT_BUS_WAITS)??config.EVENT_BUS_WAITER;if(config.EVENT_BUSES_ENABLED!=='true'||!waits||envelope?.contract!==EVENT_BUS_CONTRACT||envelope.method!=='read')return controller.rpc(token,envelope,transport);return holdBusRPC({owner:token.split('.')[0],waits,rpc:lease=>controller.rpc(token,envelope,{...transport,busWaits:true,...lease?{busResume:lease}:{}}),recheck:()=>controller.tokenClient(token)});},
+  refresh:async input=>{await allowed(input?.clientId);const controller=await controllerFor(input.refreshToken);return controller.refresh(await authenticateClient(input,controller));},
   approve:async(context,input,options)=>(await controllerFor(input.requestId)).approve(context,input,options),
   async entryIdentity(context,owner){if(!UUID.test(owner))fail('unauthorized','Sign in to continue.');const current=await repository.get(owner);if(!current||current.status!=='active')fail('unauthorized','Sign in to continue.');return shard(owner).entryIdentity(context);},
   beginEntryAuthorization:async(context,input,options)=>(await controllerFor(input.requestId)).beginEntryAuthorization(context,input,options),

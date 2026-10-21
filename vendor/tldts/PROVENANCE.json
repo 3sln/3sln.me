@@ -1,0 +1,11 @@
+{
+  "package": "tldts",
+  "version": "7.4.19",
+  "source": "https://registry.npmjs.org/tldts/-/tldts-7.4.19.tgz",
+  "upstream": "https://github.com/remusao/tldts",
+  "license": "MIT",
+  "originalSourceSha256": "3638be310796dc356da96affa5370e6ca9b4dcd2e4bbd3548b1cd3d6e3150297",
+  "file": "dist/index.esm.min.js",
+  "adaptation": "Self-contained ESM build (tldts-core and the public suffix list bundled upstream) copied unmodified except for the removed sourceMappingURL comment. Used by the web console's CX-3 access views as the public-suffix-aware registrableDomain resolver.",
+  "sha256": "cc4c786e3b5b6aae63b01a725cc4d8e1d149817c3f44c225cb0a9fb89821880a"
+}

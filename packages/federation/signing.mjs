@@ -131,7 +131,7 @@ export function brokeringKeys({issuer,secret,metadata,crypto=globalThis.crypto,c
   async status(){return (await current()).keys.map(({kid,purpose,state,createdAt,activatesAt,activatedAt,retiredAt,removeAt,revokedAt})=>({kid,purpose,state,createdAt,activatesAt,activatedAt,retiredAt,removeAt,revokedAt}));},
   /** Provider-side verification (e.g. a later introspection endpoint): the published set, plus the signing key must
    * have been active when the token was issued, so a retired or staged key cannot vouch for a new token. */
-  async verify(token,options){const set=await current();return verifyAccessToken(token,{...options,issuer,keys:published(set),signedWhile:kid=>{const k=set.keys.find(x=>x.kid===kid);return k&&k.activatedAt!==undefined?{from:k.activatedAt,until:k.retiredAt}:null;}});}
+  async verify(token,options){const set=await metadata.transaction(load);return verifyAccessToken(token,{...options,issuer,keys:published(set),signedWhile:kid=>{const k=set.keys.find(x=>x.kid===kid);return k&&k.activatedAt!==undefined?{from:k.activatedAt,until:k.retiredAt}:null;}});}
  };
 }
 /** Mints one RFC 9068 brokered access token (integrations §5.3). Live minting checks (account epoch, connection

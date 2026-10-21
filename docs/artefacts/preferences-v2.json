@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://3sln.me/artefacts/contracts/preferences/v2",
+  "title": "Read approved preference fields with brokered credentials",
+  "description": "Validates the contract method/args projection of a Bindle RPC envelope addressed to @preferences. Every resource-field value is a list of uniform references in owner order (integrations §5.1, AMD-C3/C9). Brokered members name the integration endpoint and resource and carry a provider-minted RFC 9068 token of at most 300 seconds; consumers treat tokens as opaque, never persist them past expires_at and refresh by reading again. Served only by providers declaring brokered-resources.v1. Provisional (EXT-X8, 2026-10-21); publish changes under a new URL.",
+  "type": "object",
+  "required": ["method", "args"],
+  "properties": {
+    "method": {"const": "read"},
+    "args": {
+      "type": "object",
+      "required": ["fragment"],
+      "properties": {"fragment": {"type": "string", "format": "uri", "maxLength": 2048}},
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": ["fragment", "revision", "values"],
+      "properties": {
+        "fragment": {"type": "string", "format": "uri"},
+        "revision": {"type": "string", "maxLength": 80},
+        "values": {
+          "type": "object",
+          "description": "Approved fields. Non-resource fields keep their v1 value; resource fields are arrays of #/$defs/reference.",
+          "additionalProperties": {
+            "anyOf": [
+              {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/reference"}},
+              {"not": {"type": "array"}}
+            ]
+          }
+        },
+        "requiresConsent": {
+          "type": "array",
+          "description": "Fields with an assigned member this consumer has not approved; that member is omitted, approved members remain.",
+          "items": {"type": "string"},
+          "maxItems": 32
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Integration readers only: the connection's configuration seq, comparable with preferences-updated events (§6.2)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "reference": {
+      "type": "object",
+      "required": ["id", "status", "contracts"],
+      "properties": {
+        "id": {"type": "string", "format": "uri", "description": "The provider's opaque scoped reference, never the integration's resource string."},
+        "label": {"type": "string", "maxLength": 200, "description": "Inert plain text; integration labels are unverified."},
+        "status": {"enum": ["available", "unavailable"]},
+        "contracts": {"type": "array", "items": {"type": "string", "format": "uri"}, "maxItems": 16},
+        "methods": {
+          "type": "object",
+          "description": "Brokered members: the exact contract to methods map in the token (bindle.methods).",
+          "additionalProperties": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"}, "maxItems": 64}
+        },
+        "token": {"type": "string", "maxLength": 8192, "description": "Opaque. Issuer-hosted: an attenuated issuer RPC token. Brokered: an RFC 9068 at+jwt for broker.endpoint only."},
+        "token_type": {"enum": ["Bearer", "DPoP"]},
+        "expires_at": {"type": "integer", "description": "Seconds since the epoch."},
+        "broker": {
+          "type": "object",
+          "description": "Present only for brokered members. Send the RPC envelope to endpoint with resource set to broker.resource.",
+          "required": ["endpoint", "origin", "resource"],
+          "properties": {
+            "endpoint": {"type": "string", "format": "uri"},
+            "origin": {"type": "string", "format": "uri"},
+            "resource": {"type": "string", "format": "uri", "maxLength": 512}
+          },
+          "additionalProperties": false
+        }
+      },
+      "dependentRequired": {"token": ["token_type", "expires_at"]},
+      "additionalProperties": false
+    }
+  },
+  "x-methods": {
+    "read": {
+      "request": "#",
+      "result": "#/$defs/result",
+      "effect": "read",
+      "permission": "Approved fields and live resource assignment for this exact contract/method; brokered tokens only while the grant, assignment, record and connection are live."
+    }
+  }
+}

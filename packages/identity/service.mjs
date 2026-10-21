@@ -355,7 +355,7 @@ export class IdentityService {
       account.revision = revision + 1;
       await this.repository.compareAndSwap(account.id, revision, account);
     }
-    return { account: await this.projectAccount(account), csrfToken: session.csrfToken, expiresAt: session.expiresAt,sessionContext:await this.sessionID(session),signOutImpact:await this.signOutImpact(account,session),
+    return { account: await this.projectAccount(account), csrfToken: session.csrfToken, expiresAt: session.expiresAt,authTime:Number.isFinite(this.authAt(session))?this.authAt(session):null,sessionContext:await this.sessionID(session),signOutImpact:await this.signOutImpact(account,session),
       credentials: publicCredentials(account),
       devices: await Promise.all(account.sessions.filter(s => s.expiresAt > this.clock()).map(async s => ({
         id: await this.sessionID(s), label: s.label || 'Browser session', createdAt: s.createdAt, ...s.parentSessionId?{approvedFrom:s.parentSessionId}:{},

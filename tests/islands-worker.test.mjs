@@ -179,6 +179,22 @@ test('worker: only the leader restores, followers render the fanned-out snapshot
   for(const w of workers)await w({op:'pagehide'});
 });
 
+test('worker: a restore that loses the race with the app exchange retries quickly instead of waiting seconds',async t=>{
+  const p=await provider(),events=[],log=[],fetch=browserFetch(p,log),channel=`it-${b64(6)}`,subject=p.accounts[0].subject;
+  const shimmed=async(url,init)=>{const response=await fetch(url,init);if(!String(url).endsWith('/embed/api/session')||!response.ok)return response;const body=await response.json();body.view.subject=subject;return new Response(JSON.stringify(body),{status:200,headers:{'Content-Type':'application/json'}});};
+  class Channel extends BroadcastChannel{constructor(){super(channel);}}
+  const store={...await openStore({indexedDB:undefined}),persistent:true},config={issuer,clientId,origin:embedOrigin};
+  const worker=createIslandWorker({post:m=>events.push(m),storeFactory:async()=>store,crypto:webcrypto,fetch:shimmed,indexedDB:undefined,BroadcastChannel:Channel,timing:{restorePadMs:0}});t.after(()=>worker({op:'pagehide'}));
+  await worker({id:1,op:'start',args:{config,instance:'D'.repeat(22),role:'member',bucket:64,scheme:'light'}});await tick(30);
+  const key=await frameKey(store,{issuer,clientId,crypto:webcrypto}),{result,verifier}=await islandFlow(p,key,log);
+  await worker({id:2,op:'redeem',args:{claim:result.claim,delivered:true}});await tick(100);
+  assert.equal(log.filter(e=>e.url.endsWith('/embed/api/session')).length,1,'the first restore ran before the app exchanged');
+  assert.equal((await exchange(p,result.code,verifier)).status,200);const started=Date.now();
+  while(!events.filter(e=>e.event==='views').at(-1)?.views.length&&Date.now()-started<1500)await tick(25);
+  assert.deepEqual(events.filter(e=>e.event==='views').at(-1).views.map(v=>v.subject),[subject],'restored within a short retry, not after 2 s or more');
+  await worker({op:'pagehide'});
+});
+
 test('worker review fixes: forget during a bfcache resume is queued; unknown-subject records fail closed; views drop at once',async()=>{
   const store=await openStore({indexedDB:undefined}),events=[],config={issuer,clientId,origin:embedOrigin};let opened=0;
   const worker=createIslandWorker({post:m=>events.push(m),storeFactory:async()=>{opened++;return store;},crypto:webcrypto,fetch:async()=>new Response('{}',{status:401}),indexedDB:undefined,BroadcastChannel:undefined,locks:undefined,timing:{restorePadMs:0}});

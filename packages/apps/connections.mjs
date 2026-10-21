@@ -188,7 +188,7 @@ export class AppConnections{
   return this.register(owner,{id:`${this.origin}/integrations/${integration}`,name:def.name,origin:this.origin},undefined,{transport:'bindle',integration:{kind:'built-in',builtin:integration,manifest:structuredClone(def.manifest)},provenance:{kind:'owner-built-in'}});
  }
  /** Lifecycle transitions (integrations §3.1, §7.1). `op`: suspend | resume | configured | health | approve. */
- async transition(owner,id,op,input={}){
+ async transition(owner,id,op,input={},{authTime}={}){
   return this.metadata.transaction(async tx=>{
    const r=await this.#load(tx,owner,id),now=this.clock(),from=r.state,events=[];
    const set=state=>{r.state=state;r.status=connectionStatus(state);r.stateChangedAt=now;};
@@ -219,6 +219,9 @@ export class AppConnections{
     if(r.integration?.kind!=='external'||!staged)fail('invalid_state','There is no change to review.',409);
     if(r.integration.invalid)fail('manifest_invalid','The integration manifest is unavailable or invalid. Wait for it to be fixed.',409);
     if(!connectionSnapshotValid(staged,r.clientId,{reserved:[new URL(this.origin).hostname]}))fail('invalid_integration','The staged manifest is not valid.',409);
+    // W5-S2: the approval names the staged revision the owner reviewed; a re-staged snapshot needs a fresh review.
+    if(typeof input.stagedRevision!=='string'||input.stagedRevision!==r.integration.stagedRevision)fail('connection_changed','This change was updated. Review it again.',409);
+    if(!(Number.isSafeInteger(authTime)&&authTime<=now&&now-authTime<=RECENT_AUTH_MS))fail('reauthentication_required','Confirm it is you before approving this change.',401);
     r.integration={kind:'external',snapshot:structuredClone(staged)};
     if(from==='manifest-invalid'){bump(r);set(r.configured===false||requiresSetup(staged.manifest)&&r.configured!==true?'configuring':'active');events.push({type:'connection-resumed',connection:id,clientId:r.clientId,generation:r.generation,state:r.state});}
     else events.push({type:'manifest-adopted',connection:id,clientId:r.clientId,generation:r.generation,changes:['owner_approved']});
@@ -239,11 +242,11 @@ export class AppConnections{
    const invalidate=reason=>{if(r.state==='manifest-invalid'||r.state==='suspended')return;bump(r);set('manifest-invalid');events.push({type:'connection-revoked',connection:id,clientId:r.clientId,generation:r.generation,terminal:false,reason});};
    const security=result.changes.filter(c=>['identity_changed','keys_replaced','endpoint_collision','client_gone','client_invalid','client_mismatch','manifest_removed','manifest_invalid'].includes(c));
    let affected=[];
-   if(result.decision==='invalid'){r.integration.invalid={reason:result.changes[0]??'manifest_invalid'};delete r.integration.staged;affected=await this.#affected(tx,id);invalidate('manifest-invalid');}
+   if(result.decision==='invalid'){r.integration.invalid={reason:result.changes[0]??'manifest_invalid'};delete r.integration.staged;delete r.integration.stagedRevision;affected=await this.#affected(tx,id);invalidate('manifest-invalid');}
    else{
     if(result.next&&JSON.stringify(result.next)!==JSON.stringify(r.integration.snapshot)){r.integration.snapshot=structuredClone(result.next);events.push({type:'manifest-adopted',connection:id,clientId:r.clientId,generation:r.generation,changes:result.changes.slice(0,32)});}
     if(result.decision==='review'){
-     r.integration.staged=result.staged!==undefined&&connectionSnapshotValid(result.staged,r.clientId,{reserved})?structuredClone(result.staged):r.integration.staged;
+     if(result.staged!==undefined&&connectionSnapshotValid(result.staged,r.clientId,{reserved})&&JSON.stringify(result.staged)!==JSON.stringify(r.integration.staged)){r.integration.staged=structuredClone(result.staged);r.integration.stagedRevision=this.uuid();}
      if(security.length){r.integration.review={changes:security};affected=await this.#affected(tx,id);invalidate('manifest-review');}
     }else{
      const wasInvalid=Boolean(r.integration.invalid||r.integration.review);delete r.integration.invalid;delete r.integration.review;

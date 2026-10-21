@@ -55,21 +55,22 @@ export function validateClientMetadata(document,clientId,{integrations=false,sha
  if(document.response_types!==undefined&&(!Array.isArray(document.response_types)||document.response_types.some(r=>r!=='code')))unavailable();
  const sameOrigin=value=>{try{const u=typeof value==='string'&&value.length<=2048?new URL(value):null;return u&&u.href===value&&u.protocol==='https:'&&!u.username&&!u.password&&!u.hash&&u.origin===origin?value:undefined;}catch{return undefined;}};
  const claimedName=presentation(document.client_name,100),clientUri=sameOrigin(document.client_uri),logoUri=sameOrigin(document.logo_uri);
+ const initiateLoginUri=integrations&&prefixedURL(document.initiate_login_uri,clientId);
  let integration;
  if(integrations===true&&Object.hasOwn(document,'bindle_integration'))integration=sharedHost?{status:'invalid',reason:'shared_host'}:validateIntegrationManifest(document.bindle_integration,{clientId,confidential,redirectUris:uris,...confidential?{jwksUri:document.jwks_uri}:{},reserved});
- return {id:clientId,name:url.host,origin,redirectUris:[...uris],reviewed:false,...claimedName?{claimedName}:{},...clientUri?{clientUri}:{},...logoUri?{logoUri}:{},
+ return {id:clientId,name:url.host,origin,redirectUris:[...uris],reviewed:false,...claimedName?{claimedName}:{},...clientUri?{clientUri}:{},...logoUri?{logoUri}:{},...initiateLoginUri?{initiateLoginUri}:{},
   ...confidential?{authMethod:'private_key_jwt',jwksUri:document.jwks_uri}:{},...integration&&integration.status!=='absent'?{integration}:{}};
 }
 /** Shape check for a snapshot crossing a trust boundary inside the runtime (entry store → owner shard). Integration
  * members (`authMethod`, `jwksUri`, `integration`) are accepted only when the caller runs with `integrations`, and the
  * whole snapshot must re-derive exactly, so a manifest never disagrees with the client fields it was validated with. */
 export function validClientSnapshot(value,{integrations=false,reserved=[]}={}){
- const keys=['id','name','origin','redirectUris','reviewed','claimedName','clientUri','logoUri',...integrations===true?['authMethod','jwksUri','integration']:[]];
+ const keys=['id','name','origin','redirectUris','reviewed','claimedName','clientUri','logoUri',...integrations===true?['authMethod','jwksUri','integration','initiateLoginUri']:[]];
  if(!object(value)||value.reviewed!==false||Object.keys(value).some(k=>!keys.includes(k)))return false;
  const url=metadataClientURL(value.id);if(!url||value.origin!==url.origin||value.name!==url.host)return false;
  if(value.integration!==undefined&&!validIntegrationValue(value.integration,{clientId:value.id,confidential:value.authMethod==='private_key_jwt',redirectUris:value.redirectUris,...value.authMethod==='private_key_jwt'?{jwksUri:value.jwksUri}:{},reserved}))return false;
  const {integration,...rest}=value;
- try{return JSON.stringify(validateClientMetadata({client_id:value.id,redirect_uris:value.redirectUris,...value.claimedName?{client_name:value.claimedName}:{},...value.clientUri?{client_uri:value.clientUri}:{},...value.logoUri?{logo_uri:value.logoUri}:{},...value.authMethod!==undefined?{token_endpoint_auth_method:value.authMethod}:{},...value.jwksUri!==undefined?{jwks_uri:value.jwksUri}:{}},value.id,{integrations}))===JSON.stringify(rest);}catch{return false;}
+ try{return JSON.stringify(validateClientMetadata({client_id:value.id,redirect_uris:value.redirectUris,...value.claimedName?{client_name:value.claimedName}:{},...value.clientUri?{client_uri:value.clientUri}:{},...value.logoUri?{logo_uri:value.logoUri}:{},...value.initiateLoginUri?{initiate_login_uri:value.initiateLoginUri}:{},...value.authMethod!==undefined?{token_endpoint_auth_method:value.authMethod}:{},...value.jwksUri!==undefined?{jwks_uri:value.jwksUri}:{}},value.id,{integrations}))===JSON.stringify(rest);}catch{return false;}
 }
 /** In-process sliding-window limiter with the `consume(key,{windowMs,limit})` shape of the runtime ABUSE port. */
 export function memoryLimiter({clock=()=>Date.now(),maxKeys=4096}={}){

@@ -88,7 +88,7 @@ function resources(env,resolveIdentityBadges){
  if(env.FEDERATION&&env.BROKERING_ENABLED==='true')value.FEDERATION_BROKERING={enabled:true,jwks:()=>env.FEDERATION.get(env.FEDERATION.idFromName(BROKERING_STORE)).brokeringJwks()};
  // Device grant (LA3): mounted, and so declared, only with the flag and every dependency of the declared members.
  const deviceMounted=Boolean(env.FEDERATION)&&deviceGrantMountable(env);
- if(env.FEDERATION)value.FEDERATION_AUTHORITY=federationAuthority({config:env,repository,directory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted(value)},shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
+ if(env.FEDERATION)value.FEDERATION_AUTHORITY=federationAuthority({config:value,repository,directory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted(value)},shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
  if(deviceMounted){
   const remote=async(owner,method,args)=>{const envelope=await env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).device(method,args,owner);if(!envelope.ok)throw Object.assign(new Error(envelope.error.message),envelope.error);return envelope.result;};
   value.DEVICE_GRANT=deviceGrantRunner({config:env,deviceGrant:remoteDeviceGrant({config:env,linked:engineLinkedPort(()=>value.IDENTITY_ENGINE()),limits:deviceLimits(value.ABUSE),pollLimits:linkedPollLimits,jti:deviceJti,remote,active:async owner=>(await repository.get(owner))?.status==='active'})});

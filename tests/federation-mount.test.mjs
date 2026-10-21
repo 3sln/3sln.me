@@ -186,3 +186,11 @@ test('a misconfigured embed origin disables components instead of failing reques
  assert.ok(c({EMBED_ORIGIN:'http://127.0.0.1:8787',LOCAL_DEVELOPMENT:'true'}));
  const f=await fixture({extra:{EMBED_ORIGIN:'http://embed.provider.example'}});assert.equal((await f.fetch(issuer+'/.well-known/bindle/manifest.json')).status,200);
 });
+
+test('EXT-X8: the brokered introspection route exists only with its mount evidence and has its own admission class',async()=>{
+ const seen=[],handler=async request=>{seen.push(new URL(request.url).pathname);return Response.json({active:false},{headers:{'Cache-Control':'no-store'}});};
+ const off=await fixture({extra:{BROKERED_INTROSPECTION:handler}});assert.notEqual((await off.fetch(issuer+'/oauth/brokering/introspect',{method:'POST'})).status,200);assert.deepEqual(seen,[],'no handler without BROKERED_INTROSPECTION_MOUNTED');
+ const on=await fixture({extra:{BROKERED_INTROSPECTION_MOUNTED:true,BROKERED_INTROSPECTION:handler}}),response=await on.fetch(issuer+'/oauth/brokering/introspect',{method:'POST'});
+ assert.deepEqual(await response.json(),{active:false});assert.deepEqual(seen,['/oauth/brokering/introspect']);
+ assert.ok(on.consumed.some(key=>key.startsWith('bindle/introspect/ip/')));assert.equal(on.consumed.some(key=>key.startsWith('bindle/mutation/')),false,'token-endpoint budget untouched');
+});

@@ -24,7 +24,8 @@ export default function securityView(state){
     h('section',h('h2','Email addresses'),h('p','Email is optional. Adding an address requires verification before it can be used for delivery.').classes('muted'),
       a.verifiedEmail?h('div',h('span',a.verifiedEmail).attrs({translate:'no'}),badge('Verified','good')).classes('credential-row'):null,
       btn('Add email address',{kind:'open-modal',modal:{kind:'email'}},'button secondary',!state.config.emailEnabled),!state.config.emailEnabled?h('p','Email linking is not enabled on this service.').classes('field-help'):null).classes('panel'),
-    devicesEnabled(state)?devicesApps(state):h('section',h('h2','Apps with access'),...(state.data.grants??[]).filter(g=>g.active).map(grant=>h('div',h('strong',grant.client),h('p',(grant.methods??[]).join(', ')),btn('Revoke access',{kind:'revoke-grant',id:grant.id},'text-button danger')).classes('credential-row')),
+    // CX-3: with integrations on, the access views own grant review and revocation; this panel only links there.
+    devicesEnabled(state)?devicesApps(state):state.config?.integrationsEnabled?h('section',h('h2',state.locale==='es'?'Acceso de apps':'Apps with access'),h('p',state.locale==='es'?'Revisa qué puede hacer cada app y retira su acceso.':'Review what each app can do and remove its access.').classes('muted'),btn(state.locale==='es'?'Ver acceso':'Review access',{kind:'navigate',view:'access'},'button secondary')).classes('panel'):h('section',h('h2','Apps with access'),...(state.data.grants??[]).filter(g=>g.active).map(grant=>h('div',h('strong',grant.client),h('p',(grant.methods??[]).join(', ')),btn('Revoke access',{kind:'revoke-grant',id:grant.id},'text-button danger')).classes('credential-row')),
       (state.data.grants??[]).some(g=>g.active)?null:h('p','No apps have access to your resources.').classes('muted')).classes('panel')
     ).classes('settings-grid'));
 }

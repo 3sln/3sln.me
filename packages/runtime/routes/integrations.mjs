@@ -59,7 +59,7 @@ async function owned(c,owner,operation,list,{id,input}){
  const Operation=typeof operation==='string'&&list.includes(operation)?BROKERED_ENGINE_OPERATIONS[operation]:null;
  if(!integrationsFlag(c.config)||!Operation)notFound();
  const params={actor:{kind:'owner',owner},input:{...shape(input)??{},...id===undefined?{}:{[operation==='integrations.revalidate'?'connection':'record']:id}}};
- try{const result=await run(c,Operation,params);await report(c,owner,result?.connection??params.input.connection,result?.health);return result;}
+ try{const result=await run(c,Operation,params);if(typeof c.integrationEventsKick==='function')await c.integrationEventsKick(owner);await report(c,owner,result?.connection??params.input.connection,result?.health);return result;}
  catch(error){await report(c,owner,params.input.connection,error?.health);throw error;}
 }
 /** BB-C1b MESSAGING_DESCRIBE port over a controller: `({owner, slot, occupant}) -> describe body`. */

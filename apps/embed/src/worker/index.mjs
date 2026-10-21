@@ -7,7 +7,7 @@ import {embedAPI,createEntry,createRequestEntry,restoreAll,normalizeView} from '
 import {createElection,ELECTION} from './leader.mjs';
 import {monogramPNG,transparentPNG,reencodeAvatar,validBucket} from './avatar.mjs';
 
-const SNAPSHOT_TTL=600000,RENEW_MARGIN=120000,PENDING_RETRY=[2000,4000,8000,16000,32000],STREAM_RETRY=[2000,4000,8000,16000,32000,60000];
+const SNAPSHOT_TTL=600000,RENEW_MARGIN=120000,PENDING_RETRY=[250,500,1000,2000,4000,8000,16000,32000],STREAM_RETRY=[2000,4000,8000,16000,32000,60000];
 export function createIslandWorker({post,storeFactory=openStore,crypto=globalThis.crypto,fetch=globalThis.fetch?.bind(globalThis),indexedDB=globalThis.indexedDB,locks=globalThis.navigator?.locks,BroadcastChannel:Channel=globalThis.BroadcastChannel,clock=()=>Date.now(),timing={}}){
   let config,instance,role,store,key,api,election,scheme='light',visible=true,started=false,generation=0,renewTimer=null;
   // Operations wait for a started worker (IMPL-1): a forget arriving during a bfcache resume is queued, not dropped.
@@ -81,7 +81,9 @@ export function createIslandWorker({post,storeFactory=openStore,crypto=globalThi
       if(previous&&previous.session!==result.session){closeStream(record.id);api.end(previous.session);}
       await fetchAvatars(record.id);openStream(record.id);return;
     }
-    // A pending credential is unusable until the app exchanges the paired code: retry within its window only.
+    // A pending credential is unusable until the app exchanges the paired code: retry within its window only. The app's
+    // exchange races this restore (both follow the same `code`), so the first retries are short: a 2 s first step left a
+    // just-signed-in island blank for 6–14 s whenever the exchange lost the race (the islands avatar flake). Same ~64 s reach.
     const attempt=retries.get(record.id)??0;
     if(record.pendingUntil>clock()&&attempt<PENDING_RETRY.length){retries.set(record.id,attempt+1);setTimeout(()=>sync({renew:record.id}),PENDING_RETRY[attempt]);return;}
     if(result.status===401){retries.delete(record.id);closeStream(record.id);sessions.delete(record.id);await deleteCredentials(store,scope(),r=>r.id===record.id);}

@@ -59,7 +59,7 @@ export async function readConnection(tx,owner,id){
  const r=await tx.get(CONNECTION+id);if(r?.kind!=='app-connection'||r.provider!=='app'||r.owner!==owner||!Number.isSafeInteger(r.generation)||r.integration?.kind!=='external')return null;
  const manifest=r.integration.snapshot?.manifest;if(!plain(manifest))return null;
  const lifecycle=await tx.get(LIFECYCLE),state=connectionState(r),fenced=r.fence!==undefined&&(BLOCKED.includes(lifecycle?.phase)||r.fence!==epochOf(lifecycle));
- return {id,clientId:r.clientId,name:r.name,origin:r.appOrigin??null,state,status:r.status,generation:r.generation,connectedAt:r.connectedAt,disconnectedAt:r.disconnectedAt,manifest:structuredClone(manifest),serving:SERVING.includes(state)&&r.status==='active'&&!fenced};
+ return {id,clientId:r.clientId,name:r.name,origin:r.appOrigin??null,state,status:r.status,generation:r.generation,connectedAt:r.connectedAt,disconnectedAt:r.disconnectedAt,manifest:structuredClone(manifest),serving:SERVING.includes(state)&&r.status==='active'&&!fenced,tokenAuth:(SERVING.includes(state)||state==='configuring')&&r.status==='active'&&!fenced};
 }
 /** 'live' | 'stale' (same incarnation, generation moved on: rebind after an authenticated lookup) | 'ended'. */
 export function recordState(record,connection){

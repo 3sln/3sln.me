@@ -216,6 +216,12 @@ for(const name of ['chromium','firefox','webkit'])test(`islands in ${name}`,{tim
     assert.deepEqual(await types_(page,'m1'),['ready']);
   });
 
+  await t.test('decoded avatar swaps complete while its iframe is hidden',async()=>{
+    const frame=frames.a1,previous=await frame.evaluate(()=>document.querySelector('img.avatar')?.src);
+    await page.evaluate(()=>{document.querySelector('#slot iframe').style.display='none';window.send('a1',{v:1,type:'session',subject:null});});
+    try{await until(frame,old=>{const img=document.querySelector('img.avatar');return img?.src.startsWith('blob:')&&img.src!==old;},previous);}finally{await page.evaluate(()=>document.querySelector('#slot iframe').style.display='block');}
+  });
+
   await t.test('serving: shell, assets, worker and service worker headers from the real Worker; the app origin never serves islands',async()=>{
     const get=(url,headers={})=>forwardTo(worker.port,{method:'GET',url,headers:{'cf-connecting-ip':'198.51.100.7',...headers}});
     const shell=await get(`${EMBED}/embed?client=${encodeURIComponent(CLIENT)}`),csp=shell.headers['content-security-policy'],html=String(shell.body);

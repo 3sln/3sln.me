@@ -73,7 +73,9 @@ export function bootIsland({win=globalThis.window,doc=globalThis.document}={}){
   async function swap(blobs,token){
     if(token!==ticket)return;const urls=blobs.map(blob=>win.URL.createObjectURL(blob)),drop=()=>{for(const url of urls)win.URL.revokeObjectURL(url);};
     try{await Promise.all(urls.map(url=>{const image=new win.Image();image.src=url;return image.decode();}));}catch{drop();return;}
-    await new Promise(resolve=>win.requestAnimationFrame(resolve));if(token!==ticket){drop();return;}
+    // Publish the decoded batch atomically. rAF may stop indefinitely in hidden/off-screen iframes;
+    // waiting for it here strands the completed raster until a later visibility change.
+    if(token!==ticket){drop();return;}
     const old=model.tiles;model.tiles=urls;changed();win.setTimeout(()=>{for(const url of old)win.URL.revokeObjectURL(url);},0);
   }
   const send=message=>services.channel?.send(message)??false;

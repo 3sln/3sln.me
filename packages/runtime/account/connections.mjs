@@ -59,6 +59,8 @@ async function exclusiveOccupant(c,{owner,slot}={}){
 }
 
 export const methods={
+  async connectionClientAuth(owner,clientId){if(!integrationsEnabled(this.config)||!await bound(this,owner))return null;const binding=await this.apps.binding(owner,clientId);return binding?.id?this.brokeredIntegrationAuth(owner,{connection:binding.id}):null;},
+  async connectionsSetupComplete(owner,input){return this.connectionsSystem(owner,{operation:'connections.configured',input});},
   async connectionsOwner(owner,{operation,id,input}={},{authTime}={}){
    const Operation=typeof operation==='string'&&CONNECTION_OWNER_OPERATIONS.includes(operation)?CONNECTION_ENGINE_OPERATIONS[operation]:null;
    if(!integrationsEnabled(this.config)||!Operation)throw new StorageError('not_found','Not found.',404);
@@ -104,5 +106,5 @@ export const methods={
 };
 
 export const rpc={
- connectionsOwner:{warm:true},connectionsSeverAccount:{lifecycle:'purging'},
+ connectionClientAuth:{gate:'none'},connectionsOwner:{warm:true},connectionsSetupComplete:{warm:true},connectionsSeverAccount:{lifecycle:'purging'},
 };

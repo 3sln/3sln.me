@@ -151,3 +151,95 @@ The user-facing model is one logical store of messages and conversations. Saved 
 ## Hosted SDK artifacts
 
 `/packages/sdk/src/define.mjs`, `/packages/sdk/src/callback.mjs` and `/packages/sdk/src/identity.mjs` are revalidating public loaders to standalone content-addressed ESM, so an embedding app needs no portal import map; the portal's build manifest exposes the targets for version pinning. The standalone bundles are built without code splitting, so they carry the lazily loaded parts inline. The runtime serves these loaders and their hashed targets with anonymous CORS, so cross-origin embedding works. The SDK grants no access without actual provider authentication and explicit consent. Runtime registration and production activation remain separate operator steps.
+
+## Events: integration-hosted bus conformance (EV-4, provisional)
+
+An integration-hosted bus implements [events §3.2–§8](spec/events.md#32-integration-hosted-buses): pull only, with live provider introspection before **every** publish, including transaction replays. The manifest URL and canonical digest are immutable; grants do not cover successor buses. Brokered reads require the verified `bindle.bus: {floor_at, history}` claim, and return only records strictly after that time unless the owner approved history. Reads stop within the 360-second revocation bound, or earlier after acknowledged revocation. These draft requirements and passing local fixtures confer no production approval.
+
+From a repository checkout with Node 24+ and dependencies installed, run the reference in-memory host and provider client checks:
+
+```sh
+node --test tests/event-bus-conformance*.test.mjs
+```
+
+`tests/fixtures/integration-bus.mjs` is a separate extension using the existing integration fixture's logical HTTPS `.example` identities. It is default off (`createIntegrationBus({enabled:true})` is test-only opt-in), uses private ngin Actions/Queries over an injected provider, and has no production route or subscription transport. It uses opaque stand-ins for **already verified** brokered tokens. Its passes prove host/client behavior against a fake issuer; they do not test JWS/DPoP verification, real provider introspection, durable recovery, deployment, or external-service conformance. The existing integration server is unchanged. Production `EVENT_BUSES_ENABLED`, `INTEGRATIONS_ENABLED` and `BROKERING_ENABLED` remain default off and their independent release gates still apply.
+
+To run the same host scenarios against your implementation, supply a local ESM adapter exporting `async createIntegrationBus(options)`:
+
+```sh
+EV4_BUS_ADAPTER=/absolute/path/to/your-bus-adapter.mjs node --test tests/event-bus-conformance.test.mjs
+```
+
+Every host scenario runs with a fresh isolated owner; none is skipped for adapters. A missing factory export fails the run. The additional fixture-engine test always tests the reference fake and is labelled separately. Adapter setup must clean up partial creation when it rejects, and `close()` must clean up successful instances. The host factory receives `{enabled:true, manifest?, limits?}`; omitted manifests use the exported `busManifest()`. It must reject invalid manifests or limits before installing an occupant. Use only a disposable local/test environment. The suite intentionally changes grants, retention, pins and availability.
+
+The adapter interface is:
+
+| Member | Contract |
+| --- | --- |
+| `origin`, `resource`, `manifest` | The logical called origin (`https://integration.example`), initial resource (`https://integration.example/r/task-changes`), and the full pinned document. Import the fixture constants to avoid spelling differences. Transport can map those logical identities to your local server while preserving token audiences. |
+| `clock.now()` | The test issuer/host clock in milliseconds; only `control({op:'advance',seconds})` advances it. Start with a positive whole Unix second. |
+| `call(token,method,args={},tx?,resource?)` | Invoke the actual bus RPC (or resource descriptor for `describe`); default resource is `resource` above. Return the unmodified contract result or throw an error with its protocol `code`. The adapter may translate transport errors, but must not implement validation, authorization, cursors, gaps or deduplication on behalf of the host. |
+| `control(input)` | Drive the isolated test issuer and owner controls below; never expose these controls as application APIs. |
+| `snapshot()` | Return `{introspections:[...]}` recorded at the test provider's live introspection endpoint. Each received publish authorization request appends an entry, including denials and failures. Do not infer this trace from successful publishes or host counters. |
+| `close()` | Shut down transport/resources and destroy the isolated test owner. |
+
+The test-only controls mirror the reference extension. They may drive your existing owner API and a test issuer; they must exercise your host's actual implementation:
+
+| `control` input | Required behavior |
+| --- | --- |
+| `{op:'pin',manifest,digest?}` | Fetch/pin the supplied public test document; return `{manifest,digest}` using canonical SHA-256 with the `sha256-` prefix. Expected-digest mismatch is `digest_mismatch`; changed contents at a pinned URL are `schema_changed`. Invalid bus manifests are `unsupported_fragment`. Retain unknown top-level members in the digest. |
+| `{op:'create',manifest,resource}` | Owner assigns a **new, empty** bus for this document/resource, returning its descriptor data. Keep existing buses; never copy their records or grants. Initial creation uses the same path. |
+| `{op:'approve',client,methods,history?,floorAt?,grant?,resource?,claims?,binding?}` | Return an authenticated test token. `client` maps to `https://<client>.example/bindle/client.json`; default resource is the initial bus, floor is the current Unix second, history is false, and token lifetime is 300 seconds. Bind to the fixture issuer/subject/connection, exact manifest/digest/resource and method ceiling. `grant` changes the grant ID while retaining a supplied floor for widening tests. `claims` and `binding` override verified claims for negative vectors (e.g. wrong audience, purpose, resource, digest or a missing `bus` claim); sign these with the test issuer. An unapproved history request on a `history: "never"` bus is `forbidden`. |
+| `{op:'revoke',token,acknowledged?}` | Revoke the token's current live grant at the test provider. Unacknowledged reads may continue until token expiry; writes must fail on their next live check. `acknowledged:true` also delivers/applies host invalidation before returning. Re-approval gives a new floor; renewed same-client tokens must not lose the publisher journal. |
+| `{op:'introspection',mode}` | Set the test provider to `active`, `inactive`, `budget` (exhausted, `active:false`) or `outage` (unavailable). Every denied/unavailable check fails closed with `forbidden` in this adapter contract. |
+| `{op:'advance',seconds}` | Advance both clocks and run due retention maintenance without a real sleep. Existing tokens keep their original expiry. |
+| `{op:'purge',resource?}` | Owner purges retained records, keeping head and journal; subsequent reads report loss. |
+| `{op:'lose-reply'}` | Drop the next successful publish reply **after committing** and surface `indeterminate`. Retrying the same `tx` must return its original receipt without republishing. |
+
+The scenarios cover pinning and successor isolation; pull-only limits; host-stamped attribution; client/bus/floor-bound cursors and widening; strict time floors and history; retention by time, count and bytes; purge gaps; live publish checks during replay/revocation/outage/budget denial; bounded read revocation; method ceilings and token bindings; UTF-8 record/request/response bounds; total/per-publisher ordering; opaque receipts, concurrent replay, `tx_conflict`, lost replies and journal retention (including the ten-minute minimum). The client suite additionally verifies malformed-response rejection without advancing its cursor, foreign-attestation filtering, deduplication, gap callbacks, and explicit same-transaction retry after uncertainty. It never attempts `subscribe` or `unsubscribe`.
+
+In the fake, `binding.fragment` and `binding.digest` stand in for the test issuer's pinned grant/assignment metadata; they are **not new wire claims**. A real adapter should translate these negative vectors into its test issuer's existing pinned approval checks, and otherwise mint the token shape from integrations §5.3 plus the specified `bindle.bus` claim. The integration journal key remains `(iss, sub, client_id, tx)` across resources; changing the resource under the same transaction is `tx_conflict`.
+
+For a consumer using `packages/events/client.mjs`, pass `attestor: projection.broker.origin` and `brokered: {floorAt: verifiedClaims.bindle.bus.floor_at, history: verifiedClaims.bindle.bus.history}`. The client validates the complete response envelope before updating its cursor and validates publish receipts; it never retries on its own. These checks cannot prevent a dishonest integration from fabricating records or attribution, and do not replace host authorization or manifest/payload validation.
+
+Review/sign-off for this provisional conformance contract: reviewer ___ / date ___ / outcome ___. No independent review or production verification is claimed.
+
+## Integrations: provider and integration conformance (EXT-X9b, provisional)
+
+The integration conformance suite checks a provider's side of [integrations §5–§7](spec/integrations.md) against a reference integration, and an integration's side against this provider's real token, event and introspection code. Everything runs locally with `.example` identities and fake clocks; nothing is fetched from the network. Integrations are default off (`INTEGRATIONS_ENABLED`, `BROKERING_ENABLED`).
+
+From a repository checkout with Node 24+ and dependencies installed:
+
+```sh
+node --test tests/integrations-conformance.test.mjs
+```
+
+The suite covers the following.
+
+| Area | What a conforming party must do |
+| --- | --- |
+| Webhooks (§6) | Accept SETs signed with an `event`-purpose key from `brokered-resources.v1.jwks_uri`. Look up the connection before fetching any key. Apply `preferences-updated` snapshots in `seq` order, ignore stale `seq`, and answer `202` to duplicates and unknown event types. A provider re-signs a retried SET with the same `jti` and coalesces markers. |
+| Discovery (§5.2) | Honour contract filters, exact `ids` probes (`limit: 0` → `exists`), text search and cursors, never across connections. Refuse unknown contracts and facets with `400`. |
+| Brokered tokens (§5.3) | Accept only ES256 RFC 9068 `invoke` tokens for your `rpc_endpoint`, for the token's resource, connection generation and methods. Refuse `discover`, `describe` and expired tokens. Verification never writes to the provider's key ring, and rotated keys stay published until their tokens expire. |
+| Introspection (§5.7) | For write-effect methods, introspect on every call with `private_key_jwt` and no caching. Fail closed when the endpoint answers `active: false` or is unreachable. |
+| Invalidation (§7) | `credential-revoked` rejects the listed grants. `connection-revoked` raises the generation floor, even out of `seq` order, and a later `connection-resumed` re-admits the new generation. |
+| 360 s bound (§7.4) | After severance, a provider mints no new token, and a released token stops working at most 360 s later. That holds with every webhook lost, a verifier 30 s slow and 30 s leeway. |
+
+The suite also checks the following provider-side behaviour:
+
+- generation fencing through suspend and resume;
+- `seq` on `preferences/v2` for integration readers;
+- credential-free X6 snapshots bound to (connection, generation);
+- SSRF-refused discovery egress;
+- explicit reconfirmation after a record becomes unavailable.
+
+To test your own integration, use `tests/fixtures/integration-server.mjs` as the reference for the expected HTTP behaviour. Its `createIntegrationServer({verifyToken, introspect, requiresIntrospection, connections, resources, clock})` takes injected verifiers, so the brokered-token, webhook and introspection tests drive it with tokens minted by `packages/federation/signing.mjs` and SETs from `packages/runtime/integration-events.mjs`. Replace `server.fetch` with requests to your own endpoints, served under their logical HTTPS audiences, and keep the assertions. `server.listen()` serves the fixture on loopback HTTP when you want to point a client at it.
+
+What this does **not** establish:
+
+- interoperability with any external integration or provider;
+- delivery over the public Internet;
+- production key custody;
+- per-IP limits beyond the local adapter's.
+
+The provider does not yet accept hints (`hint_endpoint`, AMD-C10). Review and sign-off: reviewer ___ / date ___ / outcome ___.

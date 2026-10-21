@@ -181,8 +181,19 @@ test('X3 revalidation: invalid and security-relevant changes fence the connectio
  r=await f.op(C.ConnectionRevalidated,f.system,{connection:a.id,expectedGeneration:3,result:{decision:'review',changes:['keys_replaced'],next:pinned,staged}});
  assert.deepEqual([r.state,r.generation],['manifest-invalid',4]);
  await assert.rejects(f.op(C.ApproveConnectionChange,f.owner,{connection:a.id,expectedGeneration:3}),code('connection_stale'));
- r=await f.op(C.ApproveConnectionChange,f.owner,{connection:a.id,expectedGeneration:4});
- assert.deepEqual([r.state,r.generation,r.integration.snapshot.thumbprints],['active',5,['B'.repeat(43)]]);
+ const reviewed=r.integration.stagedRevision;assert.equal(typeof reviewed,'string');
+ await assert.rejects(f.op(C.ApproveConnectionChange,f.owner,{connection:a.id,expectedGeneration:4}),code('connection_changed'),'approval names the reviewed revision');
+ // W5-S2: re-staging while manifest-invalid keeps the generation but changes the revision, so the old review is void.
+ const restaged=structuredClone(pinned);restaged.thumbprints=['E'.repeat(43)];
+ r=await f.op(C.ConnectionRevalidated,f.system,{connection:a.id,expectedGeneration:4,result:{decision:'review',changes:['keys_replaced'],next:pinned,staged:restaged}});
+ assert.equal(r.generation,4);assert.notEqual(r.integration.stagedRevision,reviewed);
+ await assert.rejects(f.op(C.ApproveConnectionChange,f.owner,{connection:a.id,expectedGeneration:4,stagedRevision:reviewed}),code('connection_changed'));
+ r=await f.op(C.ConnectionRevalidated,f.system,{connection:a.id,expectedGeneration:4,result:{decision:'review',changes:['keys_replaced'],next:pinned,staged}});
+ // W5-S3: a stale owner verification cannot approve; a recent one can.
+ await assert.rejects(f.op(C.ApproveConnectionChange,{...f.owner,authTime:f.owner.authTime-901000},{connection:a.id,expectedGeneration:4,stagedRevision:r.integration.stagedRevision}),code('reauthentication_required'));
+ await assert.rejects(f.op(C.ApproveConnectionChange,{kind:'owner',owner:f.owner.owner},{connection:a.id,expectedGeneration:4,stagedRevision:r.integration.stagedRevision}),code('reauthentication_required'));
+ r=await f.op(C.ApproveConnectionChange,f.owner,{connection:a.id,expectedGeneration:4,stagedRevision:r.integration.stagedRevision});
+ assert.deepEqual([r.state,r.generation,r.integration.snapshot.thumbprints,r.integration.stagedRevision],['active',5,['B'.repeat(43)],undefined]);
  // A snapshot that does not re-derive from its own client members (an off-prefix endpoint) never validates.
  const forged=structuredClone(pinned);forged.manifest.resources.rpc_endpoint='https://evil.example/rpc';
  await assert.rejects(f.op(C.ConnectionRevalidated,f.system,{connection:a.id,expectedGeneration:5,result:{decision:'adopt',changes:[],next:forged}}),code('invalid_request'));
@@ -190,8 +201,8 @@ test('X3 revalidation: invalid and security-relevant changes fence the connectio
  // A manifest that drops the occupant declaration loses its seat on adoption.
  const dropped=snapshot('box.example',{slots:[]}).snapshot;dropped.thumbprints=['B'.repeat(43)];
  await f.op(C.ApproveConnectionChange,f.owner,{connection:a.id,expectedGeneration:5}).catch(()=>{});
- await f.op(C.ConnectionRevalidated,f.system,{connection:a.id,expectedGeneration:5,result:{decision:'review',changes:['extensions_changed'],next:r.integration.snapshot,staged:dropped}});
- r=await f.op(C.ApproveConnectionChange,f.owner,{connection:a.id,expectedGeneration:5});assert.equal(r.state,'active');
+ r=await f.op(C.ConnectionRevalidated,f.system,{connection:a.id,expectedGeneration:5,result:{decision:'review',changes:['extensions_changed'],next:r.integration.snapshot,staged:dropped}});
+ r=await f.op(C.ApproveConnectionChange,f.owner,{connection:a.id,expectedGeneration:5,stagedRevision:r.integration.stagedRevision});assert.equal(r.state,'active');
  assert.deepEqual((await f.occupant(MESSAGING_INGRESS_SLOT)).occupants,[]);
 });
 

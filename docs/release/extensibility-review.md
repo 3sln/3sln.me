@@ -284,3 +284,133 @@ One independent reviewer agent worked read-only, wrote proof-of-concept probes a
 - X8 draining the severance rows, acknowledging only through the highest seq it processed, and minting from `mintable`.
 - The AMD-C10 `x-bindle-brokerable` and `introspect` checks at registration, which need pinned contract metadata.
 - Production verification of egress.
+
+## X8 implementation
+
+Date: 2026-10-21. Subject: EXT-X8, which covers preferences/v2, brokered token minting, severance and introspection:
+
+- `packages/federation/introspection.mjs` (new);
+- the projection, mint and confirm paths in `packages/federation/service.mjs`;
+- `docs/artefacts/preferences-v2.json` (new);
+- the snapshot and consumer-mint hook in `packages/runtime/integration-ports.mjs`;
+- a conditional provisional member in `packages/federation/http.mjs`;
+- one registry line each in `packages/runtime/federation.mjs`, `packages/runtime/account/index.mjs` and `packages/app/providers.mjs`;
+- `tests/brokered-severance.test.mjs` and `tests/preferences-v2.test.mjs`.
+
+One independent reviewer agent worked read-only and wrote proof-of-concept scripts. It looked at confused-deputy minting, severance race windows, introspection abuse and token audience confusion. This is an agent review, not human sign-off: reviewer ___ / date ___ / outcome ___.
+
+**What was implemented (local behaviour only, behind `INTEGRATIONS_ENABLED` and `BROKERING_ENABLED`, both default off; nothing is mounted by an adapter yet):**
+
+- **preferences/v2 (AMD-C3/C9).** Every resource field is a list of uniform references in owner order.
+  - Approved members are kept, unapproved additions are omitted, and the field is listed in `requiresConsent`.
+  - Issuer-hosted members carry the v1 child token.
+  - Brokered members carry `broker` {endpoint, origin, resource}, a 300 s RFC 9068 token, `expires_at`, `contracts` and the exact `methods`.
+  - Integration readers also get `seq`, read before the values.
+  - v1 withholds brokered occupants and lists the field in `requiresConsent`. Otherwise v1 is byte-identical with and without the port.
+  - The issuer gateway refuses brokered resources, and it already refused provider-minted JWTs.
+- **Minting** is check, sign, confirm against the account store that X7 severance commits use:
+  - The severance mark is read first. The live coupling is checked for exactly this consumer and field binding.
+  - Methods are the grant ∩ the record contracts ∩ the pinned brokerable methods. Write-capable methods are minted, offered and approvable only while introspection is mounted.
+  - After signing, the coupling and severance log are re-read. The federation shard brackets the mint with grant, session and revision checks.
+  - So a released token's `exp` is at most commit + 300 s, or the token is discarded.
+  - There is no brokered refresh credential: after severance a re-read reports the member `unavailable`.
+- **Severance.** X7 rows commit with the change. The drain turns them into X6 `credential-revoked` rows (until = row time + 360 s) and `resource-detached` rows, in one commit with its own cursor, then acknowledges X7. An overflow row revokes every current grant of that connection. The owner-visible status lists `access_ends_by`.
+- **Introspection (RFC 7662).**
+  - The integration authenticates with RFC 7523 `private_key_jwt`, using only the keys pinned to the token's connection, which is looked up before any fetch.
+  - The answer is `active` only for an app `invoke` token addressed to that integration's rpc_endpoint whose live account and federation checks hold. The token must also have been issued after the latest revocation of its grant, under the current approval, for a consumer session that is still live.
+  - Responses are `no-store`, and every error is `active: false`.
+- **Registry and ports.**
+  - A `brokered-resources.v1` registry row declares `jwks_uri`, `preferences_contract` and optionally `introspection_endpoint`. It requires the `integrations` and `brokeredResources` mount evidence.
+  - The X6 snapshot port, `preferencesSnapshotPort`, reads only the federation shard.
+
+| ID | Sev | Finding | Status |
+| --- | --- | --- | --- |
+| X8-R1 | Medium | X7 keeps an assignment grant across unavailable → reconfirm and narrowing. X8 minted fresh tokens with a revoked grant, which conforming integrations reject for about 6 minutes, and an old token introspected active again (ABA). | **Fixed.** Revoked grants are remembered until `access_ends_by`, and undrained rows count too. Minting is refused inside the window, and introspection is inactive for tokens issued at or before the revocation. Rotating the grant id in X7 remains open (§5.3). |
+| X8-R2 | Medium | Federation-side revocation, field removal and reapproval emit no `credential-revoked` and keep the same `bindle.grant`. After reapproval, earlier tokens introspected active. | **Partly fixed.** Introspection requires the token's `iat` to be no earlier than the current approval. **Open:** federation revocations do not reach the X6 outbox (they need a cross-object enqueue), and the grant id does not change on reapproval. Read-only access relies on the 360 s bound. |
+| X8-R3 | Medium | Introspection never checked the consumer's own session, so write tokens outlived sign-out by up to 300 s. | **Fixed.** Each released token records its consumer session (refresh family, or access expiry) in the federation shard, bounded to 1024 live entries. Introspection requires that session to be live. |
+| X8-R4 | Medium | One shared pre-authentication bucket (1200/min) let junk traffic stop introspection for every integration, so writes failed closed everywhere. | **Fixed.** The per-connection window is charged after the peek and before any account call or key fetch. `*` is a 60 000/min process ceiling. **Open:** per-IP limits belong to the adapter. The limiter and jti cache are per process, so production needs durable ones. |
+| X8-R5 | Low | Forged tokens naming a real connection cause an account RPC and a key resolution before authentication, and timing reveals whether the connection exists. `brokeringKeys.verify` writes on every call. | **Open.** Bounded by the per-connection window. Needs adapter per-IP limits and a read-only verify in `signing.mjs` (X5-owned). |
+| X8-R6 | Low | Removing `brokering_jwks_uri` before X8 is mounted would hide the key set from X6/X7 verifiers. | **Fixed.** The provisional member stays until the `brokered-resources.v1` row is declared, and the feature's `jwks_uri` then replaces it. |
+| X8-R7 | Low | Three switches (`BROKERED_INTROSPECTION_MOUNTED`, `mounts.brokeredIntrospection` and the handler's `enabled`) can disagree, so write tokens could be minted with no endpoint declared. | **Open.** The integrator must derive all three from one piece of mount evidence. |
+| Info | — | When the manifest says `dpop: none`, a DPoP-bound session gets a bearer token. Snapshot status comes from the last sync. Each v2 read mints anew, with no reuse. | Recorded. |
+
+**Checked without findings:**
+
+- assignment matching on (clientId, fragment, field), with feature and issuer consumers refused, and owner isolation;
+- DPoP `supported`/`required`;
+- confirm coverage of suspend, resume, disconnect, the fence, generation, grant revocation and value changes;
+- drain crash consistency;
+- assertion `iss`/`sub`/`aud`/lifetime/jti and kty/crv/alg/kid filtering;
+- refusal of cross-integration tokens and of `describe`, `discover`, `event` and feature tokens;
+- the issuer RPC refusing JWTs and brokered references;
+- no credentials in X6 snapshots;
+- flag gating.
+
+**Required before any implementation claim:**
+
+- Integrator wiring:
+  - the FederationService `brokering` option (`account.brokeredMint` and `brokeredSeq`);
+  - `account.brokeredDescriptors(owner)` in the resource provider;
+  - `integrationSnapshot` and `brokeredGrantLive` on FederationController, `federationRemote` and the Worker method list;
+  - the snapshot port in Worker/Node `integrationPorts`;
+  - the account alarm calling `brokeredSeveranceDrain`, plus a kick after X7 writes;
+  - the introspection route with `brokeringKeys.verify` and `ClientDirectory.resolveKeys`;
+  - one mount-evidence source for the registry row (an `integrations.v1` declaration does not exist yet).
+- Publication of `preferences-v2.json`.
+- The §5.2 consent disclosures.
+- Production verification.
+
+## Wave 5 integration
+
+Date: 2026-10-21. Subject: the integrator wiring for EXT-X8, EXT-X11 and CX-3, and the EXT-X9b conformance suite. Codex started this pass and stopped on capacity errors; Claude finished it. All of it is behind `INTEGRATIONS_ENABLED`/`BROKERING_ENABLED` (default off).
+
+One independent reviewer agent worked read-only and wrote proof-of-concept scripts. It reviewed:
+
+- the X8 wiring;
+- the introspection mount;
+- staged-manifest approval and the other X11 owner adapters.
+
+This is an agent review, not human sign-off: reviewer ___ / date ___ / outcome ___.
+
+**Wiring (local behaviour only).** One piece of mount evidence, `BROKERED_INTROSPECTION_MOUNTED`, set by the Worker and Node adapters only with `FEDERATION_ENABLED`, drives:
+
+- the `/oauth/brokering/introspect` route and its own per-IP/subnet admission class;
+- the `integrations.v1` and `brokered-resources.v1` registry rows, with `brokering_jwks_uri` moved into the latter's `jwks_uri` (X8-R6);
+- the FederationService `brokering` port (mint, `seq`, the R2 event drain);
+- brokered descriptors in the resource sync;
+- write-method minting;
+- the account-alarm severance drain, kicked after X7 owner writes (this closes X8-R7).
+
+The adapters also wire:
+
+- the snapshot port on Worker and Node;
+- `integrationSnapshot`/`brokeredGrantLive`/`integrationClientAuth` in the controller, `federationRemote` and the Worker method list;
+- a read-only `brokeringKeys.verify` (X8-R5, part).
+
+For R2, federation revocations, and changes to a field's value, journal `credential-revoked` rows in the shard's transaction. A drain with retry sends them to the account, which deduplicates them, enqueues them into X6 and records them as revoked grants. This closes X8-R2, except that the grant id still does not rotate on reapproval.
+
+The X11 routes are `/api/connections/{owner,setup,client-metadata,contracts}`. Setup save checks the pinned fragment digest and revision, and accepts only the owner's own records for that client, fragment and field. The client-metadata lookup goes through the SSRF-safe ClientDirectory. CX-3 access views and the console are mounted in the shell. The public-suffix resolver is vendored (`vendor/tldts`, with provenance).
+
+| ID | Sev | Finding | Status |
+| --- | --- | --- | --- |
+| W5-S1 | High | The token endpoint chose `private_key_jwt` from the *live* client metadata, so a taken-over domain serving metadata without `token_endpoint_auth_method` could exchange and refresh with no assertion (PoC confirmed). | **Fixed.** The connection's pin governs: with a pin, live metadata must still say `private_key_jwt` with the pinned `jwks_uri`, and an assertion against the pinned thumbprints is required. Regression test in `tests/wave5-integration.test.mjs`. |
+| W5-S2 | Medium | Approval was bound only to `expectedGeneration`. A re-stage while already `manifest-invalid` kept the generation, so the owner could review key set B and pin E (PoC confirmed). | **Fixed.** Every change to the staged snapshot gets a fresh `stagedRevision`, and approval must name the reviewed revision. Tested in `tests/engine-connections.test.mjs`. |
+| W5-S3 | Medium | Approving a staged change (key-set replacement, `jwks_uri`, auth method, redirects) had no recent-authentication step-up, unlike exclusive replacement. | **Fixed.** Approval requires `authTime` within `RECENT_AUTH_MS`, else `reauthentication_required`, which the console turns into an inline step-up. Tested. **Open:** the review UI does not yet diff the jwks, auth method and redirects. |
+| W5-S4 | Low | The Worker rebuilds the federation authority on every request, so the token-endpoint assertion `jti` cache was empty for every call. | **Partly fixed.** The cache now lives per isolate. **Open:** a durable cross-isolate `jti` store is needed before production. |
+| W5-S5 | Low | Forged introspections naming a real connection used up that connection's window before authentication. One app could exhaust the shard-wide 1024-token cap. | **Fixed.** The per-connection window is charged after the client assertion verifies. Unauthenticated work is bounded by the new adapter class (300/min per IP, 1200/min per subnet) and the process ceiling. The cap is 256 outstanding tokens per app and 4096 per shard. Tested. **Open (R5):** a forged token still costs one account call before authentication. |
+| W5-S6 | Info | `integrations.v1` is declared on mount evidence without `hint_endpoint` (AMD-C10), without `bindle_connection` in the token response, and without connection-bound refresh tokens. A `configuring` connection could not use the token endpoint. | **Partly fixed.** `configuring` connections now authenticate at the token endpoint (§3.3). **Open and disclosed:** the declaration is provisional and never fires by default; hints and `bindle_connection` remain unimplemented. |
+| Note | — | Before revalidation, an ordinary re-consent re-pins a changed snapshot without a staged review. | **Open:** a suspicion to resolve with X3/X4. |
+
+Also fixed in this pass:
+
+- An unrelated preference edit no longer severs brokered tokens for 360 s; only a changed field queues R2 invalidation.
+- The access fixtures follow the `/api/connections/contracts` route.
+- The source-served console no longer fails on a bare `tldts` import, which had broken the beaming and multi-account e2e checks.
+
+**Islands flakes, root causes:**
+
+- **Avatar swaps** waited for `requestAnimationFrame`. Chromium does not run rAF for hidden or out-of-view cross-origin frames. The swap now publishes the decoded batch directly. The hidden-frame regression test fails when the rAF is restored.
+- **Firefox sign-in and theme timeouts.** A restore that lost the race with the app's code exchange waited 2 s, then 4 s, then 8 s. The retry schedule now starts at 250 ms and keeps the same ~64 s reach. `tests/islands-worker.test.mjs` fails on the old schedule.
+- **Unreproduced.** The single historical Firefox `ready` timeout in the theme test did not recur in 10 Firefox runs. Codex's computed-style waits were reverted because they did not address it.
+
+**Not done:** CX-3 request history needs the owner-visible audit (incremental-authorization §12 item 10), which has no server store. Integration-hosted feed management is also not done.
